@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #  VELVET · get.sh — the one line a beginner needs:
 #
-#      curl -fsSL https://raw.githubusercontent.com/Cre3p/velvet/main/get.sh | bash
+#      curl -fsSL https://raw.githubusercontent.com/Cre3p-27/velvet/main/get.sh | bash
 #
 #  Downloads Velvet to ~/.local/share/velvet (or updates it when it is already
 #  there) and runs the installer, which installs what is missing, wires up
 #  Hyprland and adapts everything to this machine.
 set -euo pipefail
-REPO="${VELVET_REPO:-https://github.com/Cre3p/velvet.git}"
+REPO="${VELVET_REPO:-https://github.com/Cre3p-27/velvet.git}"
 DIR="${VELVET_DIR:-$HOME/.local/share/velvet}"
 
 if ! command -v git >/dev/null 2>&1; then

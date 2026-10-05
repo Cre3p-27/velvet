@@ -14,7 +14,7 @@ comes with it.
 2. **Open a terminal and paste this one line:**
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/Cre3p/velvet/main/get.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/Cre3p-27/velvet/main/get.sh | bash
    ```
 
    It downloads Velvet, installs everything that is missing (it asks for your
