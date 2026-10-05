@@ -23,9 +23,15 @@ comes with it.
 3. **Log out and back in.** A welcome page opens and shows you the first steps.
 
 Updating later: run the same line again.  
-Uninstalling: remove the `require("velvet-shell")` / `require("velvet-desktop")`
-lines from `~/.config/hypr/hyprland.lua` (a backup of your original is next to it as
-`hyprland.lua.pre-velvet`) and delete `~/.config/quickshell/velvet`.
+**Removing Velvet completely:** Super+Tab → SHELL → *Uninstall Velvet* — or in a terminal:
+
+```bash
+bash ~/.config/quickshell/velvet/uninstall.sh
+```
+
+It stops the shell and removes everything it installed: the shell, its Hyprland
+lines and files (your config gets back exactly what it had before), its programs,
+fonts and settings. Packages like Hyprland stay — other programs may use them.
 
 ### The keys you need first
 

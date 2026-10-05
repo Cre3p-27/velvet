@@ -327,6 +327,15 @@ Singleton {
         case "openWorkflow":
             Panels.openSettingsZoneNamed("WORKFLOW");
             break;
+        case "uninstall": {
+            // in a terminal, so its questions (and the password) can be answered
+            const line = Term.wrap("dev.velvet.uninstall", "velvet-uninstall", `bash ${Quickshell.shellPath("uninstall.sh")}`, "");
+            if (line)
+                Quickshell.execDetached(["sh", "-c", line]);
+            else
+                Toast.show("NO TERMINAL FOUND  ·  RUN:  bash ~/.config/quickshell/velvet/uninstall.sh", "error", 9000);
+            break;
+        }
         case "openWelcome":
             Panels.welcome = true;
             break;

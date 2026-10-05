@@ -4086,6 +4086,14 @@ Singleton {
             help: "Restarts the whole shell from disk. Use it after editing files by hand or if something got stuck.",
             sub: "RELOAD VELVET FROM DISK",
             fn: "restartShell"
+        },
+        {
+            kind: "action",
+            name: "UNINSTALL VELVET",
+            help: "Removes Velvet completely: the shell, its Hyprland lines and files, its programs, fonts and your Velvet settings. A terminal opens and asks once more before anything happens; your Hyprland config gets back exactly what it had before. Same as running uninstall.sh.",
+            sub: "REMOVES THE SHELL COMPLETELY — A TERMINAL ASKS ONCE MORE",
+            fn: "uninstall",
+            danger: true
         }
     ]
 
