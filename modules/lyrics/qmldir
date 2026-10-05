@@ -1,0 +1,3 @@
+module qs.modules.lyrics
+LyricsPanel 1.0 LyricsPanel.qml
+LyricCard 1.0 LyricCard.qml

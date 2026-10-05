@@ -1,0 +1,24 @@
+module qs.modules.bar.entries
+ActiveWindow 1.0 ActiveWindow.qml
+BarButton 1.0 BarButton.qml
+Clock 1.0 Clock.qml
+FocusToggle 1.0 FocusToggle.qml
+KeyboardLayout 1.0 KeyboardLayout.qml
+KeysButton 1.0 KeysButton.qml
+LauncherButton 1.0 LauncherButton.qml
+Logo 1.0 Logo.qml
+LyricsButton 1.0 LyricsButton.qml
+MapButton 1.0 MapButton.qml
+Media 1.0 Media.qml
+Microphone 1.0 Microphone.qml
+NotifBell 1.0 NotifBell.qml
+PowerButton 1.0 PowerButton.qml
+Resources 1.0 Resources.qml
+SceneButton 1.0 SceneButton.qml
+Screenshot 1.0 Screenshot.qml
+Separator 1.0 Separator.qml
+StatusIcons 1.0 StatusIcons.qml
+Tray 1.0 Tray.qml
+Uptime 1.0 Uptime.qml
+WeatherEntry 1.0 WeatherEntry.qml
+Workspaces 1.0 Workspaces.qml

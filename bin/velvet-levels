@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-levels
+
+Turns cava into a file the shell can breathe with.
+
+cava is started with a raw ASCII output config; every frame is folded into a
+handful of eased bands and written to ~/.config/velvet/levels.json, in place —
+the shell watches that file, so it must never be replaced by a rename. While
+nothing is audible the write rate drops from 30/s to 1/s and the `live` flag
+tells the shell to slow its polling to match; when something plays again the
+flag flips back within a frame or two.
+
+Stdlib only, like everything in bin/. Nothing here knows about the shell; the
+shell simply reads the file. If cava is not installed, the script says
+`available: 0` once and exits, so the shell shows nothing rather than fake
+motion.
+
+    velvet-levels                 # write ~/.config/velvet/levels.json
+    velvet-levels --selftest      # run for ~2 s and print what it writes
+"""
+
+import json
+import os
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+BANDS = 24
+FPS = 30
+LIVE_HOLD = 5.0        # seconds of quiet before the file slows down
+QUIET_INTERVAL = 1.0   # write rate while quiet
+LOUD = 0.02            # a raw value above this counts as "something is playing"
+
+
+def default_out() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return os.path.join(base, "velvet", "levels.json")
+
+
+def log(msg: str) -> None:
+    print(f"velvet-levels: {msg}", file=sys.stderr, flush=True)
+
+
+class Sync:
+    """Holds the raw frame, the eased bands, and whether anything is audible."""
+
+    def __init__(self, bands: int):
+        self.n = bands
+        self.raw = [0.0] * bands
+        self.eased = [0.0] * bands
+        self.level = 0.0
+        self.last_loud = 0.0
+
+    def feed(self, parts) -> None:
+        vals = []
+        for p in parts:
+            try:
+                vals.append(min(1.0, int(p) / 1000.0))
+            except ValueError:
+                continue
+        if len(vals) < self.n:
+            vals += [0.0] * (self.n - len(vals))
+        self.raw = vals[:self.n]
+
+    def ease(self) -> None:
+        peak = 0.0
+        total = 0.0
+        for i in range(self.n):
+            t = self.raw[i]
+            c = self.eased[i]
+            # Rise fast, fall slow — that is what a level meter is supposed to do.
+            self.eased[i] = c + (t - c) * (0.6 if t > c else 0.15)
+            total += self.eased[i]
+            if t > peak:
+                peak = t
+        self.level = total / max(1, self.n)
+        if peak > LOUD:
+            self.last_loud = time.monotonic()
+
+    @property
+    def live(self) -> bool:
+        return (time.monotonic() - self.last_loud) < LIVE_HOLD
+
+
+def write_levels(path: str, sync: Sync, live: bool, available: bool = True) -> None:
+    """Write in place: the shell watches this exact inode."""
+    payload = {
+        "at": int(time.time() * 1000),
+        "available": 1 if available else 0,
+        "live": 1 if live else 0,
+        "level": round(sync.level, 3),
+        "bands": [round(v, 3) for v in sync.eased],
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(json.dumps(payload, separators=(",", ":")))
+            f.flush()
+    except OSError as e:
+        log(f"cannot write {path}: {e}")
+
+
+CAVA_CONF = """[general]
+bars = {bands}
+framerate = {fps}
+autosens = 1
+[output]
+method = raw
+raw_target = /dev/stdout
+data_format = ascii
+ascii_max_range = 1000
+"""
+
+
+class Cava:
+    """cava as a child, restartable, with its temp config cleaned up."""
+
+    def __init__(self, bands: int, fps: int):
+        self.bands = bands
+        self.fps = fps
+        self.proc = None
+        self.conf_path = ""
+        self.tries = 0
+
+    def start(self) -> bool:
+        if shutil.which("cava") is None:
+            return False
+        conf = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
+        conf.write(CAVA_CONF.format(bands=self.bands, fps=self.fps))
+        conf.close()
+        self.conf_path = conf.name
+        try:
+            self.proc = subprocess.Popen(
+                ["cava", "-p", self.conf_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+        except OSError as e:
+            log(f"cava did not start: {e}")
+            self.proc = None
+            return False
+        return True
+
+    def poll(self):
+        """Return the newest frame's bands, None while quiet, or False on EOF."""
+        p = self.proc
+        if p is None or p.stdout is None:
+            return False
+        if p.poll() is not None:
+            return False
+        try:
+            ready, _, _ = select.select([p.stdout], [], [], 0.25)
+        except (OSError, ValueError):
+            return False
+        if not ready:
+            return None
+        line = p.stdout.readline()
+        if not line:
+            return False
+        # Drain: only the newest frame matters, and cava will happily outrun us.
+        while True:
+            try:
+                ready, _, _ = select.select([p.stdout], [], [], 0)
+            except (OSError, ValueError):
+                break
+            if not ready:
+                break
+            nxt = p.stdout.readline()
+            if not nxt:
+                break
+            line = nxt
+        return [x for x in line.strip().split(";") if x]
+
+    def stop(self) -> None:
+        if self.proc is not None:
+            try:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+            except OSError:
+                pass
+            self.proc = None
+        if self.conf_path:
+            try:
+                os.unlink(self.conf_path)
+            except OSError:
+                pass
+            self.conf_path = ""
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    out = default_out()
+    bands = BANDS
+    fps = FPS
+    selftest = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--out" and i + 1 < len(argv):
+            out = argv[i + 1]
+            i += 2
+        elif a == "--bands" and i + 1 < len(argv):
+            bands = max(4, int(argv[i + 1]))
+            i += 2
+        elif a in ("--selftest", "--test"):
+            selftest = True
+            i += 1
+        else:
+            log(f"ignoring unknown argument {a!r}")
+            i += 1
+
+    if selftest:
+        out = os.path.join(tempfile.mkdtemp(prefix="velvet-levels-"), "levels.json")
+
+    start_ppid = os.getppid()
+    running = True
+
+    def on_signal(_sig, _frm):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    cava = Cava(bands, fps)
+    if not cava.start():
+        write_levels(out, Sync(bands), live=False, available=False)
+        log("cava not installed — the shell will stay quiet")
+        return 0
+
+    sync = Sync(bands)
+    last_write = 0.0
+    last_parent_check = 0.0
+    reported_live = None
+    deadline = time.monotonic() + 2.2 if selftest else None
+
+    try:
+        while running:
+            now = time.monotonic()
+
+            # If the shell goes away we go with it — no orphan cava.
+            if now - last_parent_check > 2.0:
+                last_parent_check = now
+                if os.getppid() != start_ppid:
+                    log("parent disappeared — exiting")
+                    break
+            if deadline is not None and now > deadline:
+                break
+
+            frame = cava.poll()
+            if frame is False:
+                # cava died. Give it three chances, then say so and stop.
+                cava.stop()
+                cava.tries += 1
+                if cava.tries > 3:
+                    write_levels(out, sync, live=False, available=False)
+                    log("cava kept dying — giving up")
+                    return 0
+                time.sleep(2.0)
+                if not cava.start():
+                    write_levels(out, sync, live=False, available=False)
+                    return 0
+                continue
+            if frame is not None:
+                sync.feed(frame)
+                sync.ease()
+
+            live = sync.live
+            interval = 1.0 / fps if live else QUIET_INTERVAL
+            if now - last_write >= interval:
+                last_write = now
+                write_levels(out, sync, live)
+                if selftest and live != reported_live:
+                    reported_live = live
+                    log(f"live={1 if live else 0} level={sync.level:.3f}")
+                if selftest:
+                    print(json.dumps({
+                        "live": live,
+                        "level": round(sync.level, 3),
+                        "bands": [round(v, 2) for v in sync.eased],
+                    }), flush=True)
+    finally:
+        cava.stop()
+
+    if selftest:
+        log(f"selftest wrote {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(0)

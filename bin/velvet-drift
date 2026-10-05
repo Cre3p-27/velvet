@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-drift
+
+A quiet field of particles moving through a flow that never repeats, leaving
+trails that fade. There is nothing to read here — it is the thing you put in
+the corner of a wallpaper because a desktop with one live moving object on it
+feels alive and a desktop with none does not.
+
+Everything is computed; it opens no files and reads no state.
+"""
+
+import math
+import os
+import random
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _velvet import RESET, fg, mix, opt, opt_float, run, shade  # noqa: E402
+
+RAMP = " ·∴⋯⁘▪▫◦●█"
+
+state = {
+    "cols": 0,
+    "rows": 0,
+    "grid": [],
+    "parts": [],
+    "seed": random.random() * 100.0,
+}
+
+
+def reset(cols, rows, count):
+    state["cols"], state["rows"] = cols, rows
+    state["grid"] = [0.0] * (cols * rows)
+    state["parts"] = [
+        {
+            "x": random.random() * cols,
+            "y": random.random() * rows,
+            "age": random.random() * 90.0,
+            "life": 60.0 + random.random() * 120.0,
+            "hue": random.random(),
+        }
+        for _ in range(count)
+    ]
+
+
+def flow(x, y, t, seed):
+    """Two sine fields crossed at an angle. Cheap, smooth, and it never lines
+    up with itself because the two periods are irrational multiples."""
+    a = math.sin(x * 0.11 + t * 0.27 + seed) + math.cos(y * 0.17 - t * 0.19)
+    b = math.cos(x * 0.07 - t * 0.23) + math.sin(y * 0.13 + t * 0.31 + seed * 0.5)
+    return math.atan2(b, a) + math.sin(t * 0.13) * 0.6
+
+
+# Its own switches:
+#   --density K     how many particles (0.25 sparse … 3 crowded)
+#   --trails short|normal|long   how long the paths linger
+def draw(scr, t):
+    pal = scr.palette
+    accent, alt, ink = pal.accent, pal.accentAlt, pal.ink
+    # Read every frame — the designer can change them while it runs.
+    density = opt_float("density", 1.0, 0.25, 3.0)
+    FADE = {"short": 0.8, "normal": 0.9, "long": 0.96}.get(str(opt("trails", "normal")), 0.9)
+
+    cols, rows = scr.cols, scr.rows
+    want = max(12, min(900, int((cols * rows) // 14 * density)))
+    if cols != state["cols"] or rows != state["rows"] or len(state.get("parts") or []) != want:
+        reset(cols, rows, want)
+
+    grid = state["grid"]
+    hues = [0.0] * (cols * rows)
+
+    # Trails fade rather than clear, which is what makes the motion readable.
+    for i in range(len(grid)):
+        grid[i] *= FADE
+
+    for p in state["parts"]:
+        ang = flow(p["x"], p["y"] * 2.0, t, state["seed"])
+        # Cells are about twice as tall as wide, so vertical steps get halved.
+        p["x"] += math.cos(ang) * 0.62
+        p["y"] += math.sin(ang) * 0.31
+        p["age"] += 1.0
+
+        if (p["age"] > p["life"] or p["x"] < -2 or p["x"] > cols + 2
+                or p["y"] < -2 or p["y"] > rows + 2):
+            p["x"] = random.random() * cols
+            p["y"] = random.random() * rows
+            p["age"] = 0.0
+            p["life"] = 60.0 + random.random() * 120.0
+            p["hue"] = random.random()
+
+        ix, iy = int(p["x"]), int(p["y"])
+        if 0 <= ix < cols and 0 <= iy < rows:
+            k = iy * cols + ix
+            # Fade in and out at the ends of a life so nothing ever pops.
+            edge = min(1.0, p["age"] / 12.0, (p["life"] - p["age"]) / 18.0)
+            grid[k] = min(1.0, grid[k] + 0.5 * max(0.0, edge))
+            hues[k] = p["hue"]
+
+    cold = shade(accent, 0.45)
+    warm = mix(accent, ink, 0.35)
+
+    lines = []
+    for y in range(rows):
+        out = []
+        last = None
+        base = y * cols
+        for x in range(cols):
+            v = grid[base + x]
+            if v < 0.02:
+                if last is not None:
+                    out.append(RESET)
+                    last = None
+                out.append(" ")
+                continue
+            ch = RAMP[min(len(RAMP) - 1, int(v * (len(RAMP) - 1)))]
+            c = mix(mix(cold, alt, hues[base + x] * 0.5), warm, v)
+            if c != last:
+                out.append(fg(c))
+                last = c
+            out.append(ch)
+        lines.append("".join(out) + RESET)
+    return lines
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(draw, fps=24, title="velvet-drift"))

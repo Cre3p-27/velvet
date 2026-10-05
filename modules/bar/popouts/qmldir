@@ -1,0 +1,5 @@
+module qs.modules.bar.popouts
+QuickPanel 1.0 QuickPanel.qml
+Tip 1.0 Tip.qml
+TrayMenu 1.0 TrayMenu.qml
+WorkspacePeek 1.0 WorkspacePeek.qml

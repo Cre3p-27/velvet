@@ -1,0 +1,9 @@
+module qs.config
+singleton Appearance 1.0 Appearance.qml
+singleton Build 1.0 Build.qml
+singleton Config 1.0 Config.qml
+singleton Modules 1.0 Modules.qml
+singleton Schema 1.0 Schema.qml
+singleton Shortcuts 1.0 Shortcuts.qml
+singleton TermApps 1.0 TermApps.qml
+singleton LockModules 1.0 LockModules.qml

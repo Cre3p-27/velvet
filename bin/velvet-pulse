@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-pulse
+
+What is playing, and what it looks like.
+
+The spectrum is REAL when cava is installed: this starts it with a raw output
+config and reads the numbers it prints. Without cava there is nothing on a
+stock system to get audio levels from without pulling in a library, so it falls
+back to a field driven by the track's own position — and says so in the corner,
+because a fake meter that claims to be real is worse than no meter.
+
+Track, artist and position come from playerctl when it is there.
+"""
+
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _velvet import (BOLD, RESET, fg, hbar, mix, opt_on, run, shade, vbar, wave)  # noqa: E402
+
+BARS = 48
+
+state = {
+    "cava": None,
+    "cava_conf": None,
+    "levels": [0.0] * BARS,
+    "eased": [0.0] * BARS,
+    "real": False,
+    "meta": {},
+    "meta_at": 0.0,
+    "seeds": [random.random() * 6.28 for _ in range(BARS)],
+}
+
+
+# ─────────────────────────────────────────────────────────────────────── cava
+def start_cava():
+    if state["cava"] is not None or shutil.which("cava") is None:
+        return
+    conf = tempfile.NamedTemporaryFile("w", suffix=".conf", delete=False)
+    conf.write(
+        "[general]\n"
+        "bars = %d\n"
+        "framerate = 30\n"
+        "autosens = 1\n"
+        "[output]\n"
+        "method = raw\n"
+        "raw_target = /dev/stdout\n"
+        "data_format = ascii\n"
+        "ascii_max_range = 1000\n" % BARS
+    )
+    conf.close()
+    state["cava_conf"] = conf.name
+    try:
+        state["cava"] = subprocess.Popen(
+            ["cava", "-p", conf.name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+        # Not "real" until a frame actually parses — cava can die a moment
+        # after starting, and the corner must not claim LIVE on an empty meter.
+    except OSError:
+        state["cava"] = None
+
+
+def poll_cava():
+    proc = state["cava"]
+    if proc is None or proc.stdout is None:
+        return
+    if proc.poll() is not None:
+        state["cava"] = None
+        state["real"] = False
+        return
+    import select as _select
+    line = None
+    # Drain everything already buffered: only the newest frame matters, and
+    # cava will happily outrun a 30 fps draw if the pipe is left to fill —
+    # a bounded drain shows levels seconds behind the music.
+    while True:
+        try:
+            ready, _, _ = _select.select([proc.stdout], [], [], 0)
+        except (OSError, ValueError):
+            return
+        if not ready:
+            break
+        got = proc.stdout.readline()
+        if not got:
+            break
+        line = got
+    if not line:
+        return
+    parts = [p for p in line.strip().split(";") if p]
+    if len(parts) < 2:
+        return
+    try:
+        vals = [min(1.0, int(p) / 1000.0) for p in parts]
+    except ValueError:
+        return
+    if len(vals) < BARS:
+        vals += [0.0] * (BARS - len(vals))
+    state["levels"] = vals[:BARS]
+    state["real"] = True
+
+
+def stop_cava():
+    proc = state["cava"]
+    if proc is not None:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+    if state["cava_conf"]:
+        try:
+            os.unlink(state["cava_conf"])
+        except OSError:
+            pass
+
+
+# ────────────────────────────────────────────────────────────────── playerctl
+def playerctl(*args):
+    try:
+        out = subprocess.run(
+            ["playerctl", *args],
+            capture_output=True, text=True, timeout=0.6, check=False,
+        )
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def refresh_meta(t):
+    if t - state["meta_at"] < 1.0:
+        return
+    state["meta_at"] = t
+    if shutil.which("playerctl") is None:
+        state["meta"] = {}
+        return
+    raw = playerctl("metadata", "--format",
+                    "{{title}}\x1f{{artist}}\x1f{{album}}\x1f{{status}}\x1f{{position}}\x1f{{mpris:length}}")
+    if not raw:
+        state["meta"] = {}
+        return
+    bits = raw.split("\x1f")
+    while len(bits) < 6:
+        bits.append("")
+    try:
+        pos = int(bits[4] or 0) / 1e6
+        length = int(bits[5] or 0) / 1e6
+    except ValueError:
+        pos, length = 0.0, 0.0
+    state["meta"] = {
+        "title": bits[0], "artist": bits[1], "album": bits[2],
+        "status": bits[3], "pos": pos, "len": length,
+    }
+
+
+def clock(secs):
+    secs = max(0, int(secs))
+    return "%d:%02d" % (secs // 60, secs % 60)
+
+
+# ─────────────────────────────────────────────────────────────────────── draw
+# Its own switches:
+#   --bars-only     just the spectrum, filling the whole window
+#   --no-note       drop the LIVE FROM CAVA / DECORATIVE footnote
+def draw(scr, t):
+    pal = scr.palette
+    accent, ink, dim = pal.accent, pal.ink, pal.inkDim
+    # Read every frame — the designer can change them while it runs.
+    BARS_ONLY = opt_on("bars-only")
+    NO_NOTE = opt_on("no-note")
+
+    start_cava()
+    poll_cava()
+    refresh_meta(t)
+    meta = state["meta"]
+    playing = meta.get("status", "") == "Playing"
+
+    if not state["real"]:
+        # Decorative, and labelled as such. Quiet when nothing is playing.
+        amp = 1.0 if playing else 0.12
+        for i in range(BARS):
+            s = state["seeds"][i]
+            v = (wave(t, 2.3, s) * 0.55 + wave(t, 5.1, s * 2.0) * 0.3
+                 + wave(t, 0.7, s * 0.5) * 0.25)
+            hump = 1.0 - abs(i / (BARS - 1.0) - 0.42) * 1.25
+            state["levels"][i] = max(0.0, min(1.0, v * hump * amp))
+
+    for i in range(BARS):
+        target = state["levels"][i]
+        cur = state["eased"][i]
+        # Rise fast, fall slow: that is what a level meter is supposed to do.
+        state["eased"][i] = cur + (target - cur) * (0.55 if target > cur else 0.16)
+
+    lines = []
+    w = scr.cols
+    inner = max(8, w - 4)
+    # Stretch the spectrum across whatever width there is rather than leaving
+    # a gap: a meter that stops halfway looks broken even when it is not.
+    bars = max(4, inner)
+    step = BARS / bars
+    graph_h = max(3, scr.rows - (1 if BARS_ONLY else 8))
+
+    # ── the spectrum, mirrored down the middle line for weight
+    for row in range(graph_h):
+        hi = 1.0 - row / graph_h
+        lo = 1.0 - (row + 1) / graph_h
+        out = ["  "]
+        last = None
+        for b in range(bars):
+            v = state["eased"][int(b * step)]
+            if v >= hi:
+                ch = "█"
+            elif v <= lo:
+                ch = " "
+            else:
+                ch = vbar((v - lo) / max(0.0001, hi - lo))
+            c = mix(shade(accent, 0.4), mix(accent, ink, 0.25), 1.0 - row / max(1, graph_h))
+            if c != last:
+                out.append(fg(c))
+                last = c
+            out.append(ch)
+        lines.append("".join(out) + RESET)
+
+    if BARS_ONLY:
+        return lines[:scr.rows]
+
+    lines.append("")
+
+    # ── what it is
+    title = meta.get("title") or ("NOTHING PLAYING" if not meta else "—")
+    artist = meta.get("artist") or ""
+    head = title.upper()
+    if len(head) > inner:
+        head = head[:inner - 1] + "…"
+    lines.append("  " + fg(ink) + BOLD + head + RESET)
+    if artist:
+        sub = artist.upper()
+        if meta.get("album"):
+            sub += "   ·   " + meta["album"].upper()
+        lines.append("  " + fg(dim) + sub[:inner] + RESET)
+    else:
+        lines.append("")
+
+    # ── where it is
+    pos = meta.get("pos", 0.0)
+    length = meta.get("len", 0.0)
+    if length > 0:
+        bar_w = max(8, inner - 16)
+        frac = max(0.0, min(1.0, pos / length))
+        lines.append(
+            "  " + fg(accent) + hbar(bar_w, frac)
+            + fg(dim) + "  " + clock(pos) + " / " + clock(length) + RESET
+        )
+    else:
+        lines.append("")
+
+    if not NO_NOTE:
+        note = "LIVE FROM CAVA" if state["real"] else "DECORATIVE  ·  INSTALL CAVA FOR REAL LEVELS"
+        lines.append("  " + fg(shade(dim, 0.7)) + note + RESET)
+
+    return lines[:scr.rows]
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(run(draw, fps=30, title="velvet-pulse"))
+    finally:
+        stop_cava()

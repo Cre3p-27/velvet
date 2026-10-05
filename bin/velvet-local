@@ -1,0 +1,1096 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-local
+
+Velly's engine room: everything she needs to think, hear and speak with no
+account, no key and no meter running. Once it is on disk it never needs the
+network again.
+
+    brain   llama.cpp (the Vulkan build when there is a GPU) + Qwen3-4B-Instruct
+    ears    whisper.cpp + ggml-small, multilingual
+    voice   piper + a German voice, fetched from the piper voice index
+
+Three promises, and they are the reason this is a file of its own:
+
+  · **Nothing downloads behind your back.** `ensure` is the only verb that
+    touches the network. It says what it is fetching, how big it is and how
+    far along it is — into ~/.config/velvet/ai-install.json, which the island
+    reads while it draws the progress bar.
+  · **The server lives and dies with the session.** `serve` starts
+    llama-server on localhost, waits until it really answers, then watches:
+    when the island's session file is closed and nothing has been asked for a
+    while, the model goes down again. Asleep means asleep — and the VRAM is
+    yours while she dreams.
+  · **It never lies about what is installed.** `status` reports every piece
+    with its real size; bin/velvet-ai reads that before it claims to be local,
+    and the island believes the brain, not a wish.
+
+Stdlib only, like everything in bin/.
+
+    velvet-local status                  what is on disk, in JSON
+    velvet-local ensure                  fetch what is missing (progress file)
+    velvet-local brain [klein|mittel|gross|max]   switch the model size
+    velvet-local ears [small|turbo|genau]         switch the ear model
+    velvet-local serve [--idle 600] [--force]
+                                         start the model server, watch it;
+                                         --force keeps the CHOSEN weights even
+                                         when they are far from fitting,
+                                         instead of serving a smaller size
+    velvet-local stop                    take the server down now
+    velvet-local ears-gpu                build whisper.cpp with Vulkan (engines/whisper-gpu):
+                                         speech recognition in 0.4 s instead of ~3 s
+"""
+
+import fcntl
+import glob
+import json
+import os
+import signal
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.error
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _gpu  # noqa: E402  (which card, and is somebody gaming)
+
+HOME = os.path.expanduser("~")
+CONF_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "velvet")
+DATA_DIR = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share"), "velvet")
+ENGINES = os.path.join(DATA_DIR, "engines")
+MODELS = os.path.join(DATA_DIR, "models")
+VOICES = os.path.join(DATA_DIR, "voices")
+
+INSTALL_PATH = os.path.join(CONF_DIR, "ai-install.json")   # the island watches this one
+LOCAL_PATH = os.path.join(CONF_DIR, "ai-local.json")       # where the server is, if it is
+SESSION_PATH = os.path.join(CONF_DIR, "ai-session.json")
+REQ_PATH = os.path.join(CONF_DIR, "ai-req.json")
+STATE_PATH = os.path.join(CONF_DIR, "ai-state.json")
+LOG_PATH = os.path.join(DATA_DIR, "velvet-local.log")
+SERVER_LOG = os.path.join(DATA_DIR, "velvet-server.log")   # llama.cpp is chatty; keep it out of ours
+
+PORT = int(os.environ.get("VELLY_LOCAL_PORT") or "8137")
+CONTEXT = int(os.environ.get("VELLY_LOCAL_CONTEXT") or "16384")
+
+# Pinned, tested releases — a floating URL is how a shell breaks itself on a
+# Tuesday. Bump deliberately, after a run.
+LLAMA_TAG = "b11103"
+LLAMA_VULKAN = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_TAG}/llama-{LLAMA_TAG}-bin-ubuntu-vulkan-x64.tar.gz"
+LLAMA_CPU = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_TAG}/llama-{LLAMA_TAG}-bin-ubuntu-x64.tar.gz"
+
+WHISPER_TAG = "b5130"
+WHISPER_BIN = f"https://github.com/ggml-org/whisper.cpp/releases/download/{WHISPER_TAG}/whisper-bin-ubuntu-x64.tar.gz"
+# Turbo is the accuracy/price sweet spot: five times the size of the tiny
+# models, far better German, and still fast enough on a desktop CPU. The small
+# model stays available (`velvet-local ears small`) for slow machines.
+WHISPER_MODEL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin"
+
+BRAIN_URL = "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+
+BRAIN_FILE = os.path.join(MODELS, "brain.gguf")
+BRAIN_MARK = BRAIN_FILE + ".ok"        # written only when the download finished
+
+# Four sizes, one active brain.gguf: it is a SYMLINK to the chosen file, so
+# switching is instant and the weights you already paid for stay on disk.
+# Only 'klein' and 'mittel' fit next to a desktop that is really being used —
+# the free VRAM decides what serve() dares, and the fallback chain catches it
+# when it guessed wrong.
+BRAIN_TIERS = {
+    "klein": {
+        "label": "QWEN3-4B",
+        "file": "brain-4b.gguf",
+        "mb": 2382,
+        "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        "note": "schnell und genügsam · läuft immer",
+        "args": [],
+    },
+    "mittel": {
+        "label": "QWEN3-8B",
+        "file": "brain-8b.gguf",
+        "mb": 4795,
+        "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+        "note": "deutlich klüger · passt neben Minecraft und Chrome",
+        # Qwen3 thinks by default; an assistant that thinks out loud before every
+        # "mach lauter" is slower and worse at tool calls.
+        "args": ["-rea", "off"],
+    },
+    "gross": {
+        "label": "QWEN3-14B",
+        "file": "brain-14b.gguf",
+        "mb": 9000,
+        "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+        "note": "die klügste Option hier · will die GPU für sich",
+        "args": ["-rea", "off"],
+    },
+    "max": {
+        "label": "GPT-OSS-20B",
+        "file": "brain-oss20b.gguf",
+        "mb": 11549,
+        "url": "https://huggingface.co/ggml-org/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-MXFP4.gguf",
+        "note": "MoE: nur 3,6B aktiv, sehr klug — teilt die GPU mit dir",
+        # Mixture of experts: when the VRAM is short the experts can move to
+        # the CPU while the attention stays on the GPU. Forced mode uses that.
+        "moe": True,
+        # `low`, because native tool calling (see tool_schema()) is what makes
+        # gpt-oss reliable. Asked for tools in prose it ended inside its
+        # analysis channel — empty answers, no calls, "unbenutzbar". With the
+        # tools declared natively even `low` returns clean tool calls and real
+        # German answers, at ~112 tok/s on the GPU.
+        "args": ["--chat-template-kwargs", '{"reasoning_effort":"low"}'],
+    },
+}
+DEFAULT_BRAIN_TIER = "mittel"
+WHISPER_FILE = os.path.join(MODELS, "ggml-large-v3-turbo-q5_0.bin")
+# Best first: whatever is on disk is what the ears use.
+EAR_MODELS = ("ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin", "ggml-large-v3.bin",
+              "ggml-medium-q5_0.bin", "ggml-medium.bin", "ggml-small.bin")
+EAR_PRESETS = {"klein": "ggml-small.bin", "small": "ggml-small.bin",
+               "mittel": "ggml-medium-q5_0.bin", "medium": "ggml-medium-q5_0.bin",
+               "turbo": "ggml-large-v3-turbo-q5_0.bin",
+               "genau": "ggml-large-v3.bin", "large": "ggml-large-v3.bin"}
+PIPER_VOICE = os.environ.get("VELLY_VOICE") or "de_DE-thorsten-medium"
+
+CHUNK = 1 << 18
+
+
+def log(msg: str) -> None:
+    line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+    print(f"velvet-local: {line}", file=sys.stderr, flush=True)
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────── state files
+def write_json(path: str, payload) -> None:
+    """In place — the shell watches this exact inode, never a rename."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        log(f"cannot write {path}: {exc}")
+
+
+def read_json(path: str, fallback):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return fallback
+
+
+def progress(label: str, stage: int, stages: int, pct: float, detail: str = "", done: bool = False,
+             ok: bool = True, error: str = "") -> None:
+    write_json(INSTALL_PATH, {
+        "at": int(time.time() * 1000),
+        "label": label,
+        "stage": stage,
+        "stages": stages,
+        "pct": max(0, min(100, int(pct))),
+        "detail": detail,
+        "done": bool(done),
+        "ok": bool(ok),
+        "error": error,
+        "running": not done,
+    })
+
+
+# ─────────────────────────────────────────────────────────── what is on disk
+def find_bin(name: str) -> str:
+    """The newest matching executable under engines/ — builds move, names did."""
+    # engines/whisper-gpu is not a drop-in: it needs the card, and a game may
+    # hold it — velvet-ai picks it deliberately (see ears_gpu()).
+    hits = [p for p in glob.glob(os.path.join(ENGINES, "**", name), recursive=True)
+            if os.path.isfile(p) and os.access(p, os.X_OK) and os.sep + "whisper-gpu" + os.sep not in p]
+    if not hits:
+        return ""
+    # The Vulkan build lives in engines/llama, the CPU fallback in engines/llama-cpu:
+    # prefer the one that is not the fallback, then the newest.
+    hits.sort(key=lambda p: ("-cpu" in p, -os.path.getmtime(p)))
+    return hits[0]
+
+
+def size_mb(path: str) -> float:
+    try:
+        return round(os.path.getsize(path) / (1024 * 1024), 1)
+    except OSError:
+        return 0.0
+
+
+def vulkan_device() -> str:
+    """The first real GPU Vulkan offers. Empty when there is none (or no
+    vulkaninfo), and then the CPU build is the honest choice."""
+    try:
+        proc = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, timeout=8)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    for line in proc.stdout.decode("utf-8", "replace").splitlines():
+        if "deviceName" in line:
+            name = line.split("=", 1)[-1].strip()
+            if name:
+                return name
+    return ""
+
+
+def piper_voice_file() -> str:
+    try:
+        files = sorted(f for f in os.listdir(VOICES) if f.endswith(".onnx"))
+    except OSError:
+        return ""
+    return os.path.join(VOICES, files[0]) if files else ""
+
+
+def weights_whole(path: str) -> bool:
+    """Whole means: a marker that matches the file, or a size no fragment
+    could have. A truncated download with the right name is the one mistake
+    this must never make."""
+    if not os.path.isfile(path):
+        return False
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return False
+    try:
+        with open(path + ".ok", "r", encoding="utf-8") as fh:
+            return int((fh.read() or "0").strip() or 0) == size
+    except (OSError, ValueError):
+        return size > 1_000_000_000
+
+
+def brain_ok() -> bool:
+    return weights_whole(BRAIN_FILE)
+
+
+def brain_tier() -> str:
+    """Which tier brain.gguf points at. A plain file (the layout before tiers
+    existed) counts as klein — relink_brain() parks it as brain-4b.gguf."""
+    if not os.path.exists(BRAIN_FILE):
+        return ""
+    if not os.path.islink(BRAIN_FILE):
+        return "klein"
+    base = os.path.basename(os.path.realpath(BRAIN_FILE))
+    for name, tier in BRAIN_TIERS.items():
+        if tier["file"] == base:
+            return name
+    return ""
+
+
+def free_vram_mb() -> int:
+    """How much VRAM the desktop is not using, on the biggest card. The model
+    shares this machine with whatever the user is doing — this number, not a
+    wish, decides context size and offload."""
+    best = 0
+    for dev in glob.glob("/sys/class/drm/card*/device"):
+        try:
+            with open(os.path.join(dev, "mem_info_vram_total"), "r", encoding="utf-8") as fh:
+                total = int((fh.read() or "0").strip())
+            with open(os.path.join(dev, "mem_info_vram_used"), "r", encoding="utf-8") as fh:
+                used = int((fh.read() or "0").strip())
+        except (OSError, ValueError):
+            continue
+        if total > 2 * 1024 ** 3:                     # a real GPU, not the iGPU
+            best = max(best, (total - used) // 1048576)
+    return best
+
+
+def relink_brain(src: str) -> bool:
+    """brain.gguf becomes a symlink to the chosen weights: switching is instant
+    and the model you already downloaded stays on disk for the way back."""
+    stop(quiet=True)
+    if os.path.islink(BRAIN_FILE):
+        try:
+            os.unlink(BRAIN_FILE)
+        except OSError:
+            return False
+    elif os.path.exists(BRAIN_FILE):
+        keep = os.path.join(MODELS, "brain-4b.gguf")
+        try:
+            if not os.path.exists(keep):
+                os.replace(BRAIN_FILE, keep)
+                with open(keep + ".ok", "w", encoding="utf-8") as fh:
+                    fh.write(str(os.path.getsize(keep)))
+            else:
+                os.unlink(BRAIN_FILE)
+        except OSError as exc:
+            log(f"cannot park the old brain: {exc}")
+            return False
+    try:
+        os.symlink(src, BRAIN_FILE)
+    except OSError as exc:
+        log(f"cannot point brain.gguf at {src}: {exc}")
+        return False
+    try:
+        with open(BRAIN_MARK, "w", encoding="utf-8") as fh:
+            fh.write(str(os.path.getsize(src)))
+    except OSError:
+        pass
+    log(f"brain now: {os.path.basename(src)}")
+    return True
+
+
+def brain_set(name: str) -> int:
+    """Switch the model size: fetch it once if needed, then repoint."""
+    key = str(name or "").strip().lower()
+    tier = BRAIN_TIERS.get(key)
+    if tier is None:
+        print(json.dumps({"ok": False, "error": f"unbekannte Größe {name!r}",
+                          "tiers": {k: v["label"] for k, v in BRAIN_TIERS.items()}}, ensure_ascii=False))
+        return 2
+    src = os.path.join(MODELS, tier["file"])
+    if brain_tier() == key and weights_whole(src):
+        print(json.dumps({"ok": True, "already": True, **status()["brain"]}, ensure_ascii=False))
+        return 0
+    if not weights_whole(src):
+        if not fetch(tier["url"], src, f"GEHIRN · {tier['label']}", 1, 1):
+            return 1
+        try:
+            with open(src + ".ok", "w", encoding="utf-8") as fh:
+                fh.write(str(os.path.getsize(src)))
+        except OSError:
+            pass
+    if not relink_brain(src):
+        return 1
+    progress("BEREIT", 1, 1, 100, tier["label"], done=True, ok=True)
+    print(json.dumps({"ok": True, "tier": key, **status()["brain"]}, ensure_ascii=False))
+    return 0
+
+
+def ear_model() -> str:
+    """The best ear model that is really on disk, or empty."""
+    for name in EAR_MODELS:
+        path = os.path.join(MODELS, name)
+        try:
+            if os.path.getsize(path) > 20_000_000:
+                return path
+        except OSError:
+            continue
+    return ""
+
+
+def ear_quality() -> str:
+    model = os.path.basename(ear_model())
+    if not model:
+        return ""
+    if "turbo" in model:
+        return "turbo"
+    if "large" in model:
+        return "genau"
+    if "medium" in model:
+        return "mittel"
+    return "schnell"
+
+
+def ears_ok() -> bool:
+    return bool(find_bin("whisper-cli") or find_bin("main")) and bool(ear_model())
+
+
+def voice_ok() -> bool:
+    return bool(piper_voice_file())
+
+
+def status() -> dict:
+    server = find_bin("llama-server")
+    whisper = find_bin("whisper-cli") or find_bin("main")
+    voice = piper_voice_file()
+    local = read_json(LOCAL_PATH, {})
+    return {
+        "at": int(time.time() * 1000),
+        "ok": bool(server) and brain_ok(),
+        "port": PORT,
+        "up": health(0.4),
+        "pid": int(local.get("pid") or 0),
+        "engine": local.get("engine") or "",
+        "fits": local.get("fits", True),
+        "forced": bool(local.get("forced")),
+        "fit_note": local.get("note") or "",
+        "gpu": vulkan_device(),
+        "brain": {
+            "installed": bool(server) and brain_ok(),
+            "server": server,
+            "tier": brain_tier(),
+            "label": (BRAIN_TIERS.get(brain_tier()) or {}).get("label", ""),
+            "model": os.path.basename(os.path.realpath(BRAIN_FILE)) if os.path.exists(BRAIN_FILE) else "",
+            "mb": size_mb(BRAIN_FILE),
+            "whole": brain_ok(),
+        },
+        "vram_free_mb": free_vram_mb(),
+        "tiers": {k: {"label": v["label"], "mb": v["mb"], "note": v["note"]}
+                  for k, v in BRAIN_TIERS.items()},
+        "ears": {
+            "installed": ears_ok(),
+            "binary": whisper,
+            "gpu": os.path.join(GPU_EARS, "whisper-cli") if os.path.isfile(os.path.join(GPU_EARS, "whisper-cli")) else "",
+            "model": os.path.basename(ear_model()) or os.path.basename(WHISPER_FILE),
+            "quality": ear_quality(),
+            "mb": size_mb(ear_model() or WHISPER_FILE),
+        },
+        "voice": {
+            "installed": bool(voice),
+            "name": PIPER_VOICE,
+            "file": os.path.basename(voice),
+            "mb": size_mb(voice),
+        },
+        "dirs": {"data": DATA_DIR, "models": MODELS, "voices": VOICES, "engines": ENGINES},
+    }
+
+
+# ─────────────────────────────────────────────────────────────────── network
+def fetch(url: str, dest: str, label: str, stage: int, stages: int) -> bool:
+    """One file, resumable, with the progress file written as it goes."""
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    part = dest + ".part"
+    have = os.path.getsize(part) if os.path.exists(part) else 0
+    req = urllib.request.Request(url)
+    if have:
+        req.add_header("Range", f"bytes={have}-")
+    try:
+        resp = urllib.request.urlopen(req, timeout=60)
+    except Exception as exc:                                   # noqa: BLE001
+        progress(label, stage, stages, 0, "NETZ FEHLT", ok=False, error=str(exc)[:200])
+        log(f"{label}: {exc}")
+        return False
+    if resp.status != 206 or not have:
+        have = 0
+        mode = "wb"
+    else:
+        mode = "ab"
+    total = have + int(resp.headers.get("Content-Length") or 0)
+    written = have
+    last = 0.0
+    try:
+        with open(part, mode) as fh:
+            while True:
+                chunk = resp.read(CHUNK)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                written += len(chunk)
+                now = time.monotonic()
+                if now - last > 0.4:
+                    last = now
+                    pct = (written / total * 100) if total else 0
+                    progress(label, stage, stages, pct,
+                             f"{written / 1048576:.0f} / {total / 1048576:.0f} MB" if total else f"{written / 1048576:.0f} MB")
+        # http.client does not raise when the body ends early: a dropped
+        # connection would otherwise be renamed into place and marked whole.
+        # Raising keeps the .part file, so the next run resumes it.
+        if total and written != total:
+            raise OSError(f"unvollständig: {written}/{total} Bytes")
+        os.replace(part, dest)
+    except Exception as exc:                                   # noqa: BLE001
+        progress(label, stage, stages, 0, "ABBRUCH", ok=False, error=str(exc)[:200])
+        log(f"{label}: {exc}")
+        return False
+    finally:
+        try:
+            resp.close()
+        except Exception:                                      # noqa: BLE001
+            pass
+    if dest.endswith(".gguf"):
+        # A half-downloaded GGUF still has the right magic bytes and the right
+        # name. The marker is the only honest proof that it is whole.
+        try:
+            with open(dest + ".ok", "w", encoding="utf-8") as fh:
+                fh.write(str(os.path.getsize(dest)))
+        except OSError:
+            pass
+    log(f"{label}: {size_mb(dest)} MB")
+    return True
+
+
+def extract(archive: str, dest: str, label: str, stage: int, stages: int) -> bool:
+    """Unpack a release tarball and flatten its single top directory, so the
+    binary ends up where find_bin() looks for it."""
+    tmp = archive + ".x"
+    try:
+        subprocess.run(["rm", "-rf", tmp], check=False)
+        os.makedirs(tmp, exist_ok=True)
+        with tarfile.open(archive) as tf:
+            members = tf.getmembers()
+            for i, member in enumerate(members):
+                tf.extract(member, tmp, filter="data")
+                if i % 200 == 0:
+                    progress(label, stage, stages, 100 * i / max(1, len(members)), "ENTPACKEN")
+        entries = [e for e in os.listdir(tmp) if not e.startswith(".")]
+        root = tmp
+        if len(entries) == 1 and os.path.isdir(os.path.join(tmp, entries[0])):
+            root = os.path.join(tmp, entries[0])
+        os.makedirs(dest, exist_ok=True)
+        for name in os.listdir(root):
+            src = os.path.join(root, name)
+            dst = os.path.join(dest, name)
+            if os.path.isdir(dst):
+                subprocess.run(["rm", "-rf", dst], check=False)
+            elif os.path.exists(dst):
+                os.unlink(dst)
+            os.replace(src, dst) if not os.path.isdir(src) else _move_dir(src, dst)
+        subprocess.run(["rm", "-rf", tmp], check=False)
+        return True
+    except Exception as exc:                                   # noqa: BLE001
+        progress(label, stage, stages, 0, "ENTPACKEN FEHLGESCHLAGEN", ok=False, error=str(exc)[:200])
+        log(f"{label}: extract failed: {exc}")
+        return False
+
+
+def _move_dir(src: str, dst: str) -> None:
+    import shutil
+    shutil.move(src, dst)
+
+
+# ─────────────────────────────────────────────────────────────────── install
+def install_engine(stage: int, stages: int) -> bool:
+    url = LLAMA_VULKAN if vulkan_device() else LLAMA_CPU
+    label = "ENGINE · LLAMA.CPP"
+    archive = os.path.join(ENGINES, "llama.tar.gz")
+    if not fetch(url, archive, label, stage, stages):
+        # A broken Vulkan driver must not cost the brain: the CPU build is a
+        # real fallback, only slower.
+        if url == LLAMA_VULKAN and not fetch(LLAMA_CPU, archive, label, stage, stages):
+            return False
+    return extract(archive, os.path.join(ENGINES, "llama"), label, stage, stages)
+
+
+def install_brain(stage: int, stages: int) -> bool:
+    """The default tier — 'mittel' — unless VELLY_BRAIN says otherwise."""
+    name = (os.environ.get("VELLY_BRAIN") or DEFAULT_BRAIN_TIER).lower()
+    tier = BRAIN_TIERS.get(name) or BRAIN_TIERS[DEFAULT_BRAIN_TIER]
+    src = os.path.join(MODELS, tier["file"])
+    if not weights_whole(src):
+        if not fetch(tier["url"], src, f"GEHIRN · {tier['label']}", stage, stages):
+            return False
+    return relink_brain(src) if brain_tier() != name else True
+
+
+def install_ears(stage: int, stages: int) -> bool:
+    archive = os.path.join(ENGINES, "whisper.tar.gz")
+    if not find_bin("whisper-cli") and not find_bin("main"):
+        if not fetch(WHISPER_BIN, archive, "OHREN · WHISPER.CPP", stage, stages):
+            return False
+        if not extract(archive, os.path.join(ENGINES, "whisper"), "OHREN · WHISPER.CPP", stage, stages):
+            return False
+    if not ear_model():
+        wanted = os.environ.get("VELLY_EARS_MODEL") or ""
+        target = os.path.join(MODELS, EAR_PRESETS.get(wanted.lower(), WHISPER_FILE.split("/")[-1]))
+        url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{os.path.basename(target)}"
+        return fetch(url, target, f"OHREN · {os.path.basename(target)}", stage, stages)
+    return True
+
+
+def ears_setup(size: str) -> int:
+    """Fetch a different ear model: small, medium, turbo or large."""
+    name = EAR_PRESETS.get(str(size or "").lower(), "")
+    if not name:
+        raw = str(size or "").strip()
+        name = raw if raw.endswith(".bin") else f"ggml-{raw}.bin"
+    target = os.path.join(MODELS, name)
+    if os.path.isfile(target) and os.path.getsize(target) > 20_000_000:
+        print(json.dumps({"ok": True, "already": True, "model": name, **status()["ears"]},
+                         ensure_ascii=False))
+        return 0
+    url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{name}"
+    ok = fetch(url, target, f"OHREN · {name}", 1, 1)
+    print(json.dumps({"ok": ok, "model": name, **status()["ears"]}, ensure_ascii=False))
+    return 0 if ok else 1
+
+
+def install_voice(stage: int, stages: int) -> bool:
+    """The voice comes from the piper index, through piper's own downloader."""
+    if voice_ok():
+        return True
+    cmd = [sys.executable, "-m", "piper.download_voices", PIPER_VOICE, "--download-dir", VOICES]
+    label = f"STIMME · {PIPER_VOICE.upper()}"
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # No Content-Length to read, so the progress is the directory growing.
+    while proc.poll() is None:
+        grown = 0
+        try:
+            grown = sum(os.path.getsize(os.path.join(VOICES, f)) for f in os.listdir(VOICES))
+        except OSError:
+            pass
+        progress(label, stage, stages, min(99, grown / (63 * 1048576) * 100), f"{grown / 1048576:.0f} MB")
+        time.sleep(0.5)
+    if proc.returncode != 0 or not voice_ok():
+        progress(label, stage, stages, 0, "STIMME FEHLT", ok=False,
+                 error="piper.download_voices failed")
+        return False
+    log(f"{label}: {size_mb(piper_voice_file())} MB")
+    return True
+
+
+def ensure() -> int:
+    steps = [
+        ("engine", lambda: bool(find_bin("llama-server")), install_engine),
+        ("brain", brain_ok, install_brain),
+        ("ears", ears_ok, install_ears),
+        ("voice", voice_ok, install_voice),
+    ]
+    stages = len(steps)
+    os.makedirs(ENGINES, exist_ok=True)
+    os.makedirs(MODELS, exist_ok=True)
+    os.makedirs(VOICES, exist_ok=True)
+    for i, (name, check, run) in enumerate(steps, 1):
+        if check():
+            log(f"{name}: already here")
+            continue
+        ok = bool(run(i, stages))
+        if not ok:
+            progress("ABBRUCH", i, stages, 0, name.upper(), done=True, ok=False,
+                     error=f"{name} could not be installed")
+            print(json.dumps({"ok": False, "failed": name}, ensure_ascii=False))
+            return 1
+    progress("BEREIT", stages, stages, 100, "ALLES LOKAL", done=True, ok=True)
+    print(json.dumps({"ok": True, **status()}, ensure_ascii=False))
+    return 0
+
+
+# ──────────────────────────────────────────────────────────────────── server
+def write_local_down(error: str = "") -> None:
+    """The server is gone, but what it was — tier, model, context, offload —
+    stays in the file: the island shows the last known brain while she sleeps
+    instead of a dash."""
+    keep = read_json(LOCAL_PATH, {})
+    payload = {"at": int(time.time() * 1000), "pid": 0, "port": PORT, "state": "down"}
+    if isinstance(keep, dict):
+        for key in ("model", "tier", "chosen", "wanted", "fits", "forced", "note",
+                    "ctx", "ngl", "engine", "vram_free_mb"):
+            if key in keep:
+                payload[key] = keep[key]
+    # The free-VRAM number is what the island uses to say what the next wake
+    # will run; the one from the last start is history. Measured now, after
+    # this very process let go of the weights.
+    payload["vram_free_mb"] = free_vram_mb()
+    if error:
+        payload["error"] = error
+    write_json(LOCAL_PATH, payload)
+
+
+def health(timeout: float = 0.6) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def session_open(grace: float = 8.0) -> bool:
+    data = read_json(SESSION_PATH, {})
+    if not isinstance(data, dict) or not data.get("active"):
+        return False
+    return float(data.get("until") or 0) >= time.time() * 1000 - grace * 1000
+
+
+def mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def fit_report(mark: int) -> str:
+    """What llama.cpp's fit decided, in the island's words: read from the
+    server log written since `mark` (the offload lines it prints at load)."""
+    try:
+        with open(SERVER_LOG, "r", encoding="utf-8", errors="replace") as fh:
+            fh.seek(mark)
+            text = fh.read()
+    except OSError:
+        return ""
+    import re                                                  # noqa: PLC0415
+    layers = re.findall(r"offloaded (\d+)/(\d+) layers to GPU", text)
+    cpu_moe = re.findall(r"(\d+) (?:expert|MoE)[^\n]*(?:CPU|host)", text, re.I)
+    if layers:
+        done, total = layers[-1]
+        if done != total:
+            return f"{done} von {total} schichten auf der gpu"
+    if cpu_moe:
+        return f"{cpu_moe[-1]} experten-schichten im ram"
+    return ""
+
+
+def serve(idle: float, force: bool = False) -> int:
+    if health():
+        log("server is already up")
+        print(json.dumps({"ok": True, "already": True, "port": PORT}))
+        return 0
+    try:
+        os.makedirs(CONF_DIR, exist_ok=True)
+        lock = open(os.path.join(CONF_DIR, "ai-local.lock"), "a+", encoding="utf-8")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        # A warm start and a first question can arrive together; the second
+        # one must not kill the first one's server on the way out.
+        log("another engine room is already starting up")
+        print(json.dumps({"ok": True, "already": True, "port": PORT}))
+        return 0
+    server = find_bin("llama-server")
+    if not server or not brain_ok():
+        log("no engine or no model on disk — run `velvet-local ensure`")
+        print(json.dumps({"ok": False, "error": "not installed"}))
+        return 1
+    threads = max(2, (os.cpu_count() or 4))
+    # ── which card ────────────────────────────────────────────────────────────
+    # llama.cpp's Vulkan build offers EVERY Vulkan device — on this box the
+    # RX 9070 XT and the Ryzen's integrated graphics (16 GB of borrowed system
+    # RAM) — and, left alone, splits the model across both. The share on the
+    # iGPU is what made the 20B crawl. One card: the discrete one.
+    device = _gpu.pick_device(server)
+    devargs = ["--device", device] if device else []
+    # ── does the chosen brain even fit? ─────────────────────────────────────
+    # The model shares this GPU with whatever the user is doing. llama.cpp's
+    # own --fit places it: every layer it can on the card, and for a mixture
+    # of experts only as many EXPERT layers in RAM as it must (the attention
+    # always stays on the GPU). That is the difference between the old
+    # -cmoe (ALL experts in RAM: 4–6 tokens/s, measured, for being 105 MB
+    # short) and a few percent of the speed.
+    model_file = BRAIN_FILE
+    vram = free_vram_mb()
+    tier_name = brain_tier()
+    tier = BRAIN_TIERS.get(tier_name) or {}
+    wanted_name = tier_name
+    size = size_mb(model_file)
+    # Weights plus a 16k q8 cache and the compute buffers — measured ~1.2 GB.
+    fits = (not tier) or (not vram) or size + 1300 <= vram
+    # How short is it? A MoE model a little short keeps its GPU and moves a
+    # few expert layers; far short (a game holding the card) it would be a
+    # crawl again — then the largest tier that fits serves, unless forced.
+    moe = bool(tier.get("moe"))
+    close = bool(vram) and (vram >= size * (0.66 if moe else 0.85))
+    forced_note = ""
+    if tier and vram and not fits:
+        if close:
+            forced_note = "ein paar experten im ram" if moe else "knapp — teils im ram"
+            log(f"{tier_name}: ~{size:.0f} MB wanted, {vram} MB free — close, llama.cpp fits it")
+        elif force:
+            forced_note = "viel im ram (langsam)"
+            log(f"{tier_name}: ~{size:.0f} MB wanted, {vram} MB free — forced ({forced_note})")
+        else:
+            for name in ("gross", "mittel", "klein"):
+                if name == tier_name:
+                    continue
+                alt = BRAIN_TIERS[name]
+                path = os.path.join(MODELS, alt["file"])
+                if size_mb(path) + 1300 <= vram and weights_whole(path):
+                    log(f"{tier_name} needs ~{size:.0f} MB, {vram} MB are free — using {name}")
+                    model_file, tier_name, tier = path, name, alt
+                    fits = True                      # the substitute does fit
+                    break
+    extra = list(tier.get("args") or [])
+    # Quantised KV cache plus flash attention: both measured working on this
+    # box's Vulkan driver, and they halve the cache — which is what lets a big
+    # context fit beside a desktop that is already using the GPU.
+    tuning = ["-ctk", "q8_0", "-ctv", "q8_0", "-fa", "on"]
+    # Two slots sharing one cache: one for the conversation, one for the
+    # background (learning after a session, the warm-up) — so neither throws
+    # the other's prompt cache away. --cache-reuse lets a prompt that changed
+    # in the middle keep what still matches.
+    slots = ["-np", "2", "-kvu", "--cache-reuse", "256", "--no-webui"]
+    ctx = CONTEXT if vram > 9000 else (8192 if vram > 4200 else 4096)
+    # First: llama.cpp's own fit (no -ngl — setting it switches the fit off),
+    # with a margin so the desktop keeps breathing. Then the old ladder, in
+    # case a driver says no to what the fit worked out.
+    attempts = [(["-c", str(ctx), "--fit", "on", "--fit-target", "768"], f"fit, ctx {ctx}"),
+                (["-c", "8192", "--fit", "on", "--fit-target", "1024"], "fit, ctx 8192")]
+    if moe:
+        for n in (6, 12, 24):
+            attempts.append((["-c", "8192", "-ngl", "99", "--n-cpu-moe", str(n)], f"{n} expert layers in ram"))
+    else:
+        per_layer = max(1.0, float(tier.get("mb") or size or 1) / 99.0)
+        start = int(max(0, min(99, (vram - 1800) / per_layer))) if vram else 99
+        for ngl in sorted({start, max(0, start - 30)}, reverse=True):
+            attempts.append((["-c", "4096", "-ngl", str(ngl)], f"-ngl {ngl}"))
+    attempts.append((["-c", "4096", "-ngl", "0"], "cpu only"))
+    weights = os.path.basename(os.path.realpath(model_file))
+    log(f"vram free {vram} MB · ctx {ctx} · {weights} ({size_mb(model_file):.0f} MB) · tier {tier_name or '?'} · device {device or 'auto'}")
+    proc = None
+    used = ("", 0)
+    for args, label in attempts:
+        cmd = ([server, "-m", model_file, "--host", "127.0.0.1", "--port", str(PORT),
+                "-t", str(threads), "--jinja"] + devargs + tuning + slots + extra + args)
+        log(f"starting: llama-server … ({label})")
+        logfh = open(SERVER_LOG, "a", encoding="utf-8")
+        mark = logfh.tell()
+        proc = subprocess.Popen(cmd, stdout=logfh, stderr=logfh, start_new_session=True)
+        c = int(args[args.index("-c") + 1])
+        write_json(LOCAL_PATH, {"at": int(time.time() * 1000), "pid": proc.pid, "port": PORT,
+                                "model": weights, "engine": f"llama.cpp ({label})",
+                                "ctx": c, "state": "loading", "device": device,
+                                "tier": tier_name, "chosen": brain_tier(),
+                                "fits": fits, "forced": bool(force and not fits and not close),
+                                "note": forced_note, "vram_free_mb": vram})
+        deadline = time.time() + 240
+        while time.time() < deadline:
+            if health(1.0):
+                break
+            if proc.poll() is not None:
+                break
+            time.sleep(0.5)
+        if health(0.6):
+            used = (label, c)
+            placed = fit_report(mark)
+            if not placed and vram:
+                # llama.cpp says nothing about its placement when it works;
+                # the card does: what the weights took from the free VRAM is
+                # what landed on the GPU, the rest of the file is in RAM.
+                time.sleep(1.0)
+                on_gpu = vram - free_vram_mb()
+                if on_gpu > 0 and on_gpu < size * 0.93:
+                    placed = f"~{(size - on_gpu) / 1024:.1f} gb im ram"
+            if placed:
+                forced_note = placed
+            break
+        log(f"attempt ({label}) failed — trying the next one")
+        try:
+            proc.terminate()
+            proc.wait(timeout=8)
+        except Exception:                                      # noqa: BLE001
+            pass
+        proc = None
+    if proc is None:
+        write_json(LOCAL_PATH, {"at": int(time.time() * 1000), "pid": 0, "port": PORT,
+                                "state": "down", "error": "could not start"})
+        print(json.dumps({"ok": False, "error": "engine did not start"}))
+        return 1
+    write_json(LOCAL_PATH, {"at": int(time.time() * 1000), "pid": proc.pid, "port": PORT,
+                            "model": weights, "state": "up", "engine": f"llama.cpp ({used[0]})",
+                            "ctx": used[1], "tier": tier_name, "device": device,
+                            "chosen": brain_tier(), "wanted": wanted_name,
+                            "fits": fits, "forced": bool(force and not fits and not close),
+                            "note": forced_note, "vram_free_mb": vram})
+    log(f"up: pid {proc.pid} on 127.0.0.1:{PORT} ({used[0]}) {forced_note}".rstrip())
+    print(json.dumps({"ok": True, "pid": proc.pid, "port": PORT}))
+
+    def stop(_sig, _frm):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    started = time.time()
+    try:
+        while True:
+            if proc.poll() is not None:
+                log("server exited on its own")
+                break
+            if not session_open():
+                last = max(started, mtime(REQ_PATH), mtime(STATE_PATH))
+                if time.time() - last > idle:
+                    log(f"idle for {idle:.0f}s and no session — standing down")
+                    break
+                # Kept warm between sessions, but never against a game: the
+                # moment one takes the screen, the card is the game's.
+                if time.time() - last > 20 and _gpu.game_running():
+                    log("a game took the screen and no session is open — standing down")
+                    break
+            time.sleep(4)
+    except KeyboardInterrupt:
+        log("asked to stop")
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except Exception:                                          # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:                                      # noqa: BLE001
+            pass
+    write_local_down()
+    return 0
+
+
+def stop(quiet: bool = False) -> int:
+    data = read_json(LOCAL_PATH, {})
+    pid = int(data.get("pid") or 0) if isinstance(data, dict) else 0
+    pids = [pid] if pid > 1 else our_server_pids()
+    # Who is taking the weights down? A server that dies every few seconds has
+    # a caller, and the log has to name it or this stays a mystery.
+    caller = ""
+    try:
+        with open(f"/proc/{os.getppid()}/cmdline", "rb") as fh:
+            caller = fh.read().decode("utf-8", "replace").replace("\x00", " ")[:110]
+    except OSError:
+        pass
+    log(f"stop: ppid {os.getppid()} ({caller}) → killing {pids}")
+    for target in pids:
+        try:
+            os.kill(target, signal.SIGTERM)
+            for _ in range(20):
+                time.sleep(0.25)
+                try:
+                    os.kill(target, 0)
+                except OSError:
+                    break
+            else:
+                os.kill(target, signal.SIGKILL)
+        except OSError:
+            pass
+    write_local_down()
+    if not quiet:
+        print(json.dumps({"ok": True, "stopped": bool(pids)}))
+    return 0
+
+
+def our_server_pids() -> list:
+    """The honest way to find a server whose pid file was lost: ask /proc for
+    a llama-server that runs out of our own data directory, and nobody else's."""
+    found = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return found
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/cmdline", "rb") as fh:
+                cmd = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        if "llama-server" in cmd and DATA_DIR in cmd:
+            found.append(int(name))
+    return found
+
+
+# ──────────────────────────────────────────────────────────────────── entry
+# ────────────────────────────────────────────── ears on the graphics card
+#  whisper.cpp publishes no Linux build with Vulkan, and on the CPU the encoder
+#  IS the wait: 2.5–3.2 s for a three-second sentence on an 8-core Ryzen 9700X,
+#  0.15 s on the RX 9070 XT — 0.4 s for the whole call, process start included
+#  (measured, large-v3-turbo, with the 20B brain loaded beside it). This builds
+#  it once, from sources only (~13 MB, no sudo): the Vulkan and SPIR-V headers
+#  are unpacked next to the build instead of being installed system-wide.
+WHISPER_SRC_TAG = "v1.9.4"
+WHISPER_SRC = f"https://github.com/ggml-org/whisper.cpp/archive/refs/tags/{WHISPER_SRC_TAG}.tar.gz"
+VK_SDK_TAG = "vulkan-sdk-1.4.357.0"
+VULKAN_HEADERS_SRC = f"https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/{VK_SDK_TAG}.tar.gz"
+SPIRV_HEADERS_SRC = f"https://github.com/KhronosGroup/SPIRV-Headers/archive/refs/tags/{VK_SDK_TAG}.tar.gz"
+GPU_EARS = os.path.join(ENGINES, "whisper-gpu")
+
+
+def ears_gpu() -> int:
+    """`velvet-local ears-gpu`: build whisper.cpp with the Vulkan backend into
+    engines/whisper-gpu. bin/velvet-ai prefers it whenever it is there and no
+    game holds the card; the CPU build stays as the fallback."""
+    import shutil                                              # noqa: PLC0415
+    import tempfile                                            # noqa: PLC0415
+    need = {"cmake": "cmake", "c++": "gcc", "glslc": "shaderc"}
+    missing = [pkg for tool, pkg in need.items() if not shutil.which(tool)]
+    if not glob.glob("/usr/lib*/libvulkan.so*") and not glob.glob("/usr/lib/*/libvulkan.so*"):
+        missing.append("vulkan-icd-loader")
+    if missing:
+        print(json.dumps({"ok": False, "error": "zum Bauen fehlt: " + ", ".join(missing)}, ensure_ascii=False))
+        return 1
+    if _gpu.game_running():
+        print(json.dumps({"ok": False, "error": "ein Spiel läuft — später bauen"}, ensure_ascii=False))
+        return 1
+    work = tempfile.mkdtemp(prefix="velvet-ears-gpu-")
+    env = dict(os.environ)
+    try:
+        sources = {}
+        for key, url in (("whisper", WHISPER_SRC), ("vulkan", VULKAN_HEADERS_SRC), ("spirv", SPIRV_HEADERS_SRC)):
+            dest = os.path.join(work, f"{key}.tar.gz")
+            log(f"fetching {url}")
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "velvet-local"}), timeout=60) as resp, \
+                    open(dest, "wb") as fh:
+                while True:
+                    block = resp.read(1 << 16)
+                    if not block:
+                        break
+                    fh.write(block)
+            with tarfile.open(dest) as tar:
+                top = tar.getnames()[0].split("/")[0]
+                tar.extractall(work, filter="data")
+            sources[key] = os.path.join(work, top)
+        prefix = os.path.join(work, "prefix")
+
+        def step(cmd, what):
+            log(what)
+            proc = subprocess.run(["nice", "-n", "15"] + cmd, capture_output=True, env=env, timeout=1800)
+            if proc.returncode != 0:
+                tail = (proc.stdout + proc.stderr).decode("utf-8", "replace").strip().splitlines()[-6:]
+                raise RuntimeError(f"{what}: " + " | ".join(tail))
+
+        step(["cmake", "-S", sources["spirv"], "-B", os.path.join(work, "spirv-build"),
+              f"-DCMAKE_INSTALL_PREFIX={prefix}", "-DSPIRV_HEADERS_ENABLE_TESTS=OFF"], "SPIR-V headers")
+        step(["cmake", "--install", os.path.join(work, "spirv-build")], "SPIR-V headers (install)")
+        includes = f"-I{prefix}/include -I{sources['vulkan']}/include"
+        build = os.path.join(work, "build")
+        step(["cmake", "-S", sources["whisper"], "-B", build, "-DCMAKE_BUILD_TYPE=Release", "-DGGML_VULKAN=ON",
+              "-DGGML_NATIVE=ON", "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_EXAMPLES=ON", "-DWHISPER_SDL2=OFF",
+              "-DBUILD_SHARED_LIBS=ON", f"-DCMAKE_PREFIX_PATH={prefix}",
+              f"-DVulkan_INCLUDE_DIR={sources['vulkan']}/include", f"-DCMAKE_CXX_FLAGS={includes}",
+              f"-DCMAKE_C_FLAGS=-I{prefix}/include", "-DCMAKE_INSTALL_RPATH=$ORIGIN",
+              "-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON"], "whisper.cpp (configure, Vulkan)")
+        jobs = str(max(2, (os.cpu_count() or 4) - 2))
+        step(["cmake", "--build", build, "-j", jobs, "--target", "whisper-cli"], "whisper.cpp (build — a few minutes)")
+        os.makedirs(GPU_EARS, exist_ok=True)
+        for item in glob.glob(os.path.join(build, "bin", "*")):
+            target = os.path.join(GPU_EARS, os.path.basename(item))
+            if os.path.islink(item):
+                if os.path.lexists(target):
+                    os.unlink(target)
+                os.symlink(os.readlink(item), target)
+            elif os.path.isfile(item):
+                shutil.copy2(item, target)
+        cli = os.path.join(GPU_EARS, "whisper-cli")
+        probe = subprocess.run([cli, "--help"], capture_output=True, timeout=30)
+        text = (probe.stdout + probe.stderr).decode("utf-8", "replace")
+        if "Vulkan" not in text and "vulkan" not in text:
+            raise RuntimeError("the build has no Vulkan device")
+        print(json.dumps({"ok": True, "binary": cli}, ensure_ascii=False))
+        return 0
+    except Exception as exc:                                   # noqa: BLE001
+        print(json.dumps({"ok": False, "error": str(exc)[:400]}, ensure_ascii=False))
+        return 1
+    finally:
+        # Only the build tree this run made in the temp folder — the result
+        # lives in engines/whisper-gpu.
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] == "status":
+        print(json.dumps(status(), ensure_ascii=False, indent=1))
+        return 0
+    if argv[0] == "ensure":
+        return ensure()
+    if argv[0] == "brain":
+        size = argv[1] if len(argv) > 1 and not argv[1].startswith("-") else DEFAULT_BRAIN_TIER
+        return brain_set(size)
+    if argv[0] == "ears":
+        size = "small"
+        if len(argv) > 1 and not argv[1].startswith("-"):
+            size = argv[1]
+        elif "--model" in argv:
+            try:
+                size = argv[argv.index("--model") + 1]
+            except IndexError:
+                pass
+        return ears_setup(size)
+    if argv[0] == "serve":
+        idle = 600.0
+        if "--idle" in argv:
+            try:
+                idle = float(argv[argv.index("--idle") + 1])
+            except (IndexError, ValueError):
+                pass
+        return serve(idle, force="--force" in argv)
+    if argv[0] == "stop":
+        return stop()
+    if argv[0] == "ears-gpu":
+        return ears_gpu()
+    print(f"velvet-local: unknown argument {argv[0]!r} — see the header of this file", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(0)

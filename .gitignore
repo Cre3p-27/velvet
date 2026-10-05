@@ -1,0 +1,15 @@
+# reference material — never published
+*.zip
+*.mp4
+
+# private notes of this machine
+TASKS.md
+AGENTS.md
+
+# runtime and build leftovers
+*.pid
+__pycache__/
+plugin/velvetzoom/build/
+*.pre-*
+*.backup*
+*.bak

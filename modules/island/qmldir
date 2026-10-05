@@ -1,0 +1,7 @@
+module qs.modules.island
+Island 1.0 Island.qml
+IslandMusic 1.0 IslandMusic.qml
+IslandTasks 1.0 IslandTasks.qml
+IslandWeather 1.0 IslandWeather.qml
+IslandSystem 1.0 IslandSystem.qml
+IslandVelly 1.0 IslandVelly.qml

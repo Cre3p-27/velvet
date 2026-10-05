@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-clock
+
+A clock big enough to read across a room, drawn in blocks, with a slow band of
+light travelling through the digits and a ring of seconds underneath. When a
+digit changes it flares for a moment and settles — which is the only way a
+clock made of solid blocks can show you that something moved.
+"""
+
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _velvet import (BOLD, RESET, ease, fg, hbar, mix, opt_on, run, shade, wave)  # noqa: E402
+
+# 3 wide, 5 tall. Small enough to scale cleanly, big enough to be legible at
+# one cell per pixel on a cramped terminal.
+GLYPHS = {
+    "0": ["###", "# #", "# #", "# #", "###"],
+    "1": ["  #", "  #", "  #", "  #", "  #"],
+    "2": ["###", "  #", "###", "#  ", "###"],
+    "3": ["###", "  #", "###", "  #", "###"],
+    "4": ["# #", "# #", "###", "  #", "  #"],
+    "5": ["###", "#  ", "###", "  #", "###"],
+    "6": ["###", "#  ", "###", "# #", "###"],
+    "7": ["###", "  #", "  #", "  #", "  #"],
+    "8": ["###", "# #", "###", "# #", "###"],
+    "9": ["###", "# #", "###", "  #", "###"],
+    ":": ["   ", " # ", "   ", " # ", "   "],
+    " ": ["   ", "   ", "   ", "   ", "   "],
+}
+
+GLYPH_W = 3
+GLYPH_H = 5
+
+# When each character last changed, so a flare can decay from it.
+changed_at = {}
+
+
+# Its own switches (the shared ones — flip, frame, tint … — live in _velvet):
+#   --12h           twelve-hour digits
+#   --seconds       HH:MM:SS
+#   --no-date       drop the date line
+#   --no-bar        drop the line of seconds under the digits
+#   --still         no travelling light, no flare — solid digits
+def switches():
+    """Read every frame — the designer can change them while it runs."""
+    return {
+        "twelve": opt_on("12h") or bool(os.environ.get("VELVET_CLOCK_12")),
+        "seconds": opt_on("seconds"),
+        "no_date": opt_on("no-date"),
+        "no_bar": opt_on("no-bar"),
+        "still": opt_on("still"),
+    }
+
+
+def face(sw):
+    fmt = ("%I" if sw["twelve"] else "%H") + ":%M" + (":%S" if sw["seconds"] else "")
+    return time.strftime(fmt)
+
+
+def draw(scr, t):
+    pal = scr.palette
+    accent = pal.accent
+    ink = pal.ink
+    dim = pal.inkDim
+
+    sw = switches()
+    STILL, NO_BAR, NO_DATE = sw["still"], sw["no_bar"], sw["no_date"]
+    text = face(sw)
+    now = time.localtime()
+    secs = now.tm_sec + (time.time() % 1.0)
+
+    for i, ch in enumerate(text):
+        key = (i, ch)
+        if key not in changed_at:
+            # Forget the other characters that ever sat in this slot.
+            for k in [k for k in changed_at if k[0] == i]:
+                del changed_at[k]
+            changed_at[key] = t
+
+    # How big can one glyph pixel be?
+    pad_x, pad_y = 2, 1
+    avail_w = max(1, scr.cols - pad_x * 2)
+    avail_h = max(1, scr.rows - pad_y * 2 - 4)          # 4 rows of chrome below
+
+    gap = 1
+    cells_w = len(text) * GLYPH_W + (len(text) - 1) * gap
+    sx = max(1, avail_w // cells_w)
+    sy = max(1, avail_h // GLYPH_H)
+    # Cells are about twice as tall as they are wide, so a glyph that is square
+    # on screen needs roughly twice the horizontal scale.
+    sy = max(1, min(sy, max(1, int(sx / 1.9) + 1)))
+
+    art_w = cells_w * sx
+    art_h = GLYPH_H * sy
+    left = max(0, (scr.cols - art_w) // 2)
+    top = max(0, (scr.rows - art_h - 4) // 2)
+
+    lines = [""] * scr.rows
+
+    for gy in range(art_h):
+        row = gy // sy
+        buf = [" "] * scr.cols
+        colours = [None] * scr.cols
+
+        for gi, ch in enumerate(text):
+            glyph = GLYPHS.get(ch, GLYPHS[" "])
+            base = left + gi * (GLYPH_W + gap) * sx
+            flare = 1.0 - ease(min(1.0, (t - changed_at.get((gi, ch), t)) / 0.65))
+
+            for px in range(GLYPH_W):
+                if glyph[row][px] != "#":
+                    continue
+                for k in range(sx):
+                    x = base + px * sx + k
+                    if 0 <= x < scr.cols:
+                        buf[x] = "█"
+                        # A band of light drifting diagonally across the face.
+                        band = 1.0 if STILL else wave(t, 1.1, -(x * 0.06 + gy * 0.22))
+                        c = mix(shade(accent, 0.55), accent, band)
+                        if ch == ":" and not STILL:
+                            c = mix(shade(accent, 0.3), accent, wave(t, 3.14))
+                        if flare > 0 and not STILL:
+                            c = mix(c, ink, flare * 0.85)
+                        colours[x] = c
+
+        out = []
+        last = None
+        for x in range(scr.cols):
+            c = colours[x]
+            if c != last:
+                out.append(fg(c) if c else RESET)
+                last = c
+            out.append(buf[x])
+        lines[min(scr.rows - 1, top + gy)] = "".join(out).rstrip()
+
+    # ── the seconds, as one quiet line
+    bar_row = min(scr.rows - 3, top + art_h + 1)
+    if not NO_BAR:
+        bar_w = max(8, min(art_w, scr.cols - 4))
+        bx = max(0, (scr.cols - bar_w) // 2)
+        filled = hbar(bar_w, secs / 60.0)
+        lines[bar_row] = " " * bx + fg(mix(shade(accent, 0.35), accent, 0.9)) + filled + RESET
+
+    # ── the date
+    if not NO_DATE:
+        stamp = time.strftime("%A  ·  %d %B %Y").upper()
+        if len(stamp) > scr.cols - 2:
+            stamp = time.strftime("%a %d %b %Y").upper()
+        dx = max(0, (scr.cols - len(stamp)) // 2)
+        lines[min(scr.rows - 1, bar_row + (2 if not NO_BAR else 0))] = " " * dx + fg(dim) + BOLD + stamp + RESET
+
+    return lines
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(draw, fps=20, title="velvet-clock"))

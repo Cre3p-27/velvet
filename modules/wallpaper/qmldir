@@ -1,0 +1,11 @@
+module qs.modules.wallpaper
+Wallpaper 1.0 Wallpaper.qml
+Wheel 1.0 Wheel.qml
+Widgets 1.0 Widgets.qml
+ShapeWidget 1.0 ShapeWidget.qml
+Surface 1.0 Surface.qml
+Sheen 1.0 Sheen.qml
+singleton WidgetActions 1.0 WidgetActions.qml
+SoftWidget 1.0 SoftWidget.qml
+DesktopMenu 1.0 DesktopMenu.qml
+DesktopMenuCard 1.0 DesktopMenuCard.qml

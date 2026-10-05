@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-traffic
+
+Up and down, every second, drawn as two graphs that share one scale so you can
+see at a glance which way the traffic is going. The scale itself eases rather
+than jumping, so a single burst does not flatten the last minute into a line.
+
+Reads /proc/net/dev. No dependencies, no permissions.
+"""
+
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _velvet import (BOLD, RESET, fg, mix, run, shade, timeline)  # noqa: E402
+
+SKIP = ("lo", "docker", "br-", "veth", "virbr", "tun", "tap")
+
+state = {
+    "prev": {},
+    "prev_at": 0.0,
+    "rx": [],
+    "tx": [],
+    "scale": 1024.0,
+    "iface": "",
+    "total_rx": 0,
+    "total_tx": 0,
+}
+
+
+def read_dev():
+    out = {}
+    try:
+        with open("/proc/net/dev", "r", encoding="utf-8") as fh:
+            for line in fh.readlines()[2:]:
+                name, _, rest = line.partition(":")
+                name = name.strip()
+                if not name or name.startswith(SKIP):
+                    continue
+                parts = rest.split()
+                if len(parts) < 9:
+                    continue
+                out[name] = (int(parts[0]), int(parts[8]))
+    except (OSError, ValueError, IndexError):
+        return {}
+    return out
+
+
+def human(value):
+    v = float(value)
+    for unit in ("B", "K", "M", "G", "T"):
+        if v < 1024 or unit == "T":
+            return ("%.0f%s" % (v, unit)) if v >= 10 or unit == "B" else ("%.1f%s" % (v, unit))
+        v /= 1024.0
+    return "?"
+
+
+def sample(t):
+    if t - state["prev_at"] < 0.5:
+        return
+    dt = t - state["prev_at"] if state["prev_at"] else 1.0
+    state["prev_at"] = t
+
+    now = read_dev()
+    if not now:
+        return
+
+    # The busiest interface is the one you care about.
+    if not state["iface"] or state["iface"] not in now:
+        best, top = "", -1
+        for name, (rx, tx) in now.items():
+            if rx + tx > top:
+                best, top = name, rx + tx
+        state["iface"] = best
+
+    prev = state["prev"]
+    state["prev"] = now
+    name = state["iface"]
+    if not name or name not in prev or name not in now:
+        return
+
+    rx = max(0, now[name][0] - prev[name][0]) / max(0.05, dt)
+    tx = max(0, now[name][1] - prev[name][1]) / max(0.05, dt)
+    state["total_rx"], state["total_tx"] = now[name]
+
+    state["rx"].append(rx)
+    state["tx"].append(tx)
+    for key in ("rx", "tx"):
+        if len(state[key]) > 400:
+            del state[key][:-400]
+
+    peak = max(max(state["rx"][-120:], default=0.0), max(state["tx"][-120:], default=0.0))
+    peak = max(peak, 8192.0)
+    # Ease the scale so one burst does not squash the rest of the minute.
+    state["scale"] += (peak - state["scale"]) * (0.35 if peak > state["scale"] else 0.06)
+
+
+def draw(scr, t):
+    pal = scr.palette
+    accent, alt, ink, dim = pal.accent, pal.accentAlt, pal.ink, pal.inkDim
+    sample(t)
+
+    w = max(8, scr.cols - 4)
+    half = max(2, (scr.rows - 7) // 2)
+    lines = []
+
+    down = state["rx"][-1] if state["rx"] else 0.0
+    up = state["tx"][-1] if state["tx"] else 0.0
+
+    lines.append("")
+    lines.append("  " + fg(ink) + BOLD + (state["iface"] or "NO INTERFACE").upper()
+                 + RESET + fg(dim) + "    PEAK " + human(state["scale"]) + "/S" + RESET)
+    lines.append("")
+
+    lines.append("  " + fg(accent) + BOLD + "▼ " + human(down) + "/s"
+                 + RESET + fg(shade(dim, 0.8)) + "    total " + human(state["total_rx"]) + RESET)
+    lines.extend(timeline(state["rx"], half, w, state["scale"],
+                          shade(accent, 0.4), accent))
+
+    lines.append("  " + fg(alt) + BOLD + "▲ " + human(up) + "/s"
+                 + RESET + fg(shade(dim, 0.8)) + "    total " + human(state["total_tx"]) + RESET)
+    lines.extend(timeline(state["tx"], half, w, state["scale"],
+                          shade(alt, 0.4), alt, flip=True))
+
+    return lines[:scr.rows]
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(draw, fps=20, title="velvet-traffic"))

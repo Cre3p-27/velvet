@@ -1,0 +1,7 @@
+module qs.modules.bar
+Bar 1.0 Bar.qml
+BarWindow 1.0 BarWindow.qml
+Popouts 1.0 Popouts.qml
+ScreenFrame 1.0 ScreenFrame.qml
+FrameShape 1.0 FrameShape.qml
+BarDeco 1.0 BarDeco.qml

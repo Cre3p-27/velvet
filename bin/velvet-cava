@@ -1,0 +1,696 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-cava
+
+cava, dressed by the shell. Every switch the DESKTOP designer offers for the
+CAVA module is turned into a cava config of its own, and cava is started
+with it — so the bars can stand up, hang down, lie on their side or grow
+out of the middle, run mirrored, in mono or stereo, thin or thick, in the
+wallpaper's own colours.
+
+WAVE and LINE are not cava's drawing: cava runs headless (raw output) and
+this script draws the curve itself — a Catmull-Rom spline through the bands,
+filled with eighth blocks (WAVE) or traced with braille dots (LINE), standing
+exactly on the window's edge. Everything a drawn style shows (colour,
+direction, height, wave or line) changes in the next frame without touching
+cava at all.
+
+It stays around as a quiet parent. When the wallpaper (and so the palette)
+changes, or the designer changes a switch (--live <file>, rewritten on every
+pick), it writes the config again and starts cava afresh INSIDE the same
+window — the window never closes, the bars just redraw the new way.
+Every instance has its own config file, so any number of them can run.
+
+  --style bars|wave|line               cava's own bars, or a smooth filled wave /
+                                       a thin line drawn here from cava's raw feed
+  --detail calm|normal|fine            how many points the wave runs through
+  --orient up|down|left|right|centre   which way the bars grow
+  --channels stereo|mono               stereo mirrors lows to the middle
+  --reverse                            frequencies the other way round
+  --bar N  --gap N                     bar width / spacing, in cells
+  --colour velvet|accent|alt|ink|plain gradient from the palette, or the terminal's
+  --fps N                              frame rate (30–144)
+  --sens N                             starting sensitivity in % (autosens stays on)
+  --level auto|low|mid|high            AUTO lets cava find the level itself (it
+                                       ramps up until the bars overshoot, then
+                                       settles); a fixed level never overshoots
+  --height N                           tallest bar, % of the window
+  --smooth none|monstercat|waves       cava's smoothing filters
+  --wave                               waveform instead of spectrum
+  --selftest                           write every combination and check cava takes it
+"""
+
+import hashlib
+import os
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from _velvet import (LIVE_PATH, PALETTE_PATH, Palette, hex_rgb, mix, opt, opt_float, opt_on, refresh_live, shade)  # noqa: E402
+
+ORIENT = {
+    "up": "bottom",
+    "down": "top",
+    "left": "left",
+    "right": "right",
+    "centre": "horizontal",
+    "center": "horizontal",
+}
+
+
+STYLES = ("bars", "wave", "line")
+DETAIL = {"calm": 14, "normal": 8, "fine": 4}   # cells along the curve per point
+
+
+def settings():
+    style = str(opt("style", "bars"))
+    detail = str(opt("detail", "normal"))
+    return {
+        "style": style if style in STYLES else "bars",
+        "detail": detail if detail in DETAIL else "normal",
+        "orient": ORIENT.get(str(opt("orient", "up")), "bottom"),
+        "channels": "mono" if str(opt("channels", "stereo")) == "mono" else "stereo",
+        "reverse": opt_on("reverse"),
+        "bar": int(opt_float("bar", 2, 1, 8)),
+        "gap": int(opt_float("gap", 1, 0, 4)),
+        "colour": str(opt("colour", "velvet")),
+        "fps": int(opt_float("fps", 60, 30, 144)),
+        "sens": int(opt_float("sens", 100, 10, 400)),
+        "level": str(opt("level", "auto")),
+        "height": int(opt_float("height", 100, 20, 100)),
+        "smooth": str(opt("smooth", "none")),
+        "wave": opt_on("wave"),
+    }
+
+
+def hexof(c):
+    return "#%02x%02x%02x" % c
+
+
+def gradient(pal, colour):
+    """Up to eight stops, bottom to top, from the shell's palette."""
+    a = pal.accent
+    b = pal.accentAlt
+    if colour == "plain":
+        return []
+    if colour == "accent":
+        return [shade(a, 0.45), shade(a, 0.7), a, mix(a, (255, 255, 255), 0.25)]
+    if colour == "alt":
+        return [shade(b, 0.45), shade(b, 0.7), b, mix(b, (255, 255, 255), 0.25)]
+    if colour == "ink":
+        return [pal.inkDim, mix(pal.inkDim, pal.ink, 0.5), pal.ink]
+    # velvet: deep accent → accent → the alternate at the peaks
+    return [shade(a, 0.45), shade(a, 0.75), a, mix(a, b, 0.45), b, mix(b, (255, 255, 255), 0.3)]
+
+
+FIXED = {"low": 45, "mid": 90, "high": 170}
+
+
+def method_of(s):
+    # left/right only exist in ncurses output; centre only in noncurses.
+    return "ncurses" if s["orient"] in ("left", "right") else "noncurses"
+
+
+def config_text(s, pal):
+    method = method_of(s)
+    level = s.get("level", "auto")
+    fixed = level in FIXED
+    sens = FIXED[level] if fixed else s["sens"]
+    lines = [
+        "; written by velvet-cava — change it in DESKTOP, not here",
+        "[general]",
+        "framerate = %d" % s["fps"],
+        "autosens = %d" % (0 if fixed else 1),
+        "sensitivity = %d" % sens,
+        "bar_width = %d" % s["bar"],
+        "bar_spacing = %d" % s["gap"],
+        "max_height = %d" % s["height"],
+        "",
+        "[output]",
+        "method = %s" % method,
+        "orientation = %s" % s["orient"],
+        "channels = %s" % s["channels"],
+        "mono_option = average",
+        "reverse = %d" % (1 if s["reverse"] else 0),
+        "waveform = %d" % (1 if s["wave"] else 0),
+        "",
+    ]
+    stops = gradient(pal, s["colour"])
+    if stops:
+        lines += ["[color]", "gradient = 1"]
+        # One colour is not a gradient to cava; give it two of the same.
+        if len(stops) == 1:
+            stops = stops * 2
+        for i, c in enumerate(stops[:8]):
+            lines.append("gradient_color_%d = '%s'" % (i + 1, hexof(c)))
+        lines.append("")
+    lines += [
+        "[smoothing]",
+        "monstercat = %d" % (1 if s["smooth"] == "monstercat" else 0),
+        "waves = %d" % (1 if s["smooth"] == "waves" else 0),
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# ───────────────────────────────────────────────── the drawn styles (wave · line)
+def drawn(s):
+    return s.get("style") in ("wave", "line")
+
+
+def term_size():
+    try:
+        sz = os.get_terminal_size(sys.stdout.fileno())
+        return max(1, sz.columns), max(1, sz.lines)
+    except OSError:
+        return 80, 12
+
+
+def points_for(s, cols, rows):
+    """How many bands the curve runs through: fewer = calmer, rounder hills."""
+    # A cell is about twice as tall as it is wide.
+    along = rows * 2 if s["orient"] in ("left", "right") else cols
+    n = int(round(along / DETAIL.get(s.get("detail"), 8)))
+    n = max(8, min(256, n))
+    return n + (n % 2 if s["channels"] == "stereo" else 0)
+
+
+def raw_config_text(s, points):
+    level = s.get("level", "auto")
+    fixed = level in FIXED
+    return "\n".join([
+        "; written by velvet-cava — the raw feed its wave is drawn from",
+        "[general]",
+        "bars = %d" % points,
+        "framerate = %d" % s["fps"],
+        "autosens = %d" % (0 if fixed else 1),
+        "sensitivity = %d" % (FIXED[level] if fixed else s["sens"]),
+        "",
+        "[output]",
+        "method = raw",
+        "raw_target = /dev/stdout",
+        "data_format = ascii",
+        "ascii_max_range = 1000",
+        "bar_delimiter = 59",
+        "frame_delimiter = 10",
+        "channels = %s" % s["channels"],
+        "mono_option = average",
+        "reverse = %d" % (1 if s["reverse"] else 0),
+        "waveform = %d" % (1 if s["wave"] else 0),
+        "",
+        "[smoothing]",
+        "monstercat = %d" % (1 if s["smooth"] == "monstercat" else 0),
+        "waves = %d" % (1 if s["smooth"] == "waves" else 0),
+        "",
+    ])
+
+
+def curve(vals, n):
+    """n samples of a smooth curve through vals (Catmull-Rom), kept in 0..1."""
+    m = len(vals)
+    if n <= 0:
+        return []
+    if m == 0:
+        return [0.0] * n
+    if m == 1 or n == 1:
+        return [min(1.0, max(0.0, vals[0]))] * n
+    span = m - 1
+    step = span / (n - 1)
+    out = []
+    for i in range(n):
+        t = i * step
+        k = int(t)
+        if k >= span:
+            k = span - 1
+        f = t - k
+        p1 = vals[k]
+        p2 = vals[k + 1]
+        p0 = vals[k - 1] if k > 0 else p1
+        p3 = vals[k + 2] if k + 2 <= span else p2
+        v = 0.5 * (2 * p1 + (p2 - p0) * f + (2 * p0 - 5 * p1 + 4 * p2 - p3) * f * f
+                   + (3 * p1 - p0 - 3 * p2 + p3) * f * f * f)
+        out.append(0.0 if v < 0 else (1.0 if v > 1 else v))
+    return out
+
+
+# Eighth blocks, empty → full, for each edge a shape can stand on.
+UP = " ▁▂▃▄▅▆▇█"
+DOWN = " ▔\U0001fb82\U0001fb83▀\U0001fb84\U0001fb85\U0001fb86█"
+LEFT = " ▏▎▍▌▋▊▉█"
+RIGHT = " ▕\U0001fb87\U0001fb88▐\U0001fb89\U0001fb8a\U0001fb8b█"
+# Braille: the bit of each of the 2 × 4 dots in a cell, by (x & 1, y & 3).
+DOT = {(0, 0): 0x01, (0, 1): 0x02, (0, 2): 0x04, (0, 3): 0x40,
+       (1, 0): 0x08, (1, 1): 0x10, (1, 2): 0x20, (1, 3): 0x80}
+
+
+def ramp(stops, n):
+    """n colours along the gradient's stops (first = the edge the shape stands on)."""
+    if not stops or n <= 0:
+        return [None] * max(0, n)
+    if len(stops) == 1 or n == 1:
+        return [stops[0]] * n
+    out = []
+    for i in range(n):
+        f = i / (n - 1) * (len(stops) - 1)
+        k = min(int(f), len(stops) - 2)
+        out.append(mix(stops[k], stops[k + 1], f - k))
+    return out
+
+
+def sgr(c):
+    return "\x1b[39m" if c is None else "\x1b[38;2;%d;%d;%dm" % c
+
+
+def _fill(n):
+    return 0 if n <= 0 else (8 if n >= 8 else n)
+
+
+def _braille(grid, cols, rows, dots):
+    for x, y in dots:
+        if 0 <= x < cols * 2 and 0 <= y < rows * 4:
+            grid[y >> 2][x >> 1] |= DOT[(x & 1, y & 3)]
+
+
+def _trace(ys):
+    """(x, y) dots of a line through one y per x, joined so it never breaks:
+    a step taller than a dot is filled in, half in the column before."""
+    out = []
+    prev = None
+    for x, y in enumerate(ys):
+        out.append((x, y))
+        if prev is not None and abs(y - prev) > 1:
+            d = 1 if y > prev else -1
+            half = abs(y - prev) // 2
+            for yy in range(prev + d, y, d):
+                out.append((x - 1 if (yy - prev) * d <= half else x, yy))
+        prev = y
+    return out
+
+
+def picture(s, vals, cols, rows, stops):
+    """One frame of WAVE or LINE: rows of text plus how to colour them —
+    ("row", colours per row) or ("col", colours per column)."""
+    scale = s["height"] / 100.0
+    orient = s["orient"]
+    side = orient in ("left", "right")
+    if s["style"] == "line":
+        if side:
+            w = cols * 2
+            ys = curve(vals, rows * 4)
+            xs = [int(round(v * scale * (w - 1))) for v in ys]
+            if orient == "right":
+                xs = [w - 1 - x for x in xs]
+            dots = [(x, y) for y, x in _trace(xs)]
+        else:
+            h = rows * 4
+            vs = curve(vals, cols * 2)
+            if orient == "horizontal":
+                mid = (h - 1) / 2.0
+                up = [int(round(mid - v * scale * mid)) for v in vs]
+                down = [int(round(mid + v * scale * mid)) for v in vs]
+                dots = _trace(up) + _trace(down)
+            else:
+                ys = [int(round(v * scale * (h - 1))) for v in vs]
+                if orient == "bottom":
+                    ys = [h - 1 - y for y in ys]
+                dots = _trace(ys)
+        grid = [[0] * cols for _ in range(rows)]
+        _braille(grid, cols, rows, dots)
+        lines = ["".join(chr(0x2800 + b) if b else " " for b in row) for row in grid]
+    elif side:
+        full = cols * 8
+        ws = [int(round(v * scale * full)) for v in curve(vals, rows)]
+        glyphs = LEFT if orient == "left" else RIGHT
+        lines = []
+        for w in ws:
+            row = [glyphs[_fill(w - c * 8)] for c in range(cols)]
+            lines.append("".join(row if orient == "left" else row[::-1]))
+    elif orient == "horizontal":
+        top = rows // 2
+        bottom = rows - top
+        reach = max(1, min(top, bottom)) * 8
+        hs = [int(round(v * scale * reach)) for v in curve(vals, cols)]
+        lines = []
+        for r in range(rows):
+            if r < top:
+                base = (top - 1 - r) * 8
+                lines.append("".join(UP[_fill(h - base)] for h in hs))
+            else:
+                base = (r - top) * 8
+                lines.append("".join(DOWN[_fill(h - base)] for h in hs))
+    else:
+        full = rows * 8
+        hs = [int(round(v * scale * full)) for v in curve(vals, cols)]
+        lines = []
+        for r in range(rows):
+            if orient == "bottom":
+                base = (rows - 1 - r) * 8
+                lines.append("".join(UP[_fill(h - base)] for h in hs))
+            else:
+                base = r * 8
+                lines.append("".join(DOWN[_fill(h - base)] for h in hs))
+    # The gradient runs away from the edge the shape stands on.
+    if side:
+        cs = ramp(stops, cols)
+        return lines, ("col", cs if orient == "left" else cs[::-1])
+    if orient == "horizontal":
+        top = rows // 2
+        half = ramp(stops, max(top, rows - top))
+        return lines, ("row", [half[top - 1 - r] if r < top else half[r - top] for r in range(rows)])
+    cs = ramp(stops, rows)
+    return lines, ("row", cs[::-1] if orient == "bottom" else cs)
+
+
+def paint(lines, colouring):
+    """The frame as one write: synchronised, row by row, no scrolling."""
+    how, cs = colouring
+    out = ["\x1b[?2026h"]
+    for r, line in enumerate(lines):
+        out.append("\x1b[%d;1H" % (r + 1))
+        if how == "row":
+            out.append(sgr(cs[r] if r < len(cs) else None))
+            out.append(line)
+        else:
+            last = -1
+            for c, ch in enumerate(line):
+                col = cs[c] if c < len(cs) else None
+                if col != last:
+                    out.append(sgr(col))
+                    last = col
+                out.append(ch)
+    out.append("\x1b[0m\x1b[?2026l")
+    return "".join(out)
+
+
+def parse(line):
+    vals = []
+    for part in line.split(b";"):
+        if part:
+            try:
+                vals.append(int(part) / 1000.0)
+            except ValueError:
+                pass
+    return vals
+
+
+def config_path(s):
+    # One file per instance when the designer runs it (named after its live
+    # file), else one per combination — stable names, so a scene that starts
+    # cava on every login does not leave a trail of temp files.
+    base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
+    if LIVE_PATH:
+        key = os.path.splitext(os.path.basename(LIVE_PATH))[0]
+    else:
+        key = hashlib.sha1(repr(sorted(s.items())).encode()).hexdigest()[:10]
+    return os.path.join(base, "velvet-cava-%s.conf" % key)
+
+
+def write(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+
+
+def palette_stamp():
+    try:
+        return os.path.getmtime(PALETTE_PATH)
+    except OSError:
+        return None
+
+
+def strip_colours(text):
+    """The config without its [color] section — to tell a colour change
+    (cheap: SIGUSR2) from everything else."""
+    out = []
+    skip = False
+    for line in text.splitlines():
+        if line.startswith("["):
+            skip = line.strip() == "[color]"
+        if not skip:
+            out.append(line)
+    return "\n".join(out)
+
+
+def spawn(path, raw=False):
+    if raw:
+        return subprocess.Popen(["cava", "-p", path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    return subprocess.Popen(["cava", "-p", path])
+
+
+def stop(child):
+    if child is None or child.poll() is not None:
+        return
+    try:
+        child.terminate()
+        child.wait(timeout=1.5)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        child.wait()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+def config_for(s, pal, size):
+    """The config cava runs with — its own drawing, or the raw feed."""
+    if drawn(s):
+        return raw_config_text(s, points_for(s, *size))
+    return config_text(s, pal)
+
+
+def kind_of(s):
+    # What cava has to be restarted for: its output method changes.
+    return "raw" if drawn(s) else method_of(s)
+
+
+def main():
+    if shutil.which("cava") is None:
+        sys.stdout.write("\n  velvet-cava: cava is not installed  ·  sudo pacman -S cava\n\n")
+        sys.stdout.flush()
+        time.sleep(8)
+        return 1
+
+    pal = Palette()
+    s = settings()
+    path = config_path(s)
+    size = term_size()
+    last_text = config_for(s, pal, size)
+    write(path, last_text)
+    out = sys.stdout
+
+    def begin():
+        # A drawn style owns the screen: no cursor, a clean slate.
+        if drawn(s):
+            out.write("\x1b[?25l\x1b[0m\x1b[2J")
+            out.flush()
+        return spawn(path, raw=drawn(s))
+
+    child = begin()
+    state = {"quit": False}
+
+    def forward(sig, _frame):
+        state["quit"] = True
+        try:
+            child.send_signal(sig)
+        except (ProcessLookupError, OSError):
+            pass
+
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, forward)
+
+    stamp = palette_stamp()
+    buf = b""
+    vals = []
+    stops = gradient(pal, s["colour"])
+    next_check = 0.0
+    resized_at = 0.0
+    try:
+        while not state["quit"]:
+            if drawn(s) and child.stdout is not None:
+                try:
+                    ready, _, _ = select.select([child.stdout], [], [], 0.3)
+                except (OSError, ValueError):
+                    ready = []
+                if ready:
+                    chunk = os.read(child.stdout.fileno(), 65536)
+                    if not chunk:
+                        if child.poll() is not None:
+                            break
+                        time.sleep(0.05)
+                    buf += chunk
+                    if b"\n" in buf:
+                        # Only the newest whole frame matters.
+                        done, buf = buf.rsplit(b"\n", 1)
+                        vals = parse(done.rsplit(b"\n", 1)[-1])
+                        cols, rows = term_size()
+                        if (cols, rows) != size:
+                            out.write("\x1b[0m\x1b[2J")
+                            size = (cols, rows)
+                            resized_at = time.monotonic()
+                        lines, colouring = picture(s, vals, cols, rows, stops)
+                        try:
+                            out.write(paint(lines, colouring))
+                            out.flush()
+                        except (BrokenPipeError, OSError):
+                            break
+            else:
+                time.sleep(0.3)
+            now = time.monotonic()
+            if now < next_check:
+                continue
+            next_check = now + 0.3
+            moved = refresh_live()
+            p = palette_stamp()
+            if p != stamp:
+                stamp = p
+                pal.reload(force=True)
+                moved = True
+            # A resized window needs a different number of points — once it
+            # has stopped moving.
+            if drawn(s) and resized_at and now - resized_at > 0.4:
+                resized_at = 0.0
+                moved = True
+            if not drawn(s):
+                size = term_size()
+            if moved:
+                before = s
+                s = settings()
+                stops = gradient(pal, s["colour"])
+                text = config_for(s, pal, size)
+                if kind_of(before) != kind_of(s):
+                    # bars ↔ wave/line, ncurses ↔ noncurses: a fresh cava in
+                    # this same window — the window never goes away.
+                    last_text = text
+                    write(path, text)
+                    stop(child)
+                    out.write("\x1b[0m\x1b[2J\x1b[H\x1b[?25h")
+                    out.flush()
+                    buf = b""
+                    child = begin()
+                elif text != last_text:
+                    colours_only = strip_colours(text) == strip_colours(last_text)
+                    last_text = text
+                    write(path, text)
+                    # Colours only: cava swaps them without touching the
+                    # audio — no re-levelling, no overshoot. Everything else
+                    # cava takes in place (like pressing r): same process.
+                    # A drawn style's colours never reach cava at all.
+                    child.send_signal(signal.SIGUSR2 if colours_only else signal.SIGUSR1)
+            if child.poll() is not None:
+                break
+    finally:
+        stop(child)
+        try:
+            out.write("\x1b[0m\x1b[?25h")
+            out.flush()
+        except (BrokenPipeError, OSError):
+            pass
+    return child.returncode or 0
+
+
+def selftest():
+    """Write a config for every orientation × colour × channels and, when cava
+    and script(1) are here, let cava read each one for a moment on a pseudo
+    terminal — a config cava rejects fails the test."""
+    pal = Palette()
+    combos = []
+    for orient in ("up", "down", "left", "right", "centre"):
+        for colour in ("velvet", "accent", "ink", "plain"):
+            for channels in ("stereo", "mono"):
+                combos.append((orient, colour, channels))
+    tmp = tempfile.mkdtemp(prefix="velvet-cava-test-")
+    checked = 0
+    live = shutil.which("cava") and shutil.which("script")
+    try:
+        for i, (orient, colour, channels) in enumerate(combos):
+            s = {
+                "orient": ORIENT[orient], "channels": channels, "reverse": i % 2 == 0,
+                "bar": 1 + i % 4, "gap": i % 3, "colour": colour, "fps": 60,
+                "sens": 100, "height": 100, "smooth": ("none", "monstercat", "waves")[i % 3],
+                "wave": False,
+            }
+            text = config_text(s, pal)
+            for line in text.splitlines():
+                if line.startswith("gradient_color_") and hex_rgb(line.split("'")[1], None) is None:
+                    raise SystemExit("bad colour in %s" % line)
+            path = os.path.join(tmp, "c%d.conf" % i)
+            write(path, text)
+            # One of each orientation is enough to prove cava accepts it.
+            if live and colour == "velvet" and channels == "stereo":
+                # A real terminal type (ncurses needs one) and a hard stop:
+                # cava in ncurses mode shrugs off SIGINT.
+                env = dict(os.environ, TERM="xterm-256color")
+                out = subprocess.run(
+                    ["timeout", "-k", "1", "8", "script", "-qec",
+                     "stty cols 60 rows 14; timeout -k 1 -s TERM 2 cava -p %s" % path, "/dev/null"],
+                    capture_output=True, text=True, timeout=15, env=env,
+                )
+                blob = out.stdout + out.stderr
+                if any(w in blob.lower() for w in ("error", "invalid", "not supported")):
+                    raise SystemExit("cava rejected %s:\n%s" % (orient, blob[-400:]))
+                if not any(g in blob for g in "▁▂▃▄▅▆▇█▔▀▏▎▍▌▋▊▉▕▐🮇🮈🮉🮊🮋"):
+                    raise SystemExit("cava drew no bars for %s" % orient)
+                checked += 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    # The live-change logic: a colour switch must be told apart.
+    a = dict(orient="bottom", channels="stereo", reverse=False, bar=2, gap=1, colour="velvet",
+             fps=60, sens=100, height=100, smooth="none", wave=False, level="auto", style="bars", detail="normal")
+    b = dict(a, colour="ink")
+    c = dict(a, level="low")
+    if strip_colours(config_text(a, pal)) != strip_colours(config_text(b, pal)):
+        raise SystemExit("a colour change is not recognised as colours-only")
+    if strip_colours(config_text(a, pal)) == strip_colours(config_text(c, pal)):
+        raise SystemExit("a level change looks like colours-only")
+    if "autosens = 0" not in config_text(c, pal) or "sensitivity = 45" not in config_text(c, pal):
+        raise SystemExit("fixed level not written")
+    # The drawn styles: every orientation draws a full screen, and cava's
+    # raw feed arrives with as many bands as asked for.
+    import random
+    rnd = random.Random(7)
+    drawn_checked = 0
+    for style in ("wave", "line"):
+        for orient in ("bottom", "top", "horizontal", "left", "right"):
+            for cols, rows in ((60, 12), (7, 3), (1, 1)):
+                sd = dict(a, style=style, orient=orient, detail="normal")
+                vals = [rnd.random() for _ in range(points_for(sd, cols, rows))]
+                lines, (how, cs) = picture(sd, vals, cols, rows, gradient(pal, "velvet"))
+                if len(lines) != rows or any(len(line) != cols for line in lines):
+                    raise SystemExit("%s/%s drew the wrong size at %dx%d" % (style, orient, cols, rows))
+                if len(cs) != (rows if how == "row" else cols):
+                    raise SystemExit("%s/%s coloured the wrong size" % (style, orient))
+                paint(lines, (how, cs))
+                drawn_checked += 1
+    if kind_of(a) == kind_of(dict(a, style="wave")):
+        raise SystemExit("bars → wave does not restart cava's output")
+    if raw_config_text(dict(a, style="wave"), 40) != raw_config_text(dict(a, style="line"), 40):
+        raise SystemExit("wave → line touches cava")
+    raw_ok = "skipped"
+    if live:
+        sd = dict(a, style="wave")
+        path = os.path.join(tempfile.gettempdir(), "velvet-cava-selftest-raw.conf")
+        write(path, raw_config_text(sd, 24))
+        try:
+            out = subprocess.run(["timeout", "-k", "1", "1.5", "cava", "-p", path],
+                                 capture_output=True, timeout=6)
+        finally:
+            os.unlink(path)
+        frames = [parse(line) for line in out.stdout.split(b"\n") if line.strip()]
+        if not frames or any(len(f) != 24 for f in frames[1:]):
+            raise SystemExit("cava's raw feed did not come as 24 bands")
+        raw_ok = "%d raw frames" % len(frames)
+    sys.stdout.write("ok  %d configs  %d run through cava  ·  live logic ok  ·  %d drawn frames  ·  %s\n"
+                     % (len(combos), checked, drawn_checked, raw_ok))
+    return 0
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        raise SystemExit(selftest())
+    raise SystemExit(main())

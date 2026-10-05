@@ -1,0 +1,4 @@
+module qs.modules.notifs
+NotifCard 1.0 NotifCard.qml
+NotifCentre 1.0 NotifCentre.qml
+NotifPopups 1.0 NotifPopups.qml

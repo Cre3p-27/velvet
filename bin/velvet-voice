@@ -1,0 +1,1490 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-voice
+
+Velly's mouth. One process per sentence: it turns text into audio, plays it,
+and narrates the loudness of what it is playing into
+~/.config/velvet/ai-speech.json so the island's orb can move its lips.
+
+Three engines, in the order "auto" tries them:
+
+    piper       local neural voices (~/.local/share/velvet/voices/*.onnx)
+    espeak-ng   local, robotic, always there
+    cloud       an OpenAI-compatible /audio/speech — needs the same key as
+                the brain, and is the only one that sounds human
+    none        no voice at all: the file says so and the island shows NO VOICE,
+                because a mouth that pretends is worse than a quiet one
+
+The envelope in the state file is measured from the actual audio (32 RMS
+values through the sentence), not guessed from the text — the mouth moves
+with the words that are really being spoken.
+
+Stdlib only, like everything in bin/.
+
+    velvet-voice "Guten Morgen"      say it (writes state while speaking)
+    velvet-voice --stop              cut off whatever is speaking
+    velvet-voice --status            what engine would be used
+    velvet-voice --selftest          synthesise, measure, print — no speakers
+"""
+
+import importlib.util
+import glob
+import json
+import math
+import os
+import re
+import shutil
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.request
+import wave
+
+HOME = os.path.expanduser("~")
+CONF_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "velvet")
+CONF_PATH = os.path.join(CONF_DIR, "config.json")
+AI_PATH = os.path.join(CONF_DIR, "ai.json")
+STATE_PATH = os.path.join(CONF_DIR, "ai-speech.json")
+PID_PATH = os.path.join(CONF_DIR, "ai-speech.pid")
+VOICE_DIR = os.path.join(HOME, ".local", "share", "velvet", "voices")
+DATA_DIR = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share"), "velvet")
+
+# The natural voice: Kartoffel-Orpheus (a German Orpheus-3B trained on real
+# recordings) on its own llama-server, and the SNAC codec that turns its codes
+# into sound. The server lives only while she talks — a keeper stops it after
+# NATURAL_IDLE seconds without a sentence, and the VRAM is yours again.
+NATURAL_MODEL = os.path.join(DATA_DIR, "models", "voice-orpheus-de-q5.gguf")
+NATURAL_DECODER = os.path.join(DATA_DIR, "models", "snac-24khz-decoder.onnx")
+NATURAL_SERVER = os.path.join(DATA_DIR, "engines", "llama", "llama-server")
+NATURAL_PORT = int(os.environ.get("VELLY_VOICE_PORT") or "8139")
+NATURAL_IDLE = 420.0
+NATURAL_TOUCH = os.path.join(CONF_DIR, "ai-natural.touch")
+NATURAL_STATE = os.path.join(CONF_DIR, "ai-natural.json")
+NATURAL_LOG = os.path.join(DATA_DIR, "velvet-voice-server.log")
+NATURAL_VOICES = ("Sophie", "Marie", "Mia", "Maria", "Sophia", "Lina", "Lea",
+                  "Julian", "Jakob", "Anton", "Jan", "Alexander", "Emil", "Ben", "Elias", "Felix",
+                  "Jonas", "Noah", "Maximilian")
+
+ENVELOPE = 32          # mouth samples over the whole sentence
+
+
+def log(msg: str) -> None:
+    print(f"velvet-voice: {msg}", file=sys.stderr, flush=True)
+
+
+def read_json(path: str, fallback):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return fallback
+
+
+def write_state(payload: dict) -> None:
+    """In place — the shell watches this exact inode."""
+    try:
+        os.makedirs(CONF_DIR, exist_ok=True)
+        with open(STATE_PATH, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, separators=(",", ":"), ensure_ascii=False))
+            fh.flush()
+    except OSError as exc:
+        log(f"cannot write {STATE_PATH}: {exc}")
+
+
+def which(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def shell_config() -> dict:
+    cfg = {"voice": True, "voiceEngine": "auto", "voiceName": "", "voiceVolume": 0.9}
+    data = read_json(CONF_PATH, {})
+    velly = data.get("velly") if isinstance(data, dict) else None
+    if isinstance(velly, dict):
+        cfg.update(velly)
+    return cfg
+
+
+def ai_config() -> dict:
+    data = read_json(AI_PATH, {})
+    return data if isinstance(data, dict) else {}
+
+
+# ─────────────────────────────────────────────────────────────────── engines
+class Engine:
+    name = ""
+    ok = False
+    note = ""
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        raise NotImplementedError
+
+
+class Piper(Engine):
+    name = "piper"
+
+    # The German voices in the piper index. Any of them can be picked in
+    # SETUP; the first one is what velvet-local installs for a fresh machine.
+    VOICES_DE = ("de_DE-thorsten-medium", "de_DE-thorsten-high", "de_DE-thorsten-low",
+                 "de_DE-thorsten_emotional-medium", "de_DE-kerstin-low", "de_DE-eva_k-x_low",
+                 "de_DE-ramona-low", "de_DE-karlsson-low", "de_DE-pavoque-low", "de_DE-mls-medium")
+
+    def __init__(self, cfg, ai):
+        self.prefix = []
+        if which("piper"):
+            self.prefix = [which("piper")]
+        elif importlib.util.find_spec("piper") is not None:
+            # Some distros ship piper-tts as a python module and no binary at
+            # all — Arch does. It is the same piper, one interpreter away.
+            self.prefix = [sys.executable, "-m", "piper"]
+        self.binary = self.prefix[0] if self.prefix else ""
+        self.model = cfg.get("voiceName") or ai.get("piperVoice") or ""
+        if not self.model:
+            self.model = Piper.pick_voice()
+        # A bare voice NAME resolves to the file in our own voice folder when it
+        # is already there. ensure() fetches it when it is not — and until then
+        # this engine is honestly not ready, so "auto" does not hand a name to
+        # piper that piper would refuse.
+        if self.model and not os.path.isfile(self.model):
+            found = Piper.pick_voice_named(os.path.basename(self.model))
+            if found:
+                self.model = found
+        self.path = bool(self.model) and os.path.isfile(self.model)
+        self.ok = bool(self.prefix) and self.path
+        # 1.0 is the voice's own pace; the UI writes a multiplier.
+        self.speed = max(0.6, min(1.5, float(cfg.get("voiceSpeed") or 1.0)))
+        if not self.ok:
+            if not self.prefix:
+                self.note = "piper is not installed"
+            elif not self.model:
+                self.note = "no voice installed yet"
+            elif len(self.prefix) > 1:
+                self.note = f"voice {os.path.basename(self.model)} is not downloaded yet — one sentence will fetch it"
+            else:
+                self.note = "the voice model file is missing"
+
+    @staticmethod
+    def pick_voice() -> str:
+        """The default voice is the one velvet-local installs — so a machine
+        that has been picked over by hand sounds the same as a fresh one.
+        Anything else still plays when it is the only voice there."""
+        for preferred in ("de_DE-thorsten-medium", "de_DE-thorsten-high", "de_DE-karlsson-low"):
+            found = Piper.pick_voice_named(preferred)
+            if found:
+                return found
+        try:
+            files = sorted(f for f in os.listdir(VOICE_DIR) if f.endswith(".onnx"))
+        except OSError:
+            return ""
+        return os.path.join(VOICE_DIR, files[0]) if files else ""
+
+    @staticmethod
+    def pick_voice_named(name: str) -> str:
+        try:
+            files = sorted(f for f in os.listdir(VOICE_DIR)
+                           if f.endswith(".onnx") and f.startswith(name))
+        except OSError:
+            return ""
+        return os.path.join(VOICE_DIR, files[0]) if files else ""
+
+    def ensure(self) -> bool:
+        """Make sure the chosen voice is really on disk. Picking a voice in
+        SETUP must not mean 'download it yourself first': the engine fetches a
+        missing one once, free, from the piper index."""
+        if not self.prefix or not self.model:
+            return self.ok
+        if self.path:
+            return True
+        want = os.path.basename(self.model)
+        found = Piper.pick_voice_named(want)
+        if not found:
+            os.makedirs(VOICE_DIR, exist_ok=True)
+            log(f"fetching voice {want} …")
+            try:
+                subprocess.run([sys.executable, "-m", "piper.download_voices", want,
+                                "--download-dir", VOICE_DIR], capture_output=True, timeout=420)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                self.note = f"voice download failed: {exc}"
+                self.ok = False
+                return False
+            found = Piper.pick_voice_named(want)
+        if not found:
+            self.note = "that voice is not in the piper index"
+            self.ok = False
+            return False
+        self.model = found
+        self.path = True
+        self.ok = True
+        self.note = ""
+        return True
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        scale = 0.0
+        if abs(self.speed - 1.0) > 0.01:
+            # piper's length scale runs the other way (bigger is slower), and
+            # its effect is compressed in practice: measured on this build,
+            # scale 0.7 gave 0.78× the duration, not 0.7×. The exponent buys
+            # back the difference so the dial means what it says.
+            scale = max(0.45, min(1.5, (1.0 / self.speed) ** 1.8))
+        # The loaded voice first (see piper_serve): 0.13–0.2 s a sentence
+        # instead of 1.3 s for a whole new piper process.
+        if self.path and piper_start():
+            try:
+                reply = piper_request({"model": self.model, "text": text, "out": out_wav,
+                                       "length_scale": round(scale, 3) if scale else None}, 30.0)
+                if reply.get("ok") and os.path.getsize(out_wav) > 1000:
+                    return True
+                self.note = str(reply.get("error") or "")[:160]
+            except Exception as exc:                           # noqa: BLE001
+                self.note = f"piper keeper: {exc}"[:160]
+        cmd = self.prefix + ["-m", self.model, "-f", out_wav]
+        if not self.path:
+            cmd += ["--data-dir", VOICE_DIR]
+        if scale:
+            cmd += ["--length-scale", f"{scale:.3f}"]
+        try:
+            proc = subprocess.run(cmd, input=text.encode(), capture_output=True, timeout=180)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.note = str(exc)
+            return False
+        if proc.returncode != 0:
+            lines = proc.stderr.decode("utf-8", "replace").strip().splitlines()
+            self.note = (lines[-1] if lines else "piper failed")[:160]
+            return False
+        return os.path.getsize(out_wav) > 1000
+
+
+# ───────────────────────────────────────────────────── piper, loaded once
+#  `python -m piper` per sentence cost 1.3 s before the first sound — the
+#  interpreter, onnxruntime and the voice, every time (measured, pavoque-low).
+#  Loaded once, a sentence takes 0.13–0.2 s. The keeper starts when she wakes
+#  (--warm), synthesises on a unix socket and leaves after PIPER_IDLE seconds
+#  without a sentence.
+PIPER_SOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), "velvet-piper.sock")
+PIPER_IDLE = 900.0
+
+
+def piper_request(payload: dict, timeout: float = 30.0) -> dict:
+    import socket                                              # noqa: PLC0415
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(PIPER_SOCK)
+        sock.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
+        buf = b""
+        while not buf.endswith(b"\n"):
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        return json.loads(buf.decode("utf-8") or "{}")
+    finally:
+        sock.close()
+
+
+def piper_up() -> bool:
+    try:
+        return bool(piper_request({"ping": True}, 0.5).get("ok"))
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def piper_start(wait: float = 3.0) -> bool:
+    """The keeper is up (or comes up within `wait`)."""
+    if piper_up():
+        return True
+    if importlib.util.find_spec("piper") is None:
+        return False
+    try:
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--serve-piper"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        return False
+    end = time.time() + wait
+    while time.time() < end:
+        if piper_up():
+            return True
+        time.sleep(0.08)
+    return False
+
+
+def piper_serve() -> int:
+    """--serve-piper: the keeper. One at a time; a stale socket is taken over."""
+    import socket                                              # noqa: PLC0415
+    try:
+        from piper import PiperVoice, SynthesisConfig          # noqa: PLC0415
+    except ImportError:
+        return 1
+    if piper_up():
+        return 0
+    try:
+        os.unlink(PIPER_SOCK)
+    except OSError:
+        pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        srv.bind(PIPER_SOCK)
+    except OSError:
+        return 0
+    os.chmod(PIPER_SOCK, 0o600)
+    # SIGTERM ends the loop like the idle timeout does, so the socket file
+    # goes with the keeper instead of staying behind.
+    signal.signal(signal.SIGTERM, lambda _sig, _frm: sys.exit(0))
+    srv.listen(8)
+    srv.settimeout(5.0)
+    voices = {}
+    last = time.time()
+    try:
+        while time.time() - last < PIPER_IDLE:
+            try:
+                conn, _addr = srv.accept()
+            except socket.timeout:
+                continue
+            with conn:
+                conn.settimeout(10.0)
+                try:
+                    buf = b""
+                    while not buf.endswith(b"\n"):
+                        chunk = conn.recv(65536)
+                        if not chunk:
+                            break
+                        buf += chunk
+                    req = json.loads(buf.decode("utf-8") or "{}")
+                except (OSError, ValueError):
+                    continue
+                if req.get("ping"):
+                    reply = {"ok": True, "voices": list(voices)}
+                elif req.get("load"):
+                    # --warm: the voice goes into memory before the first
+                    # sentence needs it (the load is the 0.6 s of the first).
+                    try:
+                        model = str(req["load"])
+                        if model not in voices:
+                            voices.clear()
+                            voices[model] = PiperVoice.load(model)
+                        reply = {"ok": True}
+                    except Exception as exc:                   # noqa: BLE001
+                        reply = {"ok": False, "error": str(exc)[:200]}
+                else:
+                    try:
+                        model = str(req["model"])
+                        if model not in voices:
+                            voices.clear()
+                            voices[model] = PiperVoice.load(model)
+                        cfg = SynthesisConfig(length_scale=float(req["length_scale"])) if req.get("length_scale") else None
+                        with wave.open(str(req["out"]), "wb") as out:
+                            voices[model].synthesize_wav(str(req.get("text") or ""), out, syn_config=cfg)
+                        reply = {"ok": True}
+                    except Exception as exc:                   # noqa: BLE001
+                        reply = {"ok": False, "error": str(exc)[:200]}
+                    last = time.time()
+                try:
+                    conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+                except OSError:
+                    pass
+    finally:
+        srv.close()
+        try:
+            os.unlink(PIPER_SOCK)
+        except OSError:
+            pass
+    return 0
+
+
+# ─────────────────────────────────────────────────────────── the natural voice
+def free_vram_mb() -> int:
+    """Free VRAM on the biggest card (the same measure velvet-local uses)."""
+    best = 0
+    for dev in glob.glob("/sys/class/drm/card*/device"):
+        try:
+            with open(os.path.join(dev, "mem_info_vram_total"), encoding="utf-8") as fh:
+                total = int((fh.read() or "0").strip())
+            with open(os.path.join(dev, "mem_info_vram_used"), encoding="utf-8") as fh:
+                used = int((fh.read() or "0").strip())
+        except (OSError, ValueError):
+            continue
+        if total > 2 * 1024 ** 3:
+            best = max(best, (total - used) // 1048576)
+    return best
+
+
+def natural_health(timeout: float = 0.5) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{NATURAL_PORT}/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def natural_touch() -> None:
+    try:
+        with open(NATURAL_TOUCH, "w", encoding="utf-8") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
+
+
+def natural_need_mb() -> int:
+    try:
+        return int(os.path.getsize(NATURAL_MODEL) / 1048576) + 700
+    except OSError:
+        return 3200
+
+
+def brain_reserve_mb() -> int:
+    """Room the brain still needs: when she is awake and her model server is
+    not up yet, it is about to load — the voice must not take its place (the
+    20B brain would then run in its slow split mode)."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8137/health", timeout=0.4) as resp:
+            if resp.status == 200:
+                return 0
+    except Exception:                                          # noqa: BLE001
+        pass
+    session = read_json(os.path.join(CONF_DIR, "ai-session.json"), {})
+    if not (isinstance(session, dict) and session.get("active") and float(session.get("until") or 0) > time.time() * 1000):
+        return 0
+    try:
+        return int(os.path.getsize(os.path.join(DATA_DIR, "models", "brain.gguf")) / 1048576) + 1400
+    except OSError:
+        return 0
+
+
+def natural_fits() -> tuple:
+    vram = free_vram_mb()
+    need = natural_need_mb() + brain_reserve_mb()
+    return (not vram or vram >= need), vram, need
+
+
+def natural_serve() -> int:
+    """--serve-natural: the voice's llama-server as a child, stopped once
+    nobody has spoken for NATURAL_IDLE seconds. One keeper at a time."""
+    if natural_health():
+        return 0
+    state = read_json(NATURAL_STATE, {})
+    try:
+        if state.get("keeper") and state.get("state") in ("loading", "up"):
+            os.kill(int(state["keeper"]), 0)
+            return 0
+    except (OSError, ValueError, TypeError):
+        pass
+    fits, vram, need = natural_fits()
+    if not fits:
+        write_json_file(NATURAL_STATE, {"at": int(time.time() * 1000), "state": "down", "keeper": 0,
+                                        "error": f"zu wenig Grafikspeicher ({vram} MB frei, ~{need} MB nötig mit Gehirn)"})
+        return 1
+    # The discrete card only — llama.cpp would otherwise spread the voice over
+    # the integrated graphics too (see bin/_gpu.py).
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import _gpu                                                # noqa: PLC0415
+    device = _gpu.pick_device(NATURAL_SERVER)
+    cmd = [NATURAL_SERVER, "-m", NATURAL_MODEL, "--host", "127.0.0.1", "--port", str(NATURAL_PORT),
+           "-ngl", "99", "-c", "4096", "-np", "1", "-fa", "auto", "--no-webui"] + (["--device", device] if device else [])
+    natural_touch()
+    logfh = open(NATURAL_LOG, "a", encoding="utf-8")
+    proc = subprocess.Popen(cmd, stdout=logfh, stderr=logfh, start_new_session=True)
+    write_json_file(NATURAL_STATE, {"at": int(time.time() * 1000), "state": "loading", "keeper": os.getpid(),
+                                    "pid": proc.pid, "port": NATURAL_PORT})
+
+    def stop(_sig, _frm):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    up = False
+    try:
+        while True:
+            if proc.poll() is not None:
+                break
+            if not up and natural_health(0.5):
+                up = True
+                write_json_file(NATURAL_STATE, {"at": int(time.time() * 1000), "state": "up",
+                                                "keeper": os.getpid(), "pid": proc.pid, "port": NATURAL_PORT})
+            try:
+                idle = time.time() - os.path.getmtime(NATURAL_TOUCH)
+            except OSError:
+                idle = NATURAL_IDLE + 1
+            if idle > NATURAL_IDLE:
+                break
+            time.sleep(1.0 if not up else 3.0)
+    except KeyboardInterrupt:
+        pass
+    try:
+        proc.terminate()
+        proc.wait(timeout=8)
+    except Exception:                                          # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:                                      # noqa: BLE001
+            pass
+    write_json_file(NATURAL_STATE, {"at": int(time.time() * 1000), "state": "down", "keeper": 0})
+    return 0
+
+
+def write_json_file(path: str, payload) -> None:
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def game_running() -> bool:
+    """A fullscreen game has the graphics card — the natural voice must not
+    take it from under it (loading 2.4 GB and generating on the GPU would
+    stutter the game). Piper speaks meanwhile."""
+    try:
+        out = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, timeout=1.5, text=True).stdout
+        win = json.loads(out or "{}")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return False
+    cls = str(win.get("class") or "").lower()
+    full = int(win.get("fullscreen") or 0) > 0
+    gamey = cls.startswith("steam_app") or cls in ("gamescope", "steam_proton") or ".exe" in cls \
+        or any(k in cls for k in ("minecraft", "lutris", "heroic", "wine", "retroarch", "osu"))
+    return gamey or (full and cls not in ("google-chrome", "firefox", "mpv", "vlc", "chromium", "brave-browser"))
+
+
+class Natural(Engine):
+    """Kartoffel-Orpheus: a German voice trained on real people. The talker
+    writes SNAC codes, seven per 12 ms frame; the codec renders 24 kHz."""
+    name = "natural"
+    _session = None
+
+    def __init__(self, cfg, ai):
+        wanted = str(cfg.get("naturalVoice") or "Sophie").strip().title()
+        self.voice = wanted if wanted in NATURAL_VOICES else "Sophie"
+        self.speed = max(0.6, min(1.5, float(cfg.get("voiceSpeed") or 1.0)))
+        have = os.path.isfile(NATURAL_MODEL) and os.path.isfile(NATURAL_DECODER) and os.path.isfile(NATURAL_SERVER)
+        ort = importlib.util.find_spec("onnxruntime") is not None
+        self.ok = have and ort
+        if not have:
+            self.note = "natürliche Stimme noch nicht geladen"
+        elif not ort:
+            self.note = "onnxruntime fehlt"
+        if self.ok and not natural_health(0.3) and game_running():
+            self.ok = False
+            self.note = "ein Spiel läuft — die Grafikkarte bleibt beim Spiel"
+        state = read_json(NATURAL_STATE, {})
+        if self.ok and not natural_health(0.3) and state.get("state") == "down" and state.get("error") \
+                and time.time() * 1000 - float(state.get("at") or 0) < 60000:
+            # The keeper refused a minute ago (a game holds the VRAM): do not
+            # knock again for every sentence — Piper speaks meanwhile.
+            self.ok = False
+            self.note = state["error"]
+
+    def ready(self, wait: float = 90.0) -> bool:
+        if natural_health():
+            natural_touch()
+            return True
+        fits, vram, need = natural_fits()
+        if not fits:
+            self.note = f"zu wenig Grafikspeicher ({vram} MB frei, ~{need} MB nötig mit Gehirn)"
+            return False
+        natural_touch()
+        try:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "--serve-natural"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+        except OSError as exc:
+            self.note = str(exc)
+            return False
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if natural_health(0.5):
+                return True
+            state = read_json(NATURAL_STATE, {})
+            if state.get("state") == "down" and state.get("error"):
+                self.note = state["error"]
+                return False
+            time.sleep(0.4)
+        self.note = "die natürliche Stimme kam nicht hoch"
+        return False
+
+    @classmethod
+    def decoder(cls):
+        if cls._session is None:
+            import onnxruntime                                 # noqa: PLC0415
+            opts = onnxruntime.SessionOptions()
+            opts.intra_op_num_threads = max(2, (os.cpu_count() or 4) // 2)
+            cls._session = onnxruntime.InferenceSession(NATURAL_DECODER, opts, providers=["CPUExecutionProvider"])
+        return cls._session
+
+    def codes(self, text: str) -> list:
+        # About 84 codes a second of speech, and German runs ~13 characters a
+        # second: twice that is room enough, and a runaway stops there.
+        n_predict = int(min(3000, 160 + len(text) * 13))
+        payload = {
+            # [start of human] BOS "Name: text" [eot] [end of human] [start of ai] [start of speech]
+            "prompt": [128259, 128000, f"{self.voice}: {text}", 128009, 128260, 128261, 128257],
+            "n_predict": n_predict, "temperature": 0.6, "top_p": 0.95, "top_k": 50, "min_p": 0.0,
+            "repeat_penalty": 1.1, "return_tokens": True, "stream": False, "cache_prompt": False,
+        }
+        req = urllib.request.Request(f"http://127.0.0.1:{NATURAL_PORT}/completion",
+                                     data=json.dumps(payload).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+        out = []
+        for tok in data.get("tokens") or []:
+            if tok == 128258:                                  # end of speech
+                break
+            if tok >= 128266:
+                out.append(tok - 128266)
+        return out
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        if not self.ok or not self.ready():
+            return False
+        natural_touch()
+        try:
+            raw = self.codes(text)
+        except Exception as exc:                               # noqa: BLE001
+            self.note = f"natürliche Stimme: {exc}"[:160]
+            return False
+        frames = []
+        for f in range(len(raw) // 7):
+            chunk = [raw[f * 7 + i] - i * 4096 for i in range(7)]
+            if all(0 <= c < 4096 for c in chunk):
+                frames.append(chunk)
+        if len(frames) < 3:
+            self.note = "die natürliche Stimme blieb stumm"
+            return False
+        import numpy                                           # noqa: PLC0415
+        c0 = numpy.array([[fr[0] for fr in frames]], dtype=numpy.int64)
+        c1 = numpy.array([[v for fr in frames for v in (fr[1], fr[4])]], dtype=numpy.int64)
+        c2 = numpy.array([[v for fr in frames for v in (fr[2], fr[3], fr[5], fr[6])]], dtype=numpy.int64)
+        try:
+            audio = self.decoder().run(None, {"audio_codes.0": c0, "audio_codes.1": c1, "audio_codes.2": c2})[0]
+        except Exception as exc:                               # noqa: BLE001
+            self.note = f"SNAC: {exc}"[:160]
+            return False
+        pcm = numpy.clip(audio.reshape(-1), -1.0, 1.0)
+        # A breath of silence each side, so sentences do not collide.
+        pad = numpy.zeros(int(24000 * 0.06), dtype=numpy.float32)
+        pcm = numpy.concatenate([pad, pcm.astype(numpy.float32), pad])
+        if abs(self.speed - 1.0) > 0.02:
+            # Tempo without pitch change is a job for the player; here only
+            # the pace between sentences follows the dial (see main).
+            pass
+        with wave.open(out_wav, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(24000)
+            w.writeframes((pcm * 32000).astype(numpy.int16).tobytes())
+        return os.path.getsize(out_wav) > 2000
+
+
+class Espeak(Engine):
+    name = "espeak"
+
+    def __init__(self, cfg, ai):
+        self.binary = ""
+        for candidate in ("espeak-ng", "espeak"):
+            if which(candidate):
+                self.binary = candidate
+                break
+        self.voice = cfg.get("voiceName") or ai.get("espeakVoice") or ""
+        self.ok = bool(self.binary)
+        if not self.ok:
+            self.note = "espeak-ng is not installed"
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        cmd = [self.binary, "-s", "168", "-p", "42", "-w", out_wav]
+        if self.voice:
+            cmd += ["-v", self.voice]
+        cmd.append(text)
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.note = str(exc)
+            return False
+        return proc.returncode == 0 and os.path.getsize(out_wav) > 1000
+
+
+class Animalese(Engine):
+    """The voice that needs nothing installed.
+
+    A village-character mouth: one short blip per syllable, pitch following the
+    word and its punctuation, with real pauses at the commas and the stops. It
+    is not speech and it says so — the island labels the engine ANIMALESE, the
+    settings call it what it is, and the moment piper, espeak-ng or a cloud
+    voice exists, "auto" picks that instead. The point is that she is not mute
+    on a machine where nothing is installed yet.
+    """
+    name = "animalese"
+
+    def __init__(self, cfg, ai):
+        self.ok = True
+        self.note = "no real voice installed — blips until one is"
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        import random
+        rng = random.Random(hash(text[:64]) & 0xFFFF)
+        rate = 16000
+        gap = 0.022
+        base = 150.0
+        cursor = 0.0
+        samples = [0.0] * int(rate * 0.05)
+
+        def blip(freq: float, ms: float, level: float) -> None:
+            nonlocal cursor
+            n = max(8, int(rate * ms / 1000.0))
+            start = int(cursor * rate)
+            need = start + n + 1
+            while len(samples) < need:
+                samples.append(0.0)
+            for i in range(n):
+                t = i / rate
+                # A vowel-ish shape: the fundamental plus a quiet second formant.
+                body = math.sin(2 * math.pi * freq * t) * 0.7 + math.sin(2 * math.pi * freq * 2.02 * t) * 0.2
+                # Fast attack, gentle fall: a mouth, not a beep.
+                env = min(1.0, i / max(1, int(rate * 0.008))) * (1.0 - i / n) ** 0.75
+                samples[start + i] += body * env * level * 0.5
+            cursor += ms / 1000.0 + gap
+
+        words = re.findall(r"[\wäöüßÄÖÜ]+|[.,!?;:—-]", text)
+        for word in words:
+            if word in ",;:":
+                cursor += 0.14
+                continue
+            if word in ".!?":
+                cursor += 0.30
+                continue
+            if word == "-":
+                cursor += 0.05
+                continue
+            syllables = max(1, min(5, round(len(word) / 2.6)))
+            pitch = base + (len(word) % 7) * 11 + rng.uniform(-9, 9)
+            for k in range(syllables):
+                # A small rise across the word: the shape of a sentence.
+                rise = 1.0 + (k / max(1, syllables)) * 0.14
+                blip(pitch * rise, 74 + rng.uniform(-8, 10), 0.9 - k * 0.05)
+            if word[0].isupper() and rng.random() < 0.5:
+                cursor += 0.03
+        # A last soft space so the mouth does not slam shut on the final word.
+        cursor += 0.06
+        try:
+            with wave.open(out_wav, "wb") as fh:
+                fh.setnchannels(1)
+                fh.setsampwidth(2)
+                fh.setframerate(rate)
+                fh.writeframes(struct.pack(f"<{len(samples)}h",
+                                           *[int(max(-1.0, min(1.0, s)) * 32000) for s in samples]))
+        except (OSError, struct.error) as exc:
+            self.note = str(exc)
+            return False
+        return os.path.getsize(out_wav) > 1000
+
+
+class Cloud(Engine):
+    name = "cloud"
+
+    def __init__(self, cfg, ai):
+        self.base = (ai.get("ttsBaseUrl") or ai.get("baseUrl") or "https://api.openai.com/v1").rstrip("/")
+        self.key = (ai.get("apiKey") or os.environ.get("VELLY_API_KEY") or "").strip()
+        self.model = ai.get("ttsModel") or "gpt-4o-mini-tts"
+        self.voice = cfg.get("voiceName") or ai.get("ttsVoice") or "alloy"
+        self.ok = bool(self.key) and which("ffmpeg")
+        if not self.key:
+            self.note = "no api key for cloud speech"
+        elif not self.ok:
+            self.note = "ffmpeg is missing (needed to measure the audio)"
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        import urllib.error
+        import urllib.request
+        payload = {"model": self.model, "voice": self.voice, "input": text, "response_format": "wav"}
+        req = urllib.request.Request(f"{self.base}/audio/speech",
+                                     data=json.dumps(payload, ensure_ascii=False).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {self.key}")
+        raw_path = out_wav + ".raw"
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp, open(raw_path, "wb") as fh:
+                shutil.copyfileobj(resp, fh)
+        except Exception as exc:                               # noqa: BLE001
+            self.note = str(exc)[:160]
+            return False
+        # Whatever we got back, it becomes a 16 kHz mono PCM wav so the
+        # envelope and the mouth always agree on the format.
+        convert = ["ffmpeg", "-y", "-loglevel", "error", "-i", raw_path,
+                   "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", out_wav]
+        try:
+            proc = subprocess.run(convert, capture_output=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.note = str(exc)
+            return False
+        finally:
+            try:
+                os.unlink(raw_path)
+            except OSError:
+                pass
+        return proc.returncode == 0 and os.path.getsize(out_wav) > 1000
+
+
+# ─────────────────────────────────────────────── what a voice can actually say
+#  Measured by speaking with piper and transcribing the result with whisper:
+#  "13:42 Uhr" came out as "13.042 Uhr", an emoji was READ ("Musiknote"), a
+#  path was spelled ("Tilde Downlots …"), "GB" became "Gebel" and "z. B." a
+#  lone "Weh". The screen keeps the written answer; the voice gets this one.
+ABBREV_DE = [
+    (r"\bz\.\s?B\.", "zum Beispiel"), (r"\bu\.\s?a\.", "unter anderem"), (r"\bd\.\s?h\.", "das heißt"),
+    (r"\bbzw\.", "beziehungsweise"), (r"\busw\.", "und so weiter"), (r"\bca\.", "circa"),
+    (r"\bggf\.", "gegebenenfalls"), (r"\bevtl\.", "eventuell"), (r"\binkl\.", "inklusive"),
+    (r"\bNr\.", "Nummer"), (r"\bMin\.", "Minuten"), (r"\bSek\.", "Sekunden"), (r"\bStd\.", "Stunden"),
+]
+UNITS_DE = [
+    (r"(\d)\s*°\s*C\b", r"\1 Grad"), (r"(\d)\s*°", r"\1 Grad"), (r"(\d)\s*%", r"\1 Prozent"),
+    (r"(\d)\s*GB\b", r"\1 Gigabait"), (r"(\d)\s*MB\b", r"\1 Megabait"), (r"(\d)\s*TB\b", r"\1 Terabait"),
+    (r"(\d)\s*GHz\b", r"\1 Gigahertz"), (r"(\d)\s*km/h\b", r"\1 Kilometer pro Stunde"),
+    (r"(\d)\s*km\b", r"\1 Kilometer"), (r"(\d)\s*ms\b", r"\1 Millisekunden"), (r"(\d)\s*€", r"\1 Euro"),
+    (r"\bGB\b", "Gigabait"), (r"\bRAM\b", "Arbeitsspeicher"), (r"\bCPU\b", "C P U"), (r"\bGPU\b", "G P U"),
+]
+
+
+def speakable(text: str) -> str:
+    out = str(text or "")
+    # Links and paths are for reading, not for hearing.
+    out = re.sub(r"https?://\S+", "den Link", out)
+    out = re.sub(r"(?:~|\$HOME)?/?(?:[\w.-]+/)+([\w.-]+)", lambda m: m.group(1).rsplit(".", 1)[0].replace("-", " ").replace("_", " "), out)
+    # Emoji, pictographs and markdown decoration say nothing out loud.
+    out = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200d]", "", out)
+    out = re.sub(r"[*_#`>|]+", "", out)
+    # Times: "13:42 Uhr" → "13 Uhr 42", "9:00" → "9 Uhr".
+    out = re.sub(r"\b(\d{1,2}):(\d{2})(?::\d{2})?\s*(Uhr)?", lambda m: f"{int(m.group(1))} Uhr" + ("" if m.group(2) == "00" else f" {int(m.group(2))}"), out)
+    for pattern, repl in ABBREV_DE:
+        out = re.sub(pattern, repl, out)
+    for pattern, repl in UNITS_DE:
+        out = re.sub(pattern, repl, out)
+    out = out.replace("~", "ungefähr ").replace("→", " zu ").replace("&", " und ").replace("+", " plus ")
+    out = re.sub(r"\s+", " ", out).strip()
+    return out
+
+
+def choose_engine(cfg, ai) -> Engine:
+    wanted = str(cfg.get("voiceEngine") or "auto").lower()
+    builders = {"natural": Natural, "orpheus": Natural, "piper": Piper, "espeak": Espeak, "espeak-ng": Espeak,
+                "cloud": Cloud, "animalese": Animalese, "blips": Animalese}
+    if wanted == "none":
+        engine = Engine()
+        engine.name = ""
+        engine.note = "voice is switched to silent"
+        return engine
+    if wanted in builders:
+        engine = builders[wanted](cfg, ai)
+        if engine.ok:
+            return engine
+        # An explicit engine that cannot work — espeak chosen on a machine
+        # without espeak-ng — must not cost her the voice that IS installed.
+        # Keep the reason, use what auto would have picked.
+        for candidate in (Natural, Piper, Espeak, Cloud, Animalese):
+            if candidate is builders[wanted]:
+                continue
+            fallback = candidate(cfg, ai)
+            if fallback.ok:
+                # Keep the reason, but do not shout it once per sentence: it
+                # filled the journal with one warning per answer. `--status`
+                # still reports it, and the engine name in the state says which
+                # voice really spoke.
+                fallback.note = f"{wanted} nicht nutzbar ({engine.note}) — {fallback.name} spricht"
+                return fallback
+        return engine
+    # auto: a real voice first, every time — the blips are the last resort, and
+    # they are only reached on a machine where nothing else exists.
+    for candidate in (Natural, Piper, Espeak, Cloud, Animalese):
+        engine = candidate(cfg, ai)
+        if engine.ok:
+            return engine
+    engine = Engine()
+    engine.name = ""
+    engine.note = "no voice engine at all"
+    return engine
+
+
+# ───────────────────────────────────────────────────────────────── the mouth
+def envelope(path: str, buckets: int = ENVELOPE) -> tuple:
+    """(duration, rms envelope) measured from the real audio."""
+    try:
+        with wave.open(path, "rb") as fh:
+            channels = fh.getnchannels()
+            width = fh.getsampwidth()
+            rate = fh.getframerate()
+            frames = fh.getnframes()
+            raw = fh.readframes(frames)
+    except (OSError, wave.Error) as exc:
+        log(f"cannot read {path}: {exc}")
+        return 0.0, []
+    if width != 2 or frames <= 0:
+        return frames / float(rate or 16000), []
+    count = len(raw) // 2
+    samples = struct.unpack(f"<{count}h", raw[:count * 2])
+    if channels >= 2:
+        samples = samples[0::channels]
+        count = len(samples)
+    duration = count / float(rate * max(1, channels))
+    per = max(1, count // buckets)
+    out = []
+    for b in range(buckets):
+        chunk = samples[b * per:(b + 1) * per]
+        if not chunk:
+            out.append(0.0)
+            continue
+        acc = 0
+        for value in chunk:
+            acc += float(value) * float(value)
+        rms = math.sqrt(acc / len(chunk)) / 32768.0
+        out.append(round(min(1.0, rms * 4.2), 3))
+    # Normalise the shape, not the loudness: lips move in relative terms.
+    top = max(out) or 1.0
+    if top > 0.05:
+        out = [round(min(1.0, v / top * 0.95), 3) for v in out]
+    return round(duration, 3), out
+
+
+def player_for(path: str):
+    for name, cmd in (("pw-play", ["pw-play"]), ("paplay", ["paplay"]), ("aplay", ["aplay", "-q"]),
+                      ("ffplay", ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"])):
+        if which(name):
+            return cmd + [path]
+    return None
+
+
+def stop_previous() -> None:
+    try:
+        with open(PID_PATH, "r") as fh:
+            pid = int((fh.read() or "0").strip() or 0)
+    except (OSError, ValueError):
+        pid = 0
+    if pid > 0 and pid != os.getpid():
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    cfg = shell_config()
+    ai = ai_config()
+
+    if "--selftest" in argv:
+        return selftest(cfg, ai)
+    if "--serve-natural" in argv:
+        return natural_serve()
+    if "--serve-piper" in argv:
+        return piper_serve()
+    if "--warm" in argv:
+        # Velly woke up: bring the voices up now, not with the first sentence.
+        # Piper first — it speaks whenever the natural voice cannot (a big
+        # brain in the VRAM, a game), and loaded it answers in a blink.
+        spare = Piper(cfg, ai)
+        if spare.ok and piper_start(wait=6.0):
+            try:
+                piper_request({"load": spare.model}, 20.0)
+            except Exception:                                  # noqa: BLE001
+                pass
+        # The natural voice takes a few seconds more to load.
+        eng = choose_engine(cfg, ai)
+        if eng.name == "natural" and eng.ok:
+            if not natural_health() and not eng.ready(wait=120):
+                # No room for the natural voice (the 20B brain holds the
+                # card): Piper speaks today, so ITS fillers get made.
+                spare = Piper(cfg, ai)
+                if spare.ok:
+                    warm_phrases(spare)
+                return 1
+        if eng.ok:
+            warm_phrases(eng)
+        return 0
+    if "--stop-natural" in argv:
+        state = read_json(NATURAL_STATE, {})
+        try:
+            os.kill(int(state.get("keeper") or 0), signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+        return 0
+    if "--fetch-voice" in argv:
+        # The same download velvet-local runs for a fresh install, on its own
+        # for anyone who wants a different voice later.
+        name = argv[argv.index("--fetch-voice") + 1] if len(argv) > argv.index("--fetch-voice") + 1 else ""
+        if not name:
+            print(json.dumps({"ok": False, "error": "which voice?"}))
+            return 2
+        os.makedirs(VOICE_DIR, exist_ok=True)
+        rc = subprocess.call([sys.executable, "-m", "piper.download_voices", name, "--download-dir", VOICE_DIR])
+        print(json.dumps({"ok": rc == 0, "voice": name, "dir": VOICE_DIR}, ensure_ascii=False))
+        return 0
+    if "--status" in argv:
+        engine = choose_engine(cfg, ai)
+        piper = Piper(cfg, ai)
+        print(json.dumps({"engine": engine.name if engine.ok else "", "ok": engine.ok,
+                          "note": engine.note, "voice": cfg.get("voiceName") or "",
+                          "voiceNote": "" if piper.ok else piper.note,
+                          "speed": float(cfg.get("voiceSpeed") or 1.0),
+                          "configured": cfg.get("voiceEngine") or "auto"}, indent=1))
+        return 0
+    if "--list-voices" in argv:
+        installed = []
+        try:
+            installed = sorted(f[:-5] for f in os.listdir(VOICE_DIR) if f.endswith(".onnx"))
+        except OSError:
+            pass
+        print(json.dumps({"installed": installed, "german": list(Piper.VOICES_DE),
+                          "dir": VOICE_DIR}, ensure_ascii=False, indent=1))
+        return 0
+    if "--stop" in argv:
+        stop_previous()
+        try:
+            os.unlink(PID_PATH)
+        except OSError:
+            pass
+        write_state({"at": int(time.time() * 1000), "engine": "", "ok": True, "speaking": 0,
+                     "text": "", "duration": 0, "progress": 0, "envelope": [], "error": ""})
+        return 0
+
+    # --follow TURN: her answer is spoken WHILE the brain is still writing it
+    # (see follow_answer) — the voice starts after the first full sentence.
+    follow_turn = None
+    if "--follow" in argv:
+        try:
+            follow_turn = int(argv[argv.index("--follow") + 1])
+        except (IndexError, ValueError):
+            log("--follow needs the turn number")
+            return 2
+    text = ""
+    if "--filler" in argv:
+        # Only what is instant: a filler that has to be made first would come
+        # after the answer it was meant to precede.
+        eng = choose_engine(cfg, ai)
+        if eng.name == "natural" and not natural_health():
+            # The natural voice is not up — Piper will say it, from its cache.
+            eng = Piper(cfg, ai)
+        text = pick_filler(eng) if eng.ok else ""
+        if not text:
+            return 0
+        argv = ["--say", text]
+    if follow_turn is None:
+        if argv and argv[0] == "--say":
+            text = " ".join(argv[1:])
+        elif argv and not argv[0].startswith("-"):
+            text = " ".join(argv)
+        text = speakable(text.strip())
+        if not text:
+            log("nothing to say")
+            return 2
+    if cfg.get("voice") is False:
+        write_state({"at": int(time.time() * 1000), "engine": "", "ok": True, "speaking": 0,
+                     "text": text, "duration": 0, "progress": 0, "envelope": [],
+                     "error": "voice is switched off"})
+        return 0
+
+    stop_previous()
+    # Before the engine choice: a named piper voice that is not on disk yet is
+    # fetched now, or "auto" would quietly fall through to the blips.
+    Piper(cfg, ai).ensure()
+    engine = choose_engine(cfg, ai)
+    if not engine.ok:
+        write_state({"at": int(time.time() * 1000), "engine": engine.name, "ok": False, "speaking": 0,
+                     "text": text, "duration": 0, "progress": 0, "envelope": [],
+                     "error": engine.note or "no voice"})
+        log(engine.note or "no voice engine")
+        return 1
+    return speak(cfg, ai, engine, sentence_chunks(text) if follow_turn is None else None, follow_turn)
+
+
+AI_STATE_PATH = os.path.join(CONF_DIR, "ai-state.json")
+
+
+def follow_answer(turn: int, push, halt) -> None:
+    """Hand the speaker her answer sentence by sentence while the brain is
+    still writing it into ai-state.json. A finished sentence is spoken at
+    once; the rest follows when the answer is complete. Ends with the turn."""
+    queued = ""
+    began = time.time()
+    while not halt.is_set():
+        st = read_json(AI_STATE_PATH, None)
+        if not isinstance(st, dict) or "turn" not in st:
+            # The brain rewrites the file in place: caught mid-write it reads
+            # as nothing, which is not the end of the turn — read again.
+            if time.time() - began > 30:
+                return
+            time.sleep(0.02)
+            continue
+        try:
+            now_turn = int(st["turn"])
+        except (TypeError, ValueError):
+            now_turn = -1
+        if now_turn != turn:
+            return
+        phase = str(st.get("state") or "")
+        text = str(st.get("answer") or "")
+        if queued and not text.startswith(queued) and not queued.startswith(text):
+            # A new round replaced the text (a tool ran in between): what was
+            # said stays said, the new round is spoken from its start.
+            queued = ""
+        final = phase == "answer"
+        if final:
+            upto = len(text)
+        else:
+            ends = [m.end() for m in re.finditer(r"[.!?…](?=\s)", text)]
+            upto = ends[-1] if ends else 0
+        if upto > len(queued) and text.startswith(queued):
+            piece = speakable(text[len(queued):upto])
+            queued = text[:upto]
+            for chunk in (sentence_chunks(piece) if piece.strip() else []):
+                push(chunk)
+        if final or phase in ("error", "ready", "closed", "off"):
+            return
+        stamp = float(st.get("at") or 0) / 1000.0
+        if time.time() - max(stamp, began) > 30:
+            return
+        time.sleep(0.04)
+
+
+def speak(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
+    """Make and play the sentences in order: the first one plays while the
+    next is still being made. `chunks` is the whole answer; with
+    `follow_turn` the sentences arrive while the brain is still writing."""
+    workdir = tempfile.mkdtemp(prefix="velvet-voice-")
+    began = time.time()
+    queue = []
+    results = []
+    cond = threading.Condition()
+    fed = {"done": False}
+    halt = threading.Event()
+    used = {"engine": engine, "note": ""}
+
+    def push(chunk: str) -> None:
+        with cond:
+            queue.append(chunk)
+            results.append(None)
+            cond.notify_all()
+
+    def feeder() -> None:
+        try:
+            if follow_turn is None:
+                for chunk in chunks or []:
+                    push(chunk)
+            else:
+                follow_answer(follow_turn, push, halt)
+        finally:
+            with cond:
+                fed["done"] = True
+                cond.notify_all()
+
+    def produce() -> None:
+        i = 0
+        while not halt.is_set():
+            with cond:
+                while i >= len(queue) and not fed["done"] and not halt.is_set():
+                    cond.wait(0.1)
+                if i >= len(queue):
+                    return
+                chunk = queue[i]
+            path = os.path.join(workdir, f"say{i}.wav")
+            eng = used["engine"]
+            ok = cached_synth(eng, chunk, path)
+            if not ok and eng.name == "natural":
+                # The natural voice could not speak (a game holds the VRAM,
+                # the server did not come up): Piper takes over at once.
+                spare = Piper(cfg, ai)
+                if spare.ok:
+                    used["note"] = f"{eng.note} — Piper spricht"
+                    used["engine"] = spare
+                    ok = cached_synth(spare, chunk, path)
+            if not ok:
+                used["note"] = used["engine"].note or "synthesis failed"
+            with cond:
+                results[i] = path if ok else False
+                cond.notify_all()
+            i += 1
+
+    threading.Thread(target=feeder, daemon=True).start()
+    threading.Thread(target=produce, daemon=True).start()
+
+    try:
+        with open(PID_PATH, "w") as fh:
+            fh.write(str(os.getpid()))
+    except OSError:
+        pass
+
+    volume = max(0.0, min(1.5, float(cfg.get("voiceVolume") or 0.9)))
+    speaking = True
+
+    def on_signal(_sig, _frm):
+        nonlocal speaking
+        speaking = False
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    spoken = 0
+    total_duration = 0.0
+    said = ""
+    try:
+        i = 0
+        while speaking:
+            with cond:
+                while speaking and (i >= len(queue) or results[i] is None) and not (fed["done"] and i >= len(queue)):
+                    cond.wait(0.05)
+                if not speaking or (fed["done"] and i >= len(queue)):
+                    break
+                path = results[i]
+                sentence = queue[i]
+            i += 1
+            if not path:
+                continue
+            said = f"{said} {sentence}".strip()
+            duration, env = envelope(path)
+            total_duration += duration
+            player = player_for(path)
+            if player is None:
+                write_state({"at": int(time.time() * 1000), "engine": used["engine"].name, "ok": False,
+                             "speaking": 0, "text": said, "duration": duration, "progress": 0, "envelope": env,
+                             "error": "no player (pw-play, paplay, aplay)"})
+                return 1
+            if player[0] == "pw-play":
+                player = [player[0], f"--volume={volume:.2f}"] + player[1:]
+            elif player[0] == "paplay":
+                player = [player[0], f"--volume={int(volume * 65536)}"] + player[1:]
+            try:
+                proc = subprocess.Popen(player, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as exc:
+                write_state({"at": int(time.time() * 1000), "engine": used["engine"].name, "ok": False,
+                             "speaking": 0, "text": said, "duration": duration, "progress": 0, "envelope": env,
+                             "error": f"cannot start {player[0]}: {exc}"})
+                return 1
+            spoken += 1
+            started = time.monotonic()
+            last = 0.0
+            try:
+                while speaking:
+                    if proc.poll() is not None:
+                        break
+                    now = time.monotonic()
+                    if now - last >= 1.0 / 24.0:
+                        last = now
+                        elapsed = now - started
+                        part = min(1.0, elapsed / duration) if duration else 0
+                        with cond:
+                            total = max(1, len(queue))
+                        write_state({
+                            "at": int(time.time() * 1000), "engine": used["engine"].name, "ok": True,
+                            "speaking": 1, "text": said[:400], "sentence": sentence[:300],
+                            "duration": duration, "progress": round(min(1.0, (i - 1 + part) / total), 3),
+                            "elapsed": round(elapsed, 3), "envelope": env, "error": "",
+                        })
+                    time.sleep(0.02)
+            finally:
+                if proc.poll() is None:
+                    try:
+                        proc.terminate()
+                    except OSError:
+                        pass
+        if spoken == 0 and follow_turn is None:
+            write_state({"at": int(time.time() * 1000), "engine": used["engine"].name, "ok": False, "speaking": 0,
+                         "text": said, "duration": 0, "progress": 0, "envelope": [],
+                         "error": used["note"] or "synthesis failed"})
+            return 1
+    finally:
+        halt.set()
+        write_state({"at": int(time.time() * 1000), "engine": used["engine"].name, "ok": True, "speaking": 0,
+                     "text": said[:400], "duration": total_duration, "progress": 1, "envelope": [],
+                     "error": "", "note": used["note"]})
+        try:
+            with open(PID_PATH, "r") as fh:
+                mine = int((fh.read() or "0").strip() or 0) == os.getpid()
+        except (OSError, ValueError):
+            mine = False
+        if mine:
+            try:
+                os.unlink(PID_PATH)
+            except OSError:
+                pass
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    if used["note"]:
+        log(used["note"])
+    log(f"{used['engine'].name}: {total_duration:.2f}s in {(time.time() - began):.2f}s, {spoken} sentence(s)"
+        + (" (followed)" if follow_turn is not None else ""))
+    return 0
+
+
+# ── short phrases, made once, said instantly ────────────────────────────
+CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache"), "velvet", "voice")
+# What a person says while thinking — short, varied, never the same twice in
+# a row.
+FILLERS = ("Hm, Moment.", "Einen Augenblick.", "Lass mich kurz schauen.", "Okay, Sekunde.", "Mal sehen.",
+           "Hmm, gute Frage.", "Moment, ich schau mal.")
+
+
+def voice_key(engine) -> str:
+    who = getattr(engine, "voice", "") or os.path.basename(getattr(engine, "model", "") or "")
+    return re.sub(r"[^\w.-]+", "_", f"{engine.name}-{who}") or "voice"
+
+
+def cache_path(engine, text: str) -> str:
+    import hashlib                                             # noqa: PLC0415
+    digest = hashlib.sha1(text.strip().encode()).hexdigest()[:16]
+    return os.path.join(CACHE_DIR, voice_key(engine), digest + ".wav")
+
+
+def cached_synth(engine, text: str, out_wav: str) -> bool:
+    """Short phrases (fillers, greetings, "Erledigt!") come from the cache."""
+    if len(text) > 60:
+        return engine.synth(text, out_wav)
+    path = cache_path(engine, text)
+    if os.path.isfile(path) and os.path.getsize(path) > 2000:
+        shutil.copyfile(path, out_wav)
+        return True
+    ok = engine.synth(text, out_wav)
+    if ok:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            shutil.copyfile(out_wav, path)
+        except OSError:
+            pass
+    return ok
+
+
+def pick_filler(engine) -> str:
+    """A filler that is ready to play (cached) and not the last one."""
+    last_path = os.path.join(CACHE_DIR, "last-filler")
+    try:
+        with open(last_path, encoding="utf-8") as fh:
+            last = fh.read().strip()
+    except OSError:
+        last = ""
+    ready = [f for f in FILLERS if f != last and os.path.isfile(cache_path(engine, f))]
+    if not ready:
+        return ""
+    import random                                              # noqa: PLC0415
+    choice = random.choice(ready)
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(last_path, "w", encoding="utf-8") as fh:
+            fh.write(choice)
+    except OSError:
+        pass
+    return choice
+
+
+def warm_phrases(engine) -> None:
+    """Make every filler once, so the first "Hm, Moment." is already instant."""
+    tmp = tempfile.mkdtemp(prefix="velvet-warm-")
+    try:
+        for i, phrase in enumerate(FILLERS):
+            if not os.path.isfile(cache_path(engine, phrase)):
+                cached_synth(engine, phrase, os.path.join(tmp, f"w{i}.wav"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def sentence_chunks(text: str) -> list:
+    """Speakable pieces: whole sentences, very short ones joined to the next,
+    long ones broken at a comma — each a comfortable breath."""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text.strip()) if p.strip()]
+    out = []
+    for part in parts:
+        while len(part) > 240:
+            cut = part.rfind(", ", 0, 220)
+            cut = cut + 1 if cut > 60 else 220
+            out.append(part[:cut].strip())
+            part = part[cut:].strip()
+        if out and len(out[-1]) < 12:
+            out[-1] = f"{out[-1]} {part}"
+        else:
+            out.append(part)
+    return out or [text]
+
+
+def selftest(cfg, ai) -> int:
+    """Prove the envelope maths and the engine report without a speaker."""
+    problems = []
+    with tempfile.TemporaryDirectory(prefix="velvet-voice-") as tmp:
+        path = os.path.join(tmp, "tone.wav")
+        rate = 16000
+        count = rate * 2
+        samples = []
+        for i in range(count):
+            t = i / rate
+            # 40 % silence, then a loud half — the envelope must show the step.
+            amp = 0.0 if t < 0.8 else 0.55
+            samples.append(int(amp * 32000 * math.sin(2 * math.pi * 220 * t)))
+        with wave.open(path, "wb") as fh:
+            fh.setnchannels(1)
+            fh.setsampwidth(2)
+            fh.setframerate(rate)
+            fh.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+        duration, env = envelope(path, ENVELOPE)
+        if abs(duration - 2.0) > 0.05:
+            problems.append(f"duration {duration}")
+        if len(env) != ENVELOPE:
+            problems.append(f"envelope length {len(env)}")
+        elif max(env[:12]) > 0.15:
+            problems.append("envelope did not stay quiet where the audio was")
+        elif min(env[18:]) < 0.5:
+            problems.append("envelope missed the loud half")
+    # the spoken form and the sentence pipeline
+    if speakable("Es ist 13:42 Uhr. 🎵") != "Es ist 13 Uhr 42.":
+        problems.append(f"speakable: {speakable('Es ist 13:42 Uhr. 🎵')!r}")
+    chunks = sentence_chunks("Ja. Klar, mach ich! Die CPU ist entspannt, und alles läuft rund. Und bei dir?")
+    if chunks[0] != "Ja. Klar, mach ich!" or len(chunks) != 3:
+        problems.append(f"sentence chunks: {chunks}")
+    # the natural voice: installed or not, it must decide cleanly (no server
+    # is started by a selftest)
+    nat = Natural(cfg, ai)
+    if nat.ok and not (os.path.isfile(NATURAL_MODEL) and os.path.isfile(NATURAL_DECODER)):
+        problems.append("natural voice claims ok without its files")
+    if len(set(FILLERS)) != len(FILLERS):
+        problems.append("duplicate fillers")
+    # reading along: a finished sentence goes out while the rest is still
+    # being written, and the tail follows when the answer is complete
+    global AI_STATE_PATH
+    real_state = AI_STATE_PATH
+    with tempfile.TemporaryDirectory(prefix="velvet-voice-") as tmp:
+        AI_STATE_PATH = os.path.join(tmp, "ai-state.json")
+        pushed = []
+
+        def brain():
+            for state, answer in (("thinking", "Ein Kernel ist das Herz."), ("thinking", "Ein Kernel ist das Herz. Er ver"),
+                                  ("answer", "Ein Kernel ist das Herz. Er verwaltet alles.")):
+                with open(AI_STATE_PATH, "w", encoding="utf-8") as fh:
+                    json.dump({"turn": 7, "state": state, "answer": answer, "at": int(time.time() * 1000)}, fh)
+                time.sleep(0.15)
+
+        with open(AI_STATE_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"turn": 7, "state": "thinking", "answer": "", "at": int(time.time() * 1000)}, fh)
+        writer = threading.Thread(target=brain)
+        writer.start()
+        follow_answer(7, pushed.append, threading.Event())
+        writer.join()
+        AI_STATE_PATH = real_state
+    if pushed != ["Ein Kernel ist das Herz.", "Er verwaltet alles."]:
+        problems.append(f"follow: {pushed}")
+    engine = choose_engine(cfg, ai)
+    report = f"engine={engine.name or 'none'} ok={engine.ok} note={engine.note or '-'}"
+    report += f"; natural={'bereit' if nat.ok else (nat.note or 'nein')}"
+    if engine.name == "animalese":
+        report += " (blips — install piper-tts or espeak-ng for a real voice)"
+    if problems:
+        print("velvet-voice selftest: FAILED")
+        for problem in problems:
+            print("  ·", problem)
+        return 1
+    print(f"velvet-voice selftest: ok  ({report}, envelope {ENVELOPE} buckets)")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(0)

@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-vitals
+
+CPU, memory, load and temperature, drawn rather than listed. The big graph is
+the last minute or so of total CPU; the column of bars underneath is every core
+at once, each easing towards its real value so the display moves the way a dial
+does instead of flickering between samples.
+
+Reads /proc directly, so it costs almost nothing and needs nothing installed.
+"""
+
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _velvet import (BOLD, RESET, fg, hbar, mix, run, shade, timeline)  # noqa: E402
+
+state = {
+    "prev": None,
+    "cores": [],
+    "eased": [],
+    "total": 0.0,
+    "history": [],
+    "last": 0.0,
+}
+
+
+def read_cpu():
+    out = []
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.startswith("cpu"):
+                    break
+                parts = line.split()
+                if len(parts) < 5:
+                    continue
+                nums = [int(x) for x in parts[1:8] if x.isdigit()]
+                idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
+                out.append((sum(nums), idle))
+    except OSError:
+        return []
+    return out
+
+
+def read_mem():
+    info = {}
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                k, _, v = line.partition(":")
+                info[k] = int(v.split()[0]) if v.split() else 0
+    except (OSError, ValueError, IndexError):
+        return (0, 1, 0, 1)
+    total = info.get("MemTotal", 1)
+    avail = info.get("MemAvailable", info.get("MemFree", 0))
+    stot = info.get("SwapTotal", 0)
+    sfree = info.get("SwapFree", 0)
+    return (total - avail, total, stot - sfree, max(1, stot))
+
+
+def read_load():
+    try:
+        with open("/proc/loadavg", "r", encoding="utf-8") as fh:
+            return [float(x) for x in fh.read().split()[:3]]
+    except (OSError, ValueError, IndexError):
+        return [0.0, 0.0, 0.0]
+
+
+def read_temp():
+    for base in ("/sys/class/thermal",):
+        try:
+            zones = sorted(os.listdir(base))
+        except OSError:
+            continue
+        for z in zones:
+            if not z.startswith("thermal_zone"):
+                continue
+            try:
+                with open(os.path.join(base, z, "type"), encoding="utf-8") as fh:
+                    kind = fh.read().strip()
+                if kind not in ("x86_pkg_temp", "acpitz", "cpu-thermal", "k10temp"):
+                    continue
+                with open(os.path.join(base, z, "temp"), encoding="utf-8") as fh:
+                    return int(fh.read().strip()) / 1000.0
+            except (OSError, ValueError):
+                continue
+    return None
+
+
+def uptime():
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as fh:
+            secs = float(fh.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return "—"
+    d, rem = divmod(int(secs), 86400)
+    h, rem = divmod(rem, 3600)
+    m = rem // 60
+    if d:
+        return "%dd %dh %dm" % (d, h, m)
+    if h:
+        return "%dh %dm" % (h, m)
+    return "%dm" % m
+
+
+def sample(t):
+    if t - state["last"] < 0.45:
+        return
+    state["last"] = t
+    now = read_cpu()
+    prev = state["prev"]
+    state["prev"] = now
+    if not prev or len(prev) != len(now):
+        return
+
+    busy = []
+    for i, (tot, idle) in enumerate(now):
+        dt = tot - prev[i][0]
+        di = idle - prev[i][1]
+        busy.append(0.0 if dt <= 0 else max(0.0, min(1.0, 1.0 - di / dt)))
+
+    state["total"] = busy[0] if busy else 0.0
+    state["cores"] = busy[1:]
+    state["history"].append(state["total"])
+    if len(state["history"]) > 400:
+        del state["history"][:-400]
+
+
+def draw(scr, t):
+    pal = scr.palette
+    accent, ink, dim = pal.accent, pal.ink, pal.inkDim
+    sample(t)
+
+    # Ease every core towards its sample so the bars glide instead of snapping.
+    cores = state["cores"]
+    if len(state["eased"]) != len(cores):
+        state["eased"] = list(cores)
+    for i, v in enumerate(cores):
+        state["eased"][i] += (v - state["eased"][i]) * 0.22
+
+    used, total, swap_used, swap_total = read_mem()
+    load = read_load()
+    temp = read_temp()
+
+    lines = []
+    w = scr.cols
+
+    def rule(label):
+        tail = "─" * max(0, w - len(label) - 3)
+        return fg(dim) + "  " + BOLD + label + RESET + fg(shade(dim, 0.45)) + " " + tail + RESET
+
+    # ── the graph
+    graph_h = max(3, min(9, scr.rows - 14))
+    lines.append("")
+    lines.append(rule("CPU  %3d%%" % round(state["total"] * 100)))
+    lines.extend(timeline(state["history"], graph_h, max(1, w - 4), 1.0,
+                          shade(accent, 0.45), accent))
+
+    # ── the cores
+    lines.append("")
+    lines.append(rule("CORES  %d" % len(cores)))
+    per_row = 2 if w >= 76 else 1
+    bar_w = max(6, (w - 8 - (per_row - 1) * 4) // per_row - 8)
+    i = 0
+    while i < len(state["eased"]) and len(lines) < scr.rows - 6:
+        chunk = []
+        for j in range(per_row):
+            k = i + j
+            if k >= len(state["eased"]):
+                chunk.append(" " * (bar_w + 8))
+                continue
+            v = state["eased"][k]
+            c = mix(accent, ink, min(1.0, v * 0.8))
+            chunk.append(
+                fg(dim) + "%2d " % k + fg(c) + hbar(bar_w, v)
+                + fg(dim) + " %3d%%" % round(v * 100) + RESET
+            )
+        lines.append("  " + "    ".join(chunk))
+        i += per_row
+
+    # ── memory and the numbers
+    lines.append("")
+    lines.append(rule("MEMORY"))
+    mem_w = max(8, w - 30)
+    frac = used / max(1, total)
+    lines.append(
+        "  " + fg(mix(accent, ink, min(1.0, frac))) + hbar(mem_w, frac)
+        + fg(dim) + "  %.1f / %.1f GB" % (used / 1048576.0, total / 1048576.0) + RESET
+    )
+    if swap_total > 1:
+        sfrac = swap_used / swap_total
+        lines.append(
+            "  " + fg(shade(accent, 0.6)) + hbar(mem_w, sfrac)
+            + fg(dim) + "  SWAP %.1f GB" % (swap_used / 1048576.0) + RESET
+        )
+
+    bits = ["LOAD %.2f %.2f %.2f" % (load[0], load[1], load[2]), "UP " + uptime()]
+    if temp is not None:
+        bits.append("%.0f°C" % temp)
+    lines.append("")
+    lines.append("  " + fg(dim) + "   ·   ".join(bits) + RESET)
+
+    return lines[:scr.rows]
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(draw, fps=24, title="velvet-vitals"))

@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""velvet-pad — decides which player slot your game controller takes.
+
+Games number controllers in the order the kernel lists them, so a lone pad
+is always player 1. With --player 2 this tool grabs every real controller
+(Bluetooth or cable — the same code path, it only looks at what the device
+can do) and publishes a virtual copy of it AFTER the original. The grabbed
+original stays in the list but sends nothing, so it holds slot 1 and the
+live copy is player 2. Measured with SDL2: [original (silent), copy (live)].
+
+    velvet-pad run --player 2     keep the arrangement until stopped
+    velvet-pad list               controllers found right now (JSON)
+    velvet-pad stop               end a running one
+    velvet-pad launch -- CMD ...  run CMD so SDL games number pads the way
+                                  this tool arranges them (see below)
+    velvet-pad --selftest
+
+Games that read a pad through hidraw (SDL's HIDAPI driver — the default for
+DualSense and others — Steam, Wine) never see the grab: they talk to the real
+pad directly and it stays player 1. Two more levers cover them:
+
+  · Steam Input (most Steam games): Steam owns the pad and hands games a
+    virtual Xbox pad in XInput slot 0. While player 2 runs, this tool asks
+    Steam itself to move the pad to slot 1 — see bin/_steam.py. That needs
+    Steam's local DevTools port, switched on by `velvet-pad steam enable`
+    plus one restart of Steam.
+  · `launch` starts a program with SDL_JOYSTICK_HIDAPI=0 so SDL uses the
+    evdev order instead. Use it as a Steam launch option for games that run
+    WITHOUT Steam Input:  <path>/velvet-pad launch -- %command%
+
+    velvet-pad steam [status|enable|diagnose]   Steam's side of it
+
+--player 1 is "do nothing": no grab, no virtual device — the kernel's own
+order. Everything is dropped by the kernel when this process ends, even if
+it is killed, so a crash can never leave a controller stuck grabbed.
+"""
+import argparse
+import errno
+import json
+import os
+import re
+import select
+import signal
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import _steam  # noqa: E402
+
+RUN = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+PID_FILE = os.path.join(RUN, "velvet-pad.pid")
+STATE_FILE = os.path.join(RUN, "velvet-pad.json")
+OURS = "Velvet Pad"
+BUSES = {0x03: "cable", 0x05: "bluetooth", 0x06: "bluetooth", 0x11: "cable", 0x19: "cable"}
+SKIP = re.compile(r"led controller|receiver|keyboard|mouse|touchpad|trackpad|consumer|system control|wacom|hyperx|"
+                  r"rgb|motion sensors|accelerometer|gyro|headset|speaker", re.I)
+
+# Fetched lazily so --help and --selftest of the parser work without evdev.
+ev = None
+
+
+def need_evdev():
+    global ev
+    if ev is None:
+        import evdev
+        ev = evdev
+    return ev
+
+
+def is_gamepad(dev):
+    """A pad has a gamepad face button and two sticks (or a hat) — buttons
+    and axes alone also describe LED controllers and mice."""
+    e = need_evdev().ecodes
+    caps = dev.capabilities()
+    keys = set(caps.get(e.EV_KEY, []))
+    axes = {a[0] if isinstance(a, tuple) else a for a in caps.get(e.EV_ABS, [])}
+    if SKIP.search(dev.name or ""):
+        return False
+    face = {e.BTN_SOUTH, e.BTN_EAST, e.BTN_NORTH, e.BTN_WEST} & keys
+    sticks = {e.ABS_X, e.ABS_Y} <= axes or {e.ABS_HAT0X, e.ABS_HAT0Y} <= axes
+    return bool(face) and sticks
+
+
+def bus_of(dev):
+    return BUSES.get(dev.info.bustype, "other")
+
+
+def find_pads(skip_paths=()):
+    out = []
+    for path in need_evdev().list_devices():
+        if path in skip_paths:
+            continue
+        try:
+            d = ev.InputDevice(path)
+        except OSError:
+            continue
+        if d.name.startswith(OURS):
+            d.close()
+            continue
+        if is_gamepad(d):
+            out.append(d)
+        else:
+            d.close()
+    return out
+
+
+def clone_of(dev):
+    e = ev.ecodes
+    caps = dev.capabilities(absinfo=True)
+    caps.pop(e.EV_SYN, None)
+    caps.pop(e.EV_FF, None)          # rumble is not forwarded
+    caps.pop(e.EV_MSC, None)
+    info = dev.info
+    return ev.UInput(events=caps, name=dev.name, vendor=info.vendor, product=info.product, version=info.version,
+                     bustype=info.bustype, input_props=dev.input_props())
+
+
+def hidraw_of(path):
+    """The readable /dev/hidrawN behind an input event node, or ''. A game
+    that opens it bypasses the evdev arrangement."""
+    try:
+        me = os.path.realpath(f"/sys/class/input/{os.path.basename(path)}/device")
+        for node in sorted(os.listdir("/sys/class/hidraw")):
+            owner = os.path.realpath(f"/sys/class/hidraw/{node}/device")
+            if me.startswith(owner + "/") or me == owner:
+                dev = f"/dev/{node}"
+                return dev if os.access(dev, os.R_OK) else ""
+    except OSError:
+        pass
+    return ""
+
+
+LAUNCH_ENV = {"SDL_JOYSTICK_HIDAPI": "0"}
+
+
+def cmd_launch(argv):
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        sys.stderr.write("velvet-pad launch -- COMMAND [ARGS...]\n")
+        return 2
+    # Only when the arrangement is actually running; otherwise change nothing.
+    if running_pid():
+        os.environ.update(LAUNCH_ENV)
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as err:
+        sys.stderr.write(f"velvet-pad: {argv[0]}: {err}\n")
+        return 127
+
+
+def write_state(player, slots, note="", steam=None):
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"player": player, "pid": os.getpid(), "time": int(time.time()), "note": note, "slots": slots,
+                   "steam": steam or {"state": "off", "detail": ""}}, f)
+    os.replace(tmp, STATE_FILE)
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError as err:
+        return err.errno == errno.EPERM
+
+
+def running_pid():
+    try:
+        pid = int(open(PID_FILE).read().strip())
+    except (OSError, ValueError):
+        return 0
+    if pid != os.getpid() and pid_alive(pid):
+        try:
+            if "velvet-pad" in open(f"/proc/{pid}/cmdline").read():
+                return pid
+        except OSError:
+            pass
+    return 0
+
+
+def stop_running(wait=3.0):
+    pid = running_pid()
+    if not pid:
+        return False
+    os.kill(pid, signal.SIGTERM)
+    end = time.time() + wait
+    while time.time() < end and pid_alive(pid):
+        time.sleep(0.05)
+    return True
+
+
+class Rig:
+    """The set of grabbed pads and their virtual copies, in slot order."""
+
+    def __init__(self, player):
+        self.player = player
+        self.pairs = {}               # real path -> (real device, virtual device)
+        self.order = []               # real paths, first seen first
+        self.mine = set()             # paths of virtual devices we made
+        self.seen = {}
+
+    def slots(self):
+        # The silent originals take the first slots, the live copies follow.
+        out = []
+        for i, path in enumerate(self.order):
+            real = self.pairs[path][0]
+            out.append({"player": len(self.order) + i + 1, "name": real.name, "bus": bus_of(real), "path": path,
+                        "hidraw": hidraw_of(path)})
+        return out
+
+    def add(self, real):
+        if real.path in self.pairs:
+            real.close()
+            return
+        try:
+            real.grab()
+            virt = clone_of(real)
+        except OSError as err:
+            sys.stderr.write(f"velvet-pad: {real.name}: {err}\n")
+            try:
+                real.ungrab()
+            except OSError:
+                pass
+            real.close()
+            return
+        self.pairs[real.path] = (real, virt)
+        self.mine.add(virt.device.path)
+        self.order.append(real.path)
+        time.sleep(0.15)
+
+    def drop(self, path):
+        pair = self.pairs.pop(path, None)
+        if path in self.order:
+            self.order.remove(path)
+        if not pair:
+            return
+        real, virt = pair
+        self.mine.discard(virt.device.path)
+        for fn in (virt.close, real.ungrab, real.close):
+            try:
+                fn()
+            except OSError:
+                pass
+
+    def close(self):
+        for path in list(self.pairs):
+            self.drop(path)
+
+    def pump(self, timeout):
+        fds = {pair[0].fd: path for path, pair in self.pairs.items()}
+        if not fds:
+            time.sleep(timeout)
+            return
+        ready, _, _ = select.select(list(fds), [], [], timeout)
+        for fd in ready:
+            path = fds[fd]
+            real, virt = self.pairs[path]
+            try:
+                for event in real.read():
+                    virt.write_event(event)
+            except BlockingIOError:
+                pass
+            except OSError:
+                self.drop(path)           # unplugged or disconnected
+
+
+def run(player):
+    need_evdev()
+    stop_running()
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+    if player < 2:
+        write_state(1, [], "player 1: nothing is changed")
+        print("velvet-pad: player 1 — kernel order, nothing to do")
+        return 0
+    rig = Rig(player)
+    stop = []
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(sig, lambda *_: stop.append(1))
+    steam = {"state": "off", "detail": ""}
+    steam_applied = False
+    steam_last = None
+    next_steam = 0.0
+    try:
+        last = None
+        next_scan = 0.0
+        while not stop:
+            now = time.time()
+            if now >= next_steam:
+                next_steam = now + 3.0
+                try:
+                    steam = _steam.slot(2)
+                except Exception as err:      # a broken Steam must never take the pad down
+                    steam = {"state": "error", "detail": str(err)[:120]}
+                if steam["state"] == "applied":
+                    steam_applied = True
+                brief = {"state": steam["state"], "detail": steam.get("detail", ""), "slot": steam.get("slot", 0)}
+                if brief != steam_last:
+                    steam_last = brief
+                    write_state(player, last or [], steam=brief)
+            if now >= next_scan:
+                next_scan = now + 1.0
+                found = {d.path: d for d in find_pads(rig.mine)}
+                for path in list(rig.pairs):
+                    if path not in found or not os.path.exists(path):
+                        rig.drop(path)
+                for path in sorted(found, key=lambda p: (rig.seen.setdefault(p, now), p)):
+                    if path in rig.pairs:
+                        found[path].close()
+                    else:
+                        rig.add(found[path])
+                # find_pads opened handles for pads we already own; those were closed above
+                slots = rig.slots()
+                if slots != last:
+                    last = slots
+                    write_state(player, slots, steam=steam_last)
+            rig.pump(0.25)
+    finally:
+        rig.close()
+        if steam_applied:
+            try:
+                _steam.slot(1)                # leave Steam's order the way it was
+            except Exception:
+                pass
+        try:
+            os.unlink(STATE_FILE)
+            if open(PID_FILE).read().strip() == str(os.getpid()):
+                os.unlink(PID_FILE)
+        except OSError:
+            pass
+    return 0
+
+
+def cmd_list():
+    need_evdev()
+    pads = find_pads()
+    out = [{"name": d.name, "bus": bus_of(d), "path": d.path, "vendor": d.info.vendor, "product": d.info.product}
+           for d in pads]
+    print(json.dumps(out, indent=1))
+    return 0
+
+
+def cmd_steam(argv):
+    verb = argv[0] if argv else "status"
+    if verb == "enable":
+        changed, path = _steam.enable()
+        if not path:
+            print("Steam is not installed here")
+            return 1
+        print(("created " if changed else "already there: ") + path)
+        print("Restart Steam once so it opens its local DevTools port; after that player 2 reaches Steam games.")
+        return 0
+    if verb == "diagnose":
+        st = _steam.state()
+        print(json.dumps(st, indent=1))
+        if st["state"] == "ready":
+            for title, path in _steam.page_paths():
+                try:
+                    print(title or "(untitled)", json.dumps(_steam.eval_in(path, None)))
+                except Exception as err:
+                    print(title or "(untitled)", "error:", err)
+        return 0
+    print(json.dumps(_steam.peek() if verb == "peek" else _steam.state(), indent=1))
+    return 0
+
+
+def selftest():
+    ok = True
+
+    def check(name, cond):
+        nonlocal ok
+        print(("ok   " if cond else "FAIL ") + name)
+        ok = ok and bool(cond)
+
+    need_evdev()
+    e = ev.ecodes
+
+    class Fake:
+        def __init__(self, name, keys, axes, bus=3):
+            self.name = name
+            self._caps = {e.EV_KEY: keys, e.EV_ABS: [(a, None) for a in axes]}
+            self.info = type("I", (), {"bustype": bus, "vendor": 1, "product": 2, "version": 3})()
+
+        def capabilities(self, absinfo=False):
+            return self._caps
+
+    pad = Fake("Wireless Controller", [e.BTN_SOUTH, e.BTN_EAST, e.BTN_TL], [e.ABS_X, e.ABS_Y, e.ABS_RX])
+    led = Fake("ASRock LED Controller", [e.BTN_TRIGGER, e.BTN_THUMB], [e.ABS_X, e.ABS_Y])
+    mouse = Fake("Logitech Mouse", [e.BTN_LEFT], [])
+    rx = Fake("2.4G Wireless Receiver System Multi Axis", [e.BTN_SOUTH], [e.ABS_X, e.ABS_Y])
+    check("a gamepad is found", is_gamepad(pad))
+    check("an LED controller posing as a joystick is not", not is_gamepad(led))
+    check("a mouse is not", not is_gamepad(mouse))
+    check("a dongle's multi-axis device is not", not is_gamepad(rx))
+    check("launch puts SDL on evdev", LAUNCH_ENV.get("SDL_JOYSTICK_HIDAPI") == "0")
+    check("no hidraw behind a missing node", hidraw_of("/dev/input/event-none") == "")
+    check("steam state is one of the known words",
+          _steam.state()["state"] in ("no-steam", "idle", "needs-flag", "needs-restart", "closed", "ready"))
+    check("bluetooth and cable are named", bus_of(Fake("x", [], [], 5)) == "bluetooth" and bus_of(pad) == "cable")
+    return 0 if ok else 1
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    if len(sys.argv) > 1 and sys.argv[1] == "launch":
+        return cmd_launch(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "steam":
+        return cmd_steam(sys.argv[2:])
+    ap.add_argument("cmd", nargs="?", default="run", choices=["run", "list", "stop"])
+    ap.add_argument("--player", type=int, default=2, choices=[1, 2])
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args()
+    if a.selftest:
+        return selftest()
+    if a.cmd == "list":
+        return cmd_list()
+    if a.cmd == "stop":
+        print("stopped" if stop_running() else "not running")
+        return 0
+    return run(a.player)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

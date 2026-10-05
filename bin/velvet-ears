@@ -1,0 +1,617 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-ears
+
+Velly's ears. While the island's assistant is awake this little program holds
+the microphone, publishes what it hears to ~/.config/velvet/ai-voice.json, and
+cuts the moment you stop speaking into a WAV file so the brain can transcribe
+it.
+
+It is a level meter and a voice detector, not a recorder: nothing is written
+to disk until an utterance has actually ended, and if nothing is ever said the
+only thing that lands anywhere is a number that says so.
+
+The file it writes is read by the shell at 30 Hz while it is loud and at 10 Hz
+while it is quiet — the `live` flag says which, exactly like velvet-levels.
+The `canSend` flag is the interesting one: it goes to 1 once an utterance has
+been captured and the WAV it names is complete on disk. The shell asks the
+brain to listen to that file and calls `reset` so the ears forget it.
+
+Control is a one-word file (default ~/.config/velvet/ai-ears.ctl):
+
+    commit   write what has been heard so far and flag it ready
+    reset    drop the current utterance and keep listening
+    stop     leave
+
+Stdlib only, like everything in bin/. Microphones are read through the raw
+PCM mode of pw-record, parec or arecord, whichever this machine has.
+
+    velvet-ears                  # listen, write ai-voice.json
+    velvet-ears --selftest       # feed a synthetic voice, print what it detects
+"""
+
+import json
+import math
+import os
+import select
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import wave
+
+RATE = 16000          # what speech models want; also what keeps the CPU quiet
+FRAME_MS = 20
+FRAME = RATE * FRAME_MS // 1000          # 320 samples
+BANDS = 24                               # the island draws 28 bars off these
+DFT_WIN = 512                            # 32 ms window for the band bank
+WRITE_HZ = 30.0
+QUIET_HZ = 10.0
+PREROLL_MS = 420
+MIN_SPEECH_MS = 280
+HANG_MS = 1150                           # silence that ends an utterance
+MAX_SPEECH_MS = 30000
+LOUD_ENOUGH = 1.6                        # how far above the floor counts as speech
+
+
+def base_dir() -> str:
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+
+
+def log(msg: str) -> None:
+    print(f"velvet-ears: {msg}", file=sys.stderr, flush=True)
+
+
+class Options:
+    def __init__(self):
+        b = os.path.join(base_dir(), "velvet")
+        self.out = os.path.join(b, "ai-voice.json")
+        self.ctl = os.path.join(b, "ai-ears.ctl")
+        self.wav = os.path.join(b, "ai-hear.wav")
+        self.bands = BANDS
+        self.hang = HANG_MS
+        self.max_ms = MAX_SPEECH_MS
+        self.gain = 1.0
+        # How much quieter than the room a voice may be and still count:
+        # 1.0 is the tuned default, higher listens further down.
+        self.sensitivity = 1.0
+        self.threshold = 0.0             # 0 = adaptive
+        self.selftest = False
+        self.source = ""
+
+        argv = sys.argv[1:]
+        i = 0
+        while i < len(argv):
+            a = argv[i]
+            nxt = argv[i + 1] if i + 1 < len(argv) else None
+            if a == "--out" and nxt:
+                self.out = nxt
+                i += 2
+            elif a == "--ctl" and nxt:
+                self.ctl = nxt
+                i += 2
+            elif a == "--wav" and nxt:
+                self.wav = nxt
+                i += 2
+            elif a == "--bands" and nxt:
+                self.bands = max(4, min(32, int(nxt)))
+                i += 2
+            elif a == "--hang" and nxt:
+                self.hang = max(200, int(nxt))
+                i += 2
+            elif a == "--max" and nxt:
+                self.max_ms = max(2000, int(nxt))
+                i += 2
+            elif a == "--gain" and nxt:
+                self.gain = max(0.2, min(8.0, float(nxt)))
+                i += 2
+            elif a == "--sensitivity" and nxt:
+                self.sensitivity = max(0.4, min(3.0, float(nxt)))
+                i += 2
+            elif a == "--threshold" and nxt:
+                self.threshold = max(0.0, float(nxt))
+                i += 2
+            elif a == "--source" and nxt:
+                self.source = nxt
+                i += 2
+            elif a in ("--selftest", "--test"):
+                self.selftest = True
+                i += 1
+            else:
+                log(f"ignoring unknown argument {a!r}")
+                i += 1
+
+
+# ────────────────────────────────────────────────────────────────── the input
+CAPTURE_CANDIDATES = [
+    ("pw-record", ["pw-record", "--rate", str(RATE), "--channels", "1", "--format", "s16", "-"]),
+    ("parec", ["parec", "--format=s16le", f"--rate={RATE}", "--channels=1", "--raw"]),
+    ("arecord", ["arecord", "-q", "-f", "S16_LE", f"-r{RATE}", "-c1", "-t", "raw"]),
+]
+
+
+class Mic:
+    """One capture process, startable and stoppable, so a dead pipewire or a
+    microphone that comes back later does not take Velly's ears with it."""
+
+    def __init__(self, wanted: str = ""):
+        self.proc = None
+        self.kind = ""
+        self.wanted = wanted
+        self.tries = 0
+
+    def _command(self):
+        for name, cmd in CAPTURE_CANDIDATES:
+            if self.wanted and name != self.wanted:
+                continue
+            if shutil_which(name):
+                return name, cmd
+        return "", []
+
+    def start(self) -> bool:
+        if self.proc is not None:
+            return True
+        kind, cmd = self._command()
+        if not kind:
+            return False
+        try:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, bufsize=0)
+        except OSError as e:
+            log(f"{kind} did not start: {e}")
+            self.proc = None
+            return False
+        self.kind = kind
+        return True
+
+    def read(self, nbytes: int):
+        """Return up to nbytes of raw PCM, or b'' while there is nothing new.
+        A dead process reports None so the caller can restart it."""
+        p = self.proc
+        if p is None or p.stdout is None:
+            return None
+        if p.poll() is not None:
+            return None
+        try:
+            ready, _, _ = select.select([p.stdout], [], [], 0.05)
+        except (OSError, ValueError):
+            return None
+        if not ready:
+            return b""
+        try:
+            return p.stdout.read(nbytes * 6)
+        except (OSError, ValueError):
+            return None
+
+    def stop(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        except OSError:
+            pass
+        self.proc = None
+
+
+def shutil_which(name: str) -> bool:
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return True
+    return False
+
+
+# ────────────────────────────────────────────────────────────────── the maths
+def goertzel_bank(samples, rate, n_bands):
+    """A log-spaced bank of Goertzel filters from 90 Hz to 4.5 kHz.
+
+    A hand-rolled DFT bank rather than numpy: bin/ programs stay stdlib so
+    they start on a machine where nothing was pip-installed, and twelve
+    filters over 512 samples is under a millisecond of work.
+    """
+    lo, hi = 90.0, 4500.0
+    n = len(samples)
+    out = []
+    ratio = (hi / lo) ** (1.0 / max(1, n_bands - 1)) if n_bands > 1 else 1.0
+    for b in range(n_bands):
+        f = lo * (ratio ** b)
+        w = 2.0 * math.pi * f / rate
+        coeff = 2.0 * math.cos(w)
+        s1 = 0.0
+        s2 = 0.0
+        for x in samples:
+            s0 = x + coeff * s1 - s2
+            s2 = s1
+            s1 = s0
+        power = s1 * s1 + s2 * s2 - coeff * s1 * s2
+        # Normalised so a full-scale sine reads around 1, then compressed:
+        # voice has a huge dynamic range and the orb only wants the shape.
+        mag = math.sqrt(max(0.0, power)) / (n * 0.5)
+        out.append(min(1.0, (mag * 2.2) ** 0.65))
+    return out
+
+
+class Ear:
+    """Level, floor, utterance and bands — everything the island draws and
+    everything the brain gets told, computed once per frame."""
+
+    def __init__(self, opt: Options):
+        self.opt = opt
+        self.level = 0.0
+        self.peak = 0.0
+        self.bands = [0.0] * opt.bands
+        self.floor = 0.02
+        self.speech = False
+        self.speaking = False          # an utterance is open
+        self.pre = []                  # rolling pre-roll, in frames
+        self.ut = []                   # the utterance, in frames
+        self.speech_ms = 0
+        self.silence_ms = 0
+        self.started = 0.0
+        self.last_loud = 0.0
+        self.can_send = 0
+        self.utterance = 0
+        self.wav_path = ""
+        self.frames = 0
+        self._win = []                 # rolling raw samples for the band bank
+        self._band_tick = 0
+
+    @property
+    def threshold(self) -> float:
+        if self.opt.threshold > 0:
+            return self.opt.threshold
+        # Sensitivity is a divisor on purpose: a number above 1 lowers the bar,
+        # so "more sensitive" means the same in every direction.
+        # Sensitivity lowers the absolute floor, but the threshold never
+        # drops under 1.5 x the room: below that, noise counted as speech,
+        # dragged the floor down with it and she heard "you" forever.
+        s = max(0.4, self.opt.sensitivity)
+        return max(0.004 / s, self.floor * max(1.5, LOUD_ENOUGH / s))
+
+    def feed(self, frame: list) -> None:
+        """One 20 ms frame of floats in -1..1."""
+        self.frames += 1
+        n = len(frame)
+        if n == 0:
+            return
+        acc = 0.0
+        peak = 0.0
+        for x in frame:
+            acc += x * x
+            ax = x if x >= 0 else -x
+            if ax > peak:
+                peak = ax
+        rms = math.sqrt(acc / n) * self.opt.gain
+        self.peak = peak * self.opt.gain
+
+        # Rise fast, fall slow: a meter that jumps and lingers.
+        t = min(1.0, rms * 6.0)
+        self.level += (t - self.level) * (0.55 if t > self.level else 0.12)
+
+        loud = rms > self.threshold
+        if not loud:
+            # Track the room, but never chase an utterance upwards.
+            self.floor += (min(rms, self.threshold) - self.floor) * (0.05 if self.floor > rms else 0.02)
+        else:
+            self.floor += (rms * 0.25 - self.floor) * 0.004
+        self.floor = max(0.0005, min(0.08, self.floor))
+
+        if loud:
+            self.silence_ms = 0
+            self.last_loud = time.monotonic()
+            if not self.speaking:
+                self.speaking = True
+                self.started = self.last_loud
+                self.ut = list(self.pre[-max(1, PREROLL_MS // FRAME_MS):])
+                self.speech_ms = 0
+            self.speech = True
+        else:
+            self.silence_ms += FRAME_MS
+            if self.speaking:
+                if self.silence_ms >= self.opt.hang:
+                    self.close()
+                elif self.silence_ms > 420:
+                    self.speech = False
+
+        if self.speaking:
+            self.ut.append(frame)
+            if loud:
+                self.speech_ms += FRAME_MS
+        else:
+            self.pre.append(frame)
+            keep = max(2, (PREROLL_MS + 200) // FRAME_MS)
+            if len(self.pre) > keep:
+                del self.pre[:len(self.pre) - keep]
+            self.speech = self.speech and self.silence_ms < 420
+
+        if self.speaking and (time.monotonic() - self.started) * 1000.0 > self.opt.max_ms:
+            self.close()
+
+    def close(self) -> None:
+        """The utterance ends: keep it only if it was actually speech."""
+        speech = self.speech_ms
+        frames = self.ut
+        self.speaking = False
+        self.speech = False
+        self.ut = []
+        self.silence_ms = 0
+        if speech < MIN_SPEECH_MS or not frames:
+            return
+        self.write_wav(frames)
+        self.utterance += 1
+        self.can_send = 1
+
+    def write_wav(self, frames: list) -> None:
+        """Write in one go: the shell only ever reads a finished file."""
+        samples = []
+        for f in frames:
+            for s in f:
+                v = int(max(-1.0, min(1.0, s)) * 32000)
+                samples.append(v)
+        if not samples:
+            return
+        path = self.opt.wav
+        tmp = path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with wave.open(tmp, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(RATE)
+                w.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+            os.replace(tmp, path)
+            self.wav_path = path
+        except (OSError, struct.error) as e:
+            log(f"cannot write {path}: {e}")
+            self.wav_path = ""
+
+    def commit(self) -> None:
+        """`commit` from the shell: the tail of what was said, right now."""
+        frames = list(self.ut) if self.speaking else list(self.pre[-int(6000 / FRAME_MS):])
+        self.speaking = False
+        self.ut = []
+        self.silence_ms = 0
+        if frames:
+            self.write_wav(frames)
+            self.utterance += 1
+            self.can_send = 1
+
+    def reset(self) -> None:
+        self.speaking = False
+        self.ut = []
+        self.silence_ms = 0
+        self.speech = False
+        self.can_send = 0
+        self.pre = []
+
+    def bands_from(self, window: list) -> None:
+        """Feed raw samples into a rolling 32 ms window and, every other
+        call, fold it through the Goertzel bank. Half the arithmetic of a
+        per-frame spectrum, and the bands are eased anyway."""
+        self._win.extend(window)
+        if len(self._win) > DFT_WIN:
+            del self._win[:len(self._win) - DFT_WIN]
+        self._band_tick += 1
+        if len(self._win) < DFT_WIN or (self._band_tick % 2):
+            return
+        raw = goertzel_bank(self._win, RATE, self.opt.bands)
+        for i, v in enumerate(raw):
+            c = self.bands[i] if i < len(self.bands) else 0.0
+            self.bands[i] = c + (v - c) * (0.5 if v > c else 0.16)
+
+
+def write_voice(path: str, ear: Ear, opt: Options, available: bool = True,
+                listening: bool = True, note: str = "") -> None:
+    """In place: the shell watches this exact inode, and a writer that renames
+    its file is a writer the shell never hears from again."""
+    now = time.monotonic()
+    payload = {
+        "at": int(time.time() * 1000),
+        "available": 1 if available else 0,
+        "listening": 1 if listening else 0,
+        "live": 1 if (now - ear.last_loud) < 1.2 else 0,
+        "level": round(ear.level, 3),
+        "peak": round(ear.peak, 3),
+        "floor": round(ear.floor, 4),
+        "speech": 1 if ear.speech else 0,
+        "speaking": 1 if ear.speaking else 0,
+        "speechMs": int(ear.speech_ms if ear.speaking else 0),
+        "silenceMs": int(ear.silence_ms),
+        "bands": [round(v, 3) for v in ear.bands],
+        "canSend": ear.can_send,
+        "utterance": ear.utterance,
+        "wav": ear.wav_path,
+        "source": opt.source or "",
+        "note": note,
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(json.dumps(payload, separators=(",", ":")))
+            f.flush()
+    except OSError as e:
+        log(f"cannot write {path}: {e}")
+
+
+def read_ctl(path: str) -> str:
+    try:
+        with open(path, "r") as f:
+            return f.read().strip().lower()
+    except OSError:
+        return ""
+
+
+def clear_ctl(path: str) -> None:
+    try:
+        with open(path, "w") as f:
+            f.write("")
+    except OSError:
+        pass
+
+
+def frames_from_bytes(buf: bytes):
+    """Turn a raw s16le buffer into whole 20 ms frames; returns (frames, rest)."""
+    usable = len(buf) - (len(buf) % 2)
+    step = FRAME * 2
+    whole = usable - (usable % step)
+    out = []
+    for off in range(0, whole, step):
+        chunk = buf[off:off + step]
+        vals = struct.unpack(f"<{FRAME}h", chunk)
+        out.append([v / 32768.0 for v in vals])
+    return out, buf[whole:]
+
+
+def main() -> int:
+    opt = Options()
+    if opt.selftest:
+        return selftest(opt)
+
+    start_ppid = os.getppid()
+    running = True
+
+    def on_signal(_sig, _frm):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    mic = Mic(opt.source)
+    if not mic.start():
+        write_voice(opt.out, Ear(opt), opt, available=False, listening=False,
+                    note="pw-record, parec and arecord are all missing")
+        log("no capture tool — the island will show Velly without ears")
+        return 0
+    opt.source = mic.kind
+
+    ear = Ear(opt)
+    rest = b""
+    last_write = 0.0
+    last_parent = 0.0
+    quiet_written = False
+
+    try:
+        while running:
+            now = time.monotonic()
+
+            if now - last_parent > 2.0:
+                last_parent = now
+                if os.getppid() != start_ppid:
+                    log("parent disappeared — closing the ears")
+                    break
+
+            data = mic.read(FRAME * 2 * 4)
+            if data is None:
+                mic.stop()
+                mic.tries += 1
+                if mic.tries > 5:
+                    write_voice(opt.out, ear, opt, available=False, listening=False,
+                                note=f"{opt.source} kept dying")
+                    log("capture kept dying — giving up")
+                    return 0
+                time.sleep(0.6)
+                mic.start()
+                continue
+
+            if data:
+                if mic.tries:
+                    mic.tries = 0
+                frames, rest = frames_from_bytes(rest + data)
+                for fr in frames:
+                    ear.feed(fr)
+                if frames:
+                    ear.bands_from(frames[-1])
+
+            # The shell's one word: commit, reset, stop.
+            cmd = read_ctl(opt.ctl)
+            if cmd:
+                clear_ctl(opt.ctl)
+                if cmd.startswith("stop"):
+                    break
+                elif cmd.startswith("commit"):
+                    ear.commit()
+                elif cmd.startswith("reset"):
+                    ear.reset()
+
+            loud = ear.level > 0.12 or ear.speaking
+            interval = 1.0 / (WRITE_HZ if loud else QUIET_HZ)
+            if now - last_write >= interval:
+                last_write = now
+                write_voice(opt.out, ear, opt)
+                quiet_written = not loud
+    finally:
+        mic.stop()
+
+    write_voice(opt.out, ear, opt, listening=False, note="closed")
+    return 0
+
+
+def selftest(opt: Options) -> int:
+    """No microphone: synthesise a voice-shaped burst and prove the detector
+    fires, the WAV lands and the meter follows. Used by the project's checks."""
+    tmp = tempfile.mkdtemp(prefix="velvet-ears-")
+    opt.out = os.path.join(tmp, "ai-voice.json")
+    opt.ctl = os.path.join(tmp, "ai-ears.ctl")
+    opt.wav = os.path.join(tmp, "ai-hear.wav")
+    open(opt.ctl, "w").close()
+
+    ear = Ear(opt)
+    heard = 0
+    peak_level = 0.0
+    peak_band = 0.0
+    t = 0.0
+    for i in range(340):                    # 340 frames = 6.8 s: two utterances,
+        t = i * FRAME_MS / 1000.0           # each closed by the silence hang
+        voice = 0.4 < t < 1.4 or 2.6 < t < 4.0
+        frame = []
+        for k in range(FRAME):
+            tt = t + k / RATE
+            if voice:
+                f = 180.0 + 90.0 * math.sin(2 * math.pi * 3.1 * tt)
+                v = (0.35 * math.sin(2 * math.pi * f * tt)
+                     + 0.16 * math.sin(2 * math.pi * f * 2.1 * tt)
+                     + 0.06 * math.sin(2 * math.pi * f * 4.3 * tt))
+            else:
+                v = 0.0025 * math.sin(2 * math.pi * 55 * tt)
+            frame.append(v)
+        ear.feed(frame)
+        ear.bands_from(frame)
+        peak_level = max(peak_level, ear.level)
+        peak_band = max(peak_band, max(ear.bands))
+        if ear.can_send:
+            heard += 1
+            write_voice(opt.out, ear, opt)
+            ear.reset()
+
+    if heard < 2:
+        print(f"FAIL: expected two utterances, detected {heard}")
+        return 1
+    with open(opt.out) as f:
+        data = json.load(f)
+    size = os.path.getsize(opt.wav)
+    print(f"ok  utterances={heard}  wav={size}B  peak-level={peak_level:.3f}  "
+          f"peak-band={peak_band:.2f}  floor={data['floor']:.4f}")
+    if size < 4000:
+        print("FAIL: the captured WAV is too small to hold speech")
+        return 1
+    if peak_level < 0.5:
+        print("FAIL: the meter never really moved — the voice never registered")
+        return 1
+    if peak_band < 0.18:
+        print("FAIL: the band bank saw nothing in a voice-shaped signal")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        raise SystemExit(0)

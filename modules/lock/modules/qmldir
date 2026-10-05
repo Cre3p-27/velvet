@@ -1,0 +1,13 @@
+module qs.modules.lock.modules
+LockClock 1.0 LockClock.qml
+LockAvatar 1.0 LockAvatar.qml
+LockWeather 1.0 LockWeather.qml
+LockGreeting 1.0 LockGreeting.qml
+LockNotifs 1.0 LockNotifs.qml
+LockMedia 1.0 LockMedia.qml
+LockBattery 1.0 LockBattery.qml
+LockNet 1.0 LockNet.qml
+LockUser 1.0 LockUser.qml
+LockPower 1.0 LockPower.qml
+LockResources 1.0 LockResources.qml
+LockSession 1.0 LockSession.qml

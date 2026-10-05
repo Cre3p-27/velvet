@@ -1,0 +1,5 @@
+module qs.modules.osd
+Osd 1.0 Osd.qml
+Toasts 1.0 Toasts.qml
+Combo 1.0 Combo.qml
+VibeFlash 1.0 VibeFlash.qml
