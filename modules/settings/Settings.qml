@@ -1066,6 +1066,11 @@ FloatingWindow {
         function onSettingsChanged(): void {
             root.present();
         }
+
+        // a deep link while the window is already open
+        function onSettingsAsked(): void {
+            root.present();
+        }
     }
 
     // (a PanelWindow has no Component.onCompleted — a one-shot timer does the same)

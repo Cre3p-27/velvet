@@ -106,7 +106,7 @@ FloatingWindow {
         }
     ]
 
-    readonly property var keyList: [["Super + Tab", "settings — just start typing to search"], ["Super + Space", "launcher"], ["Super + N", "notifications"], ["Super + Escape", "power menu"], ["Super + L", "lock the screen"], ["Super + Z / X", "previous / next desktop"], ["Super + D", "floating ⇄ tiled windows"], ["Super + Alt + wheel", "zoom the desktop out"], ["Super + W", "wallpapers"], ["Super + Shift + K", "every shortcut"]]
+    readonly property var keyList: [["Super + Tab", "settings — just start typing to search"], ["Super + Space", "launcher"], ["Super + N", "notifications"], ["Super + Escape", "power menu"], ["Super + L", "lock the screen"], ["Super + Z / X", "previous / next desktop"], ["Super + D", "floating ⇄ tiled windows"], ["Super + Alt + wheel", "zoom the desktop out"], ["Super + Alt + right click", "every window at a glance (left click: 1:1)"], ["Super + W", "wallpapers"], ["Super + Shift + K", "every shortcut"]]
 
     Rectangle {
         anchors.fill: parent

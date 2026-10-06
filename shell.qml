@@ -308,7 +308,9 @@ ShellRoot {
         // session file, so a stale session from a crash can never survive.
         Velly.active,
         // The audio-reactive layer: starting the shell starts the meter.
-        Spectrum.available
+        Spectrum.available,
+        // DESKTOP → WINDOWS ON THIS DESKTOP: its rules and the sweep.
+        WorkspaceModes.anyForced
     ]
 
     // ────────────────────────────────────────────────────────── the health check

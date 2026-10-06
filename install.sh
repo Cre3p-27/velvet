@@ -646,3 +646,28 @@ if [ -f "$HYPR_DIR/$GENERATED" ] && [ -n "${HL_CONF:-}" ]; then
         [ "$reply" = y ] || [ "$reply" = Y ] && hyprctl reload >/dev/null 2>&1 && ok "Hyprland reloaded"
     fi
 fi
+
+# ── key check ────────────────────────────────────────────────────────────────
+# Two binds on one key both fire. Once Hyprland has the new lines, list any
+# key that is bound more than once, so it can be fixed in the config.
+if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v python3 >/dev/null 2>&1; then
+    dupes="$(hyprctl binds -j 2>/dev/null | python3 -c '
+import json, sys, collections
+try:
+    binds = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+names = [(64, "SUPER"), (4, "CTRL"), (8, "ALT"), (1, "SHIFT")]
+seen = collections.Counter((b.get("modmask", 0), b.get("key", ""), b.get("submap", "")) for b in binds if b.get("key"))
+for (mask, key, sub), n in sorted(seen.items(), key=lambda kv: kv[0][1]):
+    if n > 1:
+        mods = "+".join(m for bit, m in names if mask & bit)
+        print(f"{mods + "+" if mods else ""}{key}" + (f" (submap {sub})" if sub else "") + f" ×{n}")
+' 2>/dev/null)"
+    if [ -n "$dupes" ]; then
+        head2 "Keys bound twice"
+        warn "These keys do two things at once (Velvet's and another bind):"
+        printf '%s\n' "$dupes" | sed 's/^/       /'
+        say "     ${D}Remove one of the two from $(basename "${HL_CONF:-hyprland.conf}") — Super+Shift+K lists Velvet's keys.${N}"
+    fi
+fi

@@ -1630,6 +1630,109 @@ FocusScope {
                 }
             }
 
+            // How windows sit on the desktop being edited: as Hyprland and
+            // your rules decide, all tiled, or all floating (WorkspaceModes).
+            Plate {
+                id: modeCard
+
+                readonly property string mode: WorkspaceModes.modeOf(root.editWs)
+
+                width: parent.width
+                height: modeCol.implicitHeight + 22
+                radius: Appearance.rounding.normal
+                color: Colours.alpha(Colours.surfaceHigh, 0.6)
+                border.width: 1
+                border.color: Colours.alpha(Colours.accent, modeCard.mode !== "normal" ? 0.55 : 0.2)
+
+                Behavior on border.color {
+                    ColorAnimation {
+                        duration: Appearance.anim.fast
+                    }
+                }
+
+                Column {
+                    id: modeCol
+
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.leftMargin: 14
+                    anchors.rightMargin: 14
+                    anchors.topMargin: 11
+                    spacing: 9
+
+                    Row {
+                        width: parent.width
+                        spacing: 10
+
+                        Icon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: modeCard.mode === "tiling" ? "grid_view" : (modeCard.mode === "floating" ? "filter_none" : "dashboard")
+                            color: Colours.accent
+                            font.pixelSize: Appearance.font.size.huge
+                        }
+
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: -1
+                            width: parent.width - 40
+
+                            P5Text {
+                                width: parent.width
+                                text: `WINDOWS ON DESKTOP ${root.editWs}`
+                                color: Colours.ink
+                                font.pixelSize: Appearance.font.size.small
+                                elide: Text.ElideRight
+                            }
+
+                            P5Text {
+                                width: parent.width
+                                text: modeCard.mode === "tiling" ? "EVERY WINDOW TILES  ·  SUPER+V STILL FLOATS ONE" : (modeCard.mode === "floating" ? "EVERY WINDOW FLOATS  ·  THE INFINITE CANVAS" : "AS HYPRLAND AND YOUR RULES DECIDE")
+                                color: Colours.accentInk
+                                font.pixelSize: Appearance.font.size.tiny
+                                tracking: 1.5
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: 6
+
+                        Repeater {
+                            model: [
+                                {
+                                    id: "normal",
+                                    label: "NORMAL",
+                                    glyph: "dashboard"
+                                },
+                                {
+                                    id: "tiling",
+                                    label: "TILING",
+                                    glyph: "grid_view"
+                                },
+                                {
+                                    id: "floating",
+                                    label: "FLOATING",
+                                    glyph: "filter_none"
+                                }
+                            ]
+
+                            MiniButton {
+                                required property var modelData
+
+                                width: (modeCol.width - 12) / 3
+                                label: modelData.label
+                                glyph: modelData.glyph
+                                accent: modeCard.mode === modelData.id
+                                onClicked: WorkspaceModes.setMode(root.editWs, modelData.id)
+                            }
+                        }
+                    }
+                }
+            }
+
             // The bigger picture: the taskbar, windows, lock screen … of this
             // wallpaper are one tab over.
             Item {

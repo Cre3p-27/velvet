@@ -44,6 +44,18 @@ mouse_rel_y = 0
 # Paso de movimiento con teclado
 KEY_MOVE_STEP = 20
 
+ZOOM_STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "velvet-zoom-state")
+
+def zoom_factor():
+    """How far the velvetzoom plugin has the desk zoomed out (1.0 = not).
+    The plugin writes "<z> <active>" there whenever the zoom changes."""
+    try:
+        with open(ZOOM_STATE) as f:
+            z, active = f.read().split()[:2]
+        return max(0.05, min(1.0, float(z))) if active == "1" else 1.0
+    except Exception:
+        return 1.0
+
 def read_inverted():
     try:
         with open(STATE_FILE) as f:
@@ -202,6 +214,11 @@ def monitor_window_drag():
                 dragged_window_addr = None
                 last_window_bounds = None
             
+            # zoomed out the whole canvas is in view: no pushing at the edges
+            if window_drag_active and dragged_window_addr and zoom_factor() < 0.999:
+                time.sleep(0.016)
+                continue
+
             if window_drag_active and dragged_window_addr:
                 window = get_focused_window()
                 if window and window.get('address') == dragged_window_addr:
@@ -527,6 +544,13 @@ while True:
 
     if not active_drag:
         continue
+
+    # zoomed out, a pixel of mouse moves the shrunken canvas as far on screen
+    # as it does at 1:1
+    z = zoom_factor()
+    if z < 0.999:
+        dx /= z
+        dy /= z
 
     idx = int(round(dx))
     idy = int(round(dy))

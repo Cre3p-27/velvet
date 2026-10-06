@@ -851,7 +851,8 @@ PanelWindow {
     //  when the desktop zooms out, and SUPER+D's tiling never touches them.
     Item {
         anchors.fill: parent
-        visible: !Locker.locked && (Desk.focusedMonitor?.name ?? root.modelData.name) === root.modelData.name
+        // (modelData is null for a moment while a screen goes away)
+        visible: !Locker.locked && !!root.modelData && (Desk.focusedMonitor?.name ?? root.modelData.name) === root.modelData.name
 
         Repeater {
             model: Scenes.drawnItems

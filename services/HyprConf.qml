@@ -8,6 +8,7 @@ pragma Singleton
 import qs.config
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import QtQuick
 
 Singleton {
@@ -356,6 +357,30 @@ ${Binds.luaBinds}
         rules.command = ["bash", "-c", `${clear}${win}out=$(hyprctl eval '${root.luaLayerRules}' 2>&1); if [ "$out" != "ok" ]; then hyprctl --batch "${root.layerRules.join(" ; ")}"; fi`];
         rules.running = false;
         rules.running = true;
+    }
+
+    // A config reload (Hyprland re-reads its files — also each time velvet.lua
+    // is saved) forgets everything sent over `hyprctl eval`: the layer rules
+    // (the bar's blur), the settings and welcome windows' float rules, and the
+    // live values that are not in a file (focus mode's dim). Send them again.
+    Timer {
+        id: reloadAgain
+
+        interval: 250
+        onTriggered: {
+            root.pushLayerRules(true);
+            if (Config.hypr.manage)
+                liveDebounce.restart();
+        }
+    }
+
+    Connections {
+        target: Hyprland
+
+        function onRawEvent(event: HyprlandEvent): void {
+            if (root.ready && event.name === "configreloaded")
+                reloadAgain.restart();
+        }
     }
 
     Connections {

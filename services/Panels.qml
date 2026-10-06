@@ -73,8 +73,30 @@ Singleton {
 
     function openSettingsAt(entry: var): void {
         root.pendingSetting = entry;
+        root.showSettings();
+    }
+
+    // The settings window is a real window since v8.40 and may already be
+    // open — then the flag does not change and nothing would happen. A deep
+    // link asks the open window to go there, and fetches it to this desktop.
+    signal settingsAsked
+
+    function showSettings(): void {
         root.closeAll();
-        root.settings = true;
+        if (!root.settings) {
+            root.settings = true;
+            return;
+        }
+        const tops = Hyprland.toplevels?.values ?? [];
+        const t = tops.find(x => (x?.title ?? "") === "Velvet Settings");
+        const ws = t?.workspace?.id ?? -1;
+        if (t) {
+            const a = "0x" + String(t.address ?? t.lastIpcObject?.address ?? "").replace(/^0x/, "");
+            if (ws > 0 && ws !== Hypr.activeWsId)
+                Hypr.sendToWorkspace(a, Hypr.activeWsId);
+            Hypr.focusWindow(a);
+        }
+        root.settingsAsked();
     }
 
     // Jump straight to one setting by its config key. Used by bar modules that
@@ -109,8 +131,7 @@ Singleton {
 
     function openSettingsTabNamed(name: string): void {
         root.pendingTab = name;
-        root.closeAll();
-        root.settings = true;
+        root.showSettings();
     }
 
     // Same idea for the settings window's three rooms: SETTINGS, WORKFLOW
@@ -124,8 +145,7 @@ Singleton {
 
     function openSettingsZoneNamed(name: string): void {
         root.pendingZone = `${name ?? ""}`.trim().toUpperCase();
-        root.closeAll();
-        root.settings = true;
+        root.showSettings();
     }
 
     // ── staying on your desktop ──────────────────────────────────────────

@@ -12,7 +12,9 @@
 --    Super + Ctrl + arrows       jump to the next window in that direction
 --    Super + Alt + arrows        swap a tiled window in that direction
 --    Super + Alt + mouse wheel   zoom the desktop out and back
---    Super + Alt + middle click  zoom back to 1:1
+--    Super + Alt + left click    zoom back to 1:1 (middle click too)
+--    Super + Alt + right click   zoom out until every window shows
+--    zoomed out, the mouse works as at 1:1: click, type, Super+drag, resize
 --    Super + left-drag on empty  pan the canvas (the infinite desktop)
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -53,3 +55,5 @@ end
 hl.bind(mainMod .. " + ALT + mouse_up", py("desktop_zoom.py", "in"))
 hl.bind(mainMod .. " + ALT + mouse_down", py("desktop_zoom.py", "out"))
 hl.bind(mainMod .. " + ALT + mouse:274", py("desktop_zoom.py", "reset"))
+hl.bind(mainMod .. " + ALT + mouse:272", py("desktop_zoom.py", "reset"))
+hl.bind(mainMod .. " + ALT + mouse:273", py("desktop_zoom.py", "fit"))

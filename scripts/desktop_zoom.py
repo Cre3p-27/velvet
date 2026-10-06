@@ -32,6 +32,12 @@ One wheel, one continuous zoom from 0.25x to 3.0x:
 
 Wheel up zooms in, wheel down zooms out, wheel press (middle click) resets
 to 1:1 — the exact original geometry is restored from the state file.
+SUPER+ALT+left click is 1:1 as well; SUPER+ALT+right click (`fit`) zooms out
+just far enough that every window of the desk shows. The plugin (0.5+) takes
+both clicks itself; the binds that call this script are the fallback.
+
+Zoomed in, the view stays where it is (cursor:zoom_rigid): the pointer stops
+at the edge of what is shown instead of dragging the view after it.
 
 Why a state file instead of getoption: getoption reports the ANIMATED
 value, which lags the target. Compounding wheel ticks off the animated
@@ -40,7 +46,7 @@ skips itself. We keep our own target in /tmp and re-sync with Hyprland
 only after the wheel has been idle, so touchpad gestures and other tools
 win over a stale file.
 
-Usage:  desktop_zoom.py in|out|reset
+Usage:  desktop_zoom.py in|out|reset|fit
 """
 
 import json
@@ -90,8 +96,10 @@ def cursor_zoom_from_hyprland() -> float:
 
 
 def set_cursor_zoom(z: float) -> None:
+    # rigid: the magnified view does not follow the pointer to the screen's
+    # edges (the plugin keeps the pointer inside what is shown instead)
     sh(["hyprctl", "eval",
-        f'hl.config({{ cursor = {{ zoom_factor = {z:.3f} }} }})'])
+        f'hl.config({{ cursor = {{ zoom_factor = {z:.3f}, zoom_rigid = true }} }})'])
 
 
 def cursor_pos() -> (float, float):
@@ -470,6 +478,18 @@ def reset() -> None:
     write_state({"z": 1.0})
 
 
+def fit() -> None:
+    """Zoom out just far enough that every window of the desk shows."""
+    if os.path.exists(MAP_OPEN):
+        return
+    if cursor_zoom_from_hyprland() > 1.005:
+        set_cursor_zoom(1.0)
+        write_state({"z": 1.0})
+    ps = plugin_ready()
+    if ps:
+        sh(["hyprctl", "velvetzoom", "fit"])
+
+
 def reset_canvas() -> None:
     """Restore the canvas only — the cursor zoom is left alone. Called by
     the map when it opens, so window moves never fight stale originals."""
@@ -494,6 +514,9 @@ def main() -> None:
         return
     if action == "load":
         plugin_ready()
+        return
+    if action == "fit":
+        fit()
         return
     if debounced():
         return

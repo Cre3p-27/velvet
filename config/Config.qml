@@ -545,6 +545,9 @@ Singleton {
                 property bool onWallpaperChange: true
                 // Which emulator the little terminal programs open in.
                 property string terminal: "auto"
+                // How windows sit on each desktop: { "3": "tiling", "5": "floating" };
+                // a desktop not listed is normal (services/WorkspaceModes.qml).
+                property var workspaceModes: ({})
             }
 
             // ============================================================== LYRICS

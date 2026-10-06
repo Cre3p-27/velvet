@@ -93,7 +93,12 @@ export QS_DISABLE_CRASH_HANDLER=1
 crashes=()
 while :; do
     say "starting the shell"
-    "$QS" -n -c velvet >/dev/null 2>&1
+    # its own process group: the helpers it runs (cava, the level meter,
+    # dbus-monitor …) are in it, the programs it opens are not (they are
+    # started detached, in their own session)
+    setsid "$QS" -n -c velvet >/dev/null 2>&1 &
+    qspid=$!
+    wait "$qspid"
     code=$?
     # 0: quit on purpose · 130/143: Ctrl+C / SIGTERM (killed on purpose)
     case "$code" in
@@ -112,6 +117,11 @@ while :; do
         note "Velvet crashed ${#crashes[@]} times in two minutes and was not started again. Start it by hand to see why: qs -c velvet"
         break
     fi
+    # a shell that crashed cannot stop its helpers: they would run on
+    # beside the next one, twice, three times …
+    kill -TERM -- "-$qspid" 2>/dev/null
+    sleep 0.3
+    kill -KILL -- "-$qspid" 2>/dev/null
     say "the shell crashed (exit $code) — starting it again"
     sleep 1
 done

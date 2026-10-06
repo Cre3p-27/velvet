@@ -98,6 +98,13 @@ Singleton {
         root.act(`setfloating address:${address}`, `hl.dsp.window.float({ action = "enable", window = "address:${address}" })`);
     }
 
+    // The idempotent tile (DESKTOP → WINDOWS ON THIS DESKTOP: TILING).
+    function setTiled(address: string): void {
+        if (!address)
+            return;
+        root.act(`settiled address:${address}`, `hl.dsp.window.float({ action = "disable", window = "address:${address}" })`);
+    }
+
     // On every desktop (Hyprland's pin: the window follows you to every
     // workspace). Only a floating window can be pinned.
     function setPinned(address: string, on: bool): void {

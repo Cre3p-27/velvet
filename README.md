@@ -61,6 +61,7 @@ Velvet's own — add your pictures there.
 | `Super + Z` / `X` | previous / next desktop |
 | `Super + D` | floating ⇄ tiled windows |
 | `Super + Alt + mouse wheel` | zoom out over the whole desktop |
+| `Super + Alt + right click` | every window at a glance · `left click` back to 1:1 |
 | `Super + W` | wallpapers |
 | `Super + Shift + K` | every shortcut on one screen |
 
@@ -319,6 +320,14 @@ glance whether the scene is complete. One button copies the arrangement to
 every wallpaper; another captures the windows you already have open and turns
 them into a scene, which is usually faster than placing them by hand.
 
+**Windows on a desktop: NORMAL · TILING · FLOATING.** The card beside the picture
+decides how windows sit on the desktop you are editing — as Hyprland and your
+rules say, every window tiled, or every window floating (the infinite canvas).
+New windows open in that mode (dialogs stay floating), the ones already there
+follow when you switch, and a window you carry onto the desktop takes it on.
+After that a window is yours: `Super+V` / `Super+D` still toggle it. From a
+terminal or a key: `qs -c velvet ipc call wsmode set 3 tiling`.
+
 Launching is belt-and-braces on purpose. Hyprland's `exec` window rules place
 the window as it opens — the version with no flicker — and then, once the
 window really exists, the same geometry is applied again through ordinary
@@ -466,10 +475,13 @@ screen while you pan and zoom (widgets always do, and so does cava by default),
 zoom out to see the canvas around your screen and drag modules out onto it; a
 fixed module dropped out there switches to *moves* by itself.
 
-**Zoom out like a canvas** — `Super+Alt` + mouse wheel (middle click resets). Wheel up magnifies the screen
-(Hyprland's own zoom); wheel down shrinks the **whole desktop**: every window scales down around the pointer as a live
-texture — its content included — while the wallpaper and the bar stay where they are, down to 10 %. Windows that sit
-off screen at 1:1 slide into view. Click a window while zoomed out to jump to it. This needs the small compositor plugin
+**Zoom out like a canvas** — `Super+Alt` + mouse wheel. Wheel up magnifies the screen (Hyprland's own zoom; the
+view stays where it is and the pointer stops at its edge instead of dragging it along); wheel down shrinks the
+**whole desktop**: every window scales down around the pointer as a live texture — its content included — while the
+wallpaper and the bar stay where they are, down to 10 %. Windows that sit off screen at 1:1 slide into view. Zoomed
+out, everything works as usual: click, type, scroll, `Super`+drag to move and `Super`+right-drag to resize land on
+the window where you see it. `Super+Alt` + right click zooms out just far enough that every window shows;
+`Super+Alt` + left click (or middle click) goes back to 1:1. This needs the small compositor plugin
 in `plugin/velvetzoom/` (`tools/build-zoom-plugin.sh`, built by `install.sh`; rebuild after a Hyprland update).
 Without it the zoom falls back to moving and resizing the windows. `touch /tmp/velvet-zoom-noplugin` forces the fallback.
 
