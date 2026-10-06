@@ -62,8 +62,12 @@ Singleton {
     function reloadHyprland(): void {
         run("hyprctl reload");
     }
+    // Back through velvet-session, so the restarted shell is looked after
+    // again (crash → restart). It waits until the old one is really gone:
+    // the new one starts with --no-duplicate and would otherwise give way to
+    // the shell that is still on its way out.
     function restartShell(): void {
-        run("qs -c velvet kill; sleep 0.4; qs -c velvet -d");
+        Quickshell.execDetached(["bash", "-c", "qs -c velvet kill >/dev/null 2>&1; for i in $(seq 40); do qs -c velvet ipc show >/dev/null 2>&1 || break; sleep 0.2; done; setsid -f \"$1\" >/dev/null 2>&1", "velvet", Quickshell.shellPath("bin/velvet-session")]);
     }
 
     Instantiator {

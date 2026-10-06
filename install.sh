@@ -379,6 +379,21 @@ if [ -n "${HL_CONF:-}" ] && [ -f "$HL_CONF" ]; then
     fi
 fi
 
+# Volume, brightness and media keys — only when your config has none yet:
+# two binds on one key make every press count double.
+if [ "$HL_LANG" = lua ]; then MEDIA_FILE="velvet-media.lua"; MEDIA_LINE='require("velvet-media")'; else MEDIA_FILE="velvet-media.conf"; MEDIA_LINE="source = $HYPR_DIR/velvet-media.conf"; fi
+cp -f "$SRC/hypr/$MEDIA_FILE" "$HYPR_DIR/$MEDIA_FILE"
+if [ -n "${HL_CONF:-}" ] && [ -f "$HL_CONF" ]; then
+    if grep -qF "$MEDIA_LINE" "$HL_CONF"; then
+        ok "Media keys already wired"
+    elif grep -qE "XF86AudioRaiseVolume" "$HL_CONF"; then
+        ok "Your config binds the volume keys itself  ${D}— left as it is${N}"
+    else
+        printf '%s\n' "$MEDIA_LINE" >> "$HL_CONF"
+        ok "Volume, brightness and media keys wired"
+    fi
+fi
+
 # The canvas engine reads the mouse and keyboard directly: your user must be
 # in the `input` group (takes effect after the next login).
 if ! id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; then
@@ -525,10 +540,17 @@ for d in "$HOME/Pictures/Wallpapers" "$HOME/Bilder/Wallpapers" \
         break
     fi
 done
-[ -z "${FOUND_WALLS:-}" ] && {
-    warn "No wallpaper folder found"
-    say  "     ${D}Set one in ~/.config/velvet/config.json → wallpaper.directory${N}"
-}
+if [ -z "${FOUND_WALLS:-}" ]; then
+    # No folder of your own yet: start with Velvet's three, in the place your
+    # system calls "Pictures". Add your own pictures there any time.
+    PICS="$(xdg-user-dir PICTURES 2>/dev/null || true)"
+    { [ -z "$PICS" ] || [ "$PICS" = "$HOME" ]; } && PICS="$HOME/Pictures"
+    FOUND_WALLS="$PICS/Wallpapers"
+    mkdir -p "$FOUND_WALLS"
+    cp -n "$SRC"/assets/wallpapers/*.jpg "$FOUND_WALLS"/ 2>/dev/null || true
+    ok "Started a wallpaper folder with Velvet's own: ${FOUND_WALLS/#$HOME/~}"
+    say "     ${D}Put your own pictures in there — Super+W picks between them${N}"
+fi
 
 head2 "First-run config"
 if command -v python3 >/dev/null 2>&1; then
@@ -549,6 +571,10 @@ if command -v python3 >/dev/null 2>&1; then
     st_ok=0
     for prog in "$SRC"/bin/velvet-*; do
         [ -f "$prog" ] || continue
+        # the Python programs (velvet-session is bash); velvet-local, the
+        # assistant's engine room, has no self-test
+        head -1 "$prog" | grep -q python || continue
+        [ "$(basename "$prog")" = velvet-local ] && continue
         if ! python3 "$prog" --selftest >/dev/null 2>&1; then
             warn "$(basename "$prog") failed its self-test"
             st_ok=1
@@ -615,7 +641,7 @@ say ""
 
 if [ -f "$HYPR_DIR/$GENERATED" ] && [ -n "${HL_CONF:-}" ]; then
     if [ -t 0 ] && [ "$YES" = 0 ]; then
-        printf '  ${Y}Reload Hyprland now? [y/N] ${N}'
+        printf '  %sReload Hyprland now? [y/N] %s' "$Y" "$N"
         read -r reply || reply=""
         [ "$reply" = y ] || [ "$reply" = Y ] && hyprctl reload >/dev/null 2>&1 && ok "Hyprland reloaded"
     fi

@@ -28,22 +28,27 @@ local function velvet(panel)
 end
 
 -- ══ AUTOSTART ═══════════════════════════════════════════════════════════════
+-- velvet-session starts the shell and looks after it: a crash brings it back,
+-- and with LOCK AT BOOT the session is never left open if the lock cannot come
+-- up (hyprlock stands in, or the session ends and the login screen asks).
+--
 -- NOTE: if you already have an hl.on("hyprland.start", ...) block of your own,
 -- check after the first reboot that your other autostart apps still come up.
 -- Event handlers should stack, but if yours stopped firing, delete this block
 -- and put the one line inside your own handler instead:
 --
---     hl.exec_cmd("qs -c velvet -d")
+--     hl.exec_cmd(VELVET_DIR .. "/bin/velvet-session")
 --
 hl.on("hyprland.start", function()
+    local cmd = VELVET_DIR .. "/bin/velvet-session"
     -- Two spellings, tried in order. Which one exists depends on your
     -- Hyprland version, and calling the wrong one raises "attempt to call a
     -- nil value" at event time — a failure whose only symptom is that the
     -- shell never starts and nothing says why.
-    if pcall(function() hl.exec_cmd("qs -c velvet -d") end) then
+    if pcall(function() hl.exec_cmd(cmd) end) then
         return
     end
-    pcall(function() hl.dsp.exec_cmd("qs -c velvet -d") end)
+    pcall(function() hl.dsp.exec_cmd(cmd) end)
 end)
 
 -- ══ KEYBINDS ════════════════════════════════════════════════════════════════
@@ -61,15 +66,8 @@ hl.bind(mainMod .. " + SHIFT + L", hl.dsp.exec_cmd("qs -c velvet ipc call lyrics
 hl.bind(mainMod .. " + SHIFT + K", hl.dsp.exec_cmd("qs -c velvet ipc call keys toggle"))  -- every shortcut
 
 -- ══ MEDIA KEYS ══════════════════════════════════════════════════════════════
--- Velvet's OSD reacts to whatever changes the volume, so if you already bind
--- these in hyprland.conf/lua there is nothing to do. Binding them twice makes
--- every press count double — uncomment only if you have none.
---
--- hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1.5 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true })
--- hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),        { locked = true })
--- hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),       { locked = true })
--- hl.bind("XF86MonBrightnessUp",  hl.dsp.exec_cmd("brightnessctl -q s 5%+"),                           { locked = true })
--- hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl -q s 5%-"),                          { locked = true })
+-- In velvet-media.lua, which install.sh pulls in only when your config does
+-- not bind these keys yet — binding them twice makes every press count double.
 
 -- ══ MANAGED DESIGN ══════════════════════════════════════════════════════════
 -- Written by the shell whenever you move a slider in Super+Tab → WINDOWS.

@@ -623,6 +623,14 @@ Singleton {
                     help: "Löscht alles, was Velly sich über dich gemerkt hat. Kann nicht rückgängig gemacht werden.",
                     sub: "ALLES VERGESSEN, WAS SIE SICH GEMERKT HAT",
                     danger: true
+                },
+                {
+                    kind: "action",
+                    fn: "vellyPrune",
+                    name: "SPEICHER FREIGEBEN",
+                    help: "Löscht die Modellgrößen, die du nicht benutzt. Es bleiben die gewählte Größe und KLEIN, auf die Velly ausweicht, solange ein Spiel die Grafikkarte belegt. Eine gelöschte Größe wird neu geladen, wenn du sie wieder wählst.",
+                    sub: "UNBENUTZTE MODELLE VON DER PLATTE LÖSCHEN",
+                    danger: true
                 }
             ]
         },
@@ -4093,6 +4101,14 @@ Singleton {
             help: "Removes Velvet completely: the shell, its Hyprland lines and files, its programs, fonts and your Velvet settings. A terminal opens and asks once more before anything happens; your Hyprland config gets back exactly what it had before. Same as running uninstall.sh.",
             sub: "REMOVES THE SHELL COMPLETELY — A TERMINAL ASKS ONCE MORE",
             fn: "uninstall",
+            danger: true
+        },
+        {
+            kind: "action",
+            name: "RESET ALL SETTINGS",
+            help: "Puts every setting back to how Velvet starts on a fresh install, adapted to this screen again. Your looks, desktops, wallpapers and Velly's memory stay. The old settings are kept next to the new ones as config.json.before-reset-<date>. The shell restarts once.",
+            sub: "BACK TO A FRESH START — LOOKS AND DESKTOPS STAY",
+            fn: "resetSettings",
             danger: true
         }
     ]

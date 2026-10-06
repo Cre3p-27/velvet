@@ -72,6 +72,9 @@ Singleton {
             ["decoration:shadow:render_power", `${Math.round(h.shadowRenderPower)}`],
             ["animations:enabled", b(h.animations)],
             ["misc:vrr", b(h.vrr)],
+            // a lock that dies can be replaced by the next one (velvet-session
+            // restarts the shell, the shell locks again) — never a dead end
+            ["misc:allow_session_lock_restore", "1"],
             ["input:follow_mouse", h.followMouse ? "1" : "0"]
         ];
         if (h.manageBorders) {
@@ -122,7 +125,7 @@ Singleton {
             "shadow = { enabled = " + b(h.shadow) + ", range = " + h.shadowRange + ", render_power = " + Math.round(h.shadowRenderPower) + " },\n" +
             "},\n" +
             "animations = { enabled = " + b(h.animations) + " },\n" +
-            "misc = { vrr = " + b(h.vrr) + " },\n" +
+            "misc = { vrr = " + b(h.vrr) + ", allow_session_lock_restore = true },\n" +
             "input = { follow_mouse = " + b(h.followMouse) + " },\n" +
             "})";
         return out;
@@ -213,6 +216,7 @@ animations {
 
 misc {
     vrr = ${Config.hypr.vrr ? "1" : "0"}
+    allow_session_lock_restore = 1
 }
 
 input {
@@ -268,6 +272,7 @@ hl.config({
     },
     misc = {
         vrr = ${Config.hypr.vrr ? "1" : "0"},
+        allow_session_lock_restore = true,
     },
     input = {
         follow_mouse = ${Config.hypr.followMouse ? "1" : "0"},

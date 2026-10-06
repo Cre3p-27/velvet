@@ -611,6 +611,38 @@ Singleton {
         function onPamReadyChanged(): void {
             if (Config.lock.lockOnStart && !root.locked)
                 startLock.restart();
+            if (root.pamReady && !root.locked) {
+                relockCheck.running = false;
+                relockCheck.running = true;
+            }
+        }
+    }
+
+    // ------------------------------------------------- back after a crash
+    // While a real lock is up, a marker sits in the runtime folder. If the
+    // shell dies under the lock, Hyprland keeps the screen locked
+    // (misc:allow_session_lock_restore lets a new lock take over), and the
+    // shell that velvet-session starts again finds the marker and puts the
+    // lock straight back — instead of leaving a red "lock died" screen.
+    readonly property string lockMarker: `${Quickshell.env("XDG_RUNTIME_DIR") || "/tmp"}/velvet-locked`
+    readonly property bool realLock: root.locked && !root.testing
+
+    onRealLockChanged: {
+        if (root.realLock)
+            Quickshell.execDetached(["touch", root.lockMarker]);
+        else
+            Quickshell.execDetached(["rm", "-f", root.lockMarker]);
+    }
+
+    Process {
+        id: relockCheck
+
+        command: ["test", "-e", root.lockMarker]
+        onExited: code => {
+            if (code === 0 && root.pamReady && !root.locked) {
+                console.warn("Locker: the shell went down under the lock — locking again");
+                root.lock();
+            }
         }
     }
 
@@ -667,6 +699,10 @@ Singleton {
         }
         function status(): string {
             return root.status + (root.pamError ? `  ·  ${root.pamError}` : "");
+        }
+        // For velvet-session's boot guard: is anything holding the screen?
+        function state(): string {
+            return root.locked || external.running ? "locked" : "open";
         }
     }
 }

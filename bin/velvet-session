@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+#  VELVET · velvet-session — starts the shell and looks after it.
+#
+#  Hyprland runs this once at login instead of `qs -c velvet -d`.
+#
+#   · The shell crashes → it is started again (at most 5 times in 2 minutes,
+#     then a notification says why it stopped trying). Stopping it on purpose
+#     (`qs -c velvet kill`, RESTART SHELL, uninstall) is left alone.
+#
+#   · LOCK AT BOOT is on and the machine just booted (usually SDDM auto-login,
+#     where Velvet's lock IS the login screen): if the screen is not locked
+#     within 45 seconds — the shell would not start, PAM is broken, a bad
+#     update — the session is not left open. hyprlock locks it if it is
+#     installed; otherwise the session is ended and the login screen asks for
+#     the password.
+#
+#  velvet-session --guard-only   only the boot guard (for configs that start
+#                                the shell themselves)
+#  VELVET_GUARD_ALWAYS=1         run the guard even long after boot (testing)
+set -u
+
+QS="$(command -v qs || command -v quickshell || true)"
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/velvet/config.json"
+LOG="${XDG_RUNTIME_DIR:-/tmp}/velvet-session.log"
+GUARD_SECONDS="${VELVET_GUARD_SECONDS:-45}"
+
+say() { printf '%s  %s\n' "$(date +%T)" "$*" >> "$LOG"; }
+note() { command -v notify-send >/dev/null 2>&1 && notify-send -u critical -a Velvet "Velvet" "$1"; say "$1"; }
+
+# ── the boot guard ───────────────────────────────────────────────────────────
+lock_wanted() {
+    # LOCK AT BOOT, and only right after boot — the shell itself skips the
+    # boot lock later than two minutes in, so must the guard.
+    [ -n "${VELVET_GUARD_ALWAYS:-}" ] || awk '$1 >= 120 { exit 1 }' /proc/uptime || return 1
+    python3 - "$CFG" <<'PY' 2>/dev/null
+import json, sys
+try:
+    sys.exit(0 if json.load(open(sys.argv[1])).get("lock", {}).get("lockOnStart") else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
+
+guard() {
+    local waited=0
+    while [ "$waited" -lt "$GUARD_SECONDS" ]; do
+        if [ -n "$QS" ] && [ "$("$QS" -c velvet ipc call lock state 2>/dev/null)" = locked ]; then
+            say "guard: the lock is up after ${waited}s"
+            return 0
+        fi
+        pgrep -x hyprlock >/dev/null 2>&1 && { say "guard: hyprlock holds the screen"; return 0; }
+        sleep 1
+        waited=$((waited + 1))
+    done
+    if command -v hyprlock >/dev/null 2>&1; then
+        say "guard: no lock after ${GUARD_SECONDS}s — handing over to hyprlock"
+        # yours if you have one; without any config hyprlock refuses to start
+        local conf="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprlock.conf"
+        [ -f "$conf" ] || conf="$(dirname "$(readlink -f "$0")")/../hypr/hyprlock-fallback.conf"
+        hyprlock -c "$conf" >/dev/null 2>&1 &
+        sleep 3
+        pgrep -x hyprlock >/dev/null 2>&1 && { note "Velvet's lock did not come up — hyprlock locked the session instead."; return 0; }
+    fi
+    say "guard: still no lock — ending the session"
+    note "Velvet's lock did not come up — ending the session so the login screen asks for the password."
+    sleep 2
+    if [ -n "${XDG_SESSION_ID:-}" ] && loginctl terminate-session "$XDG_SESSION_ID"; then
+        return 0
+    fi
+    # no session id: leave Hyprland itself (both config dialects)
+    hyprctl dispatch 'hl.dsp.exit()' >/dev/null 2>&1 || hyprctl dispatch exit >/dev/null 2>&1
+}
+
+if lock_wanted; then
+    say "guard: LOCK AT BOOT is on — waiting for the lock"
+    guard &
+fi
+
+[ "${1:-}" = "--guard-only" ] && { wait; exit 0; }
+
+if [ -z "$QS" ]; then
+    note "Quickshell is not installed — Velvet cannot start."
+    wait
+    exit 1
+fi
+
+# ── the keeper ───────────────────────────────────────────────────────────────
+# Quickshell's own crash handler freezes the dead shell behind a "Quickshell
+# has crashed" dialog and never exits — nothing could restart it. Off: a crash
+# ends the process, and this loop brings it back.
+export QS_DISABLE_CRASH_HANDLER=1
+crashes=()
+while :; do
+    say "starting the shell"
+    "$QS" -n -c velvet >/dev/null 2>&1
+    code=$?
+    # 0: quit on purpose · 130/143: Ctrl+C / SIGTERM (killed on purpose)
+    case "$code" in
+        0|130|143) say "the shell stopped (exit $code) — not restarting"; break ;;
+    esac
+    # `-n` exits at once when another instance already runs: nothing to keep
+    if "$QS" -c velvet ipc show >/dev/null 2>&1; then
+        say "another Velvet is running — leaving it to that one"
+        break
+    fi
+    now=$(date +%s)
+    recent=()
+    for t in "${crashes[@]}"; do [ $((now - t)) -lt 120 ] && recent+=("$t"); done
+    crashes=("${recent[@]}" "$now")
+    if [ "${#crashes[@]}" -gt 5 ]; then
+        note "Velvet crashed ${#crashes[@]} times in two minutes and was not started again. Start it by hand to see why: qs -c velvet"
+        break
+    fi
+    say "the shell crashed (exit $code) — starting it again"
+    sleep 1
+done
+wait

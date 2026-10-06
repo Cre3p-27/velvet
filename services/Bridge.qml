@@ -5,6 +5,7 @@ pragma Singleton
 
 import qs.config
 import Quickshell
+import Quickshell.Io
 import QtQuick
 
 Singleton {
@@ -327,6 +328,16 @@ Singleton {
         case "openWorkflow":
             Panels.openSettingsZoneNamed("WORKFLOW");
             break;
+        case "resetSettings":
+            // Written while the shell is down, so its own in-memory settings
+            // cannot be saved back over the fresh file on the way out.
+            Quickshell.execDetached(["bash", "-c", `cfg="$1"; walls="$2"
+qs -c velvet kill >/dev/null 2>&1
+for i in $(seq 40); do qs -c velvet ipc show >/dev/null 2>&1 || break; sleep 0.2; done
+[ -f "$cfg" ] && mv -f "$cfg" "$cfg.before-reset-$(date +%Y%m%d-%H%M%S)"
+python3 "$3" "$cfg" "$walls" >/dev/null 2>&1 || printf '{}\n' > "$cfg"
+setsid -f "$4" >/dev/null 2>&1`, "velvet", Config.path, Config.wallpaper.directory, Quickshell.shellPath("tools/seed-config.py"), Quickshell.shellPath("bin/velvet-session")]);
+            break;
         case "uninstall": {
             // in a terminal, so its questions (and the password) can be answered
             const line = Term.wrap("dev.velvet.uninstall", "velvet-uninstall", `bash ${Quickshell.shellPath("uninstall.sh")}`, "");
@@ -364,6 +375,10 @@ Singleton {
         case "vellyForgetFacts":
             Velly.forgetAll();
             break;
+        case "vellyPrune":
+            pruneProc.running = false;
+            pruneProc.running = true;
+            break;
         }
     }
 
@@ -375,5 +390,27 @@ Singleton {
         const screen = Hypr.focusedScreen ?? Quickshell.screens[0];
         Panels.islandScreen = screen?.name ?? "";
         Velly.wantIsland = true;
+    }
+
+    // SPEICHER FREIGEBEN: velvet-local deletes the brain sizes nobody uses and
+    // says how much that was.
+    Process {
+        id: pruneProc
+
+        command: ["python3", Quickshell.shellPath("bin/velvet-local"), "prune"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                let r = null;
+                try {
+                    r = JSON.parse(this.text);
+                } catch (e) {}
+                if (!r)
+                    Toast.show("COULD NOT FREE THE SPACE — SEE velvet-local prune", "error", 5000);
+                else if (r.freed_mb > 0)
+                    Toast.show(`${(r.freed_mb / 1024).toFixed(1)} GB FREED — KEPT: ${r.kept.join(", ").toUpperCase()}`, "info", 5000);
+                else
+                    Toast.show("NOTHING TO FREE — ONLY THE MODELS IN USE ARE ON DISK", "info", 4000);
+            }
+        }
     }
 }

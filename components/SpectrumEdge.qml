@@ -138,7 +138,11 @@ Item {
 
         property real since: 0
 
-        running: root.visible
+        // Not `visible` alone: a parent that sets `visible` on this item (the
+        // CAVA drawn on the wallpaper does) replaces the binding above, and an
+        // invisible-by-opacity edge kept the whole wallpaper repainting at
+        // full frame rate in silence (measured: 54 frames a second, ~5 % CPU).
+        running: root.visible && root.opacity > 0.01
         onTriggered: {
             root.clock += tick.frameTime;
             const n = root.points;

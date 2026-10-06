@@ -31,7 +31,23 @@ bash ~/.config/quickshell/velvet/uninstall.sh
 
 It stops the shell and removes everything it installed: the shell, its Hyprland
 lines and files (your config gets back exactly what it had before), its programs,
-fonts and settings. Packages like Hyprland stay — other programs may use them.
+fonts and settings. Velly's models and voices (they can be tens of gigabytes) are
+only deleted after it has told you how big they are — `--keep-ai` keeps them,
+`--keep-config` keeps your settings. Packages like Hyprland stay — other programs
+may use them.
+
+**Settings in a knot?** Super+Tab → SHELL → *Reset all settings* puts every
+setting back to a fresh start (looks, desktops and wallpapers stay; the old file
+is kept as `config.json.before-reset-<date>`).
+
+**If something goes wrong:** the shell is started by `velvet-session`, which
+starts it again when it crashes. If you use Velvet's lock as the login screen
+(LOCK AT BOOT) and the lock cannot come up, the session is never left open:
+hyprlock locks it instead, or the session ends and the login screen asks for the
+password. Its log: `$XDG_RUNTIME_DIR/velvet-session.log`.
+
+No wallpapers yet? The installer starts `~/Pictures/Wallpapers` with three of
+Velvet's own — add your pictures there.
 
 ### The keys you need first
 
@@ -68,7 +84,7 @@ slider moves and the bar changes **while you are still dragging it**.
 git clone <this> velvet && cd velvet
 ./install.sh
 hyprctl reload
-qs -c velvet -d
+~/.config/quickshell/velvet/bin/velvet-session &   # or log out and in
 ```
 
 `install.sh` symlinks the folder into `~/.config/quickshell/velvet`, wires up
