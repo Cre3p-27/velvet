@@ -483,7 +483,8 @@ type, scroll, `Super`+drag to move and `Super`+right-drag to resize land on the 
 `Super+Alt` + right click zooms out just far enough that every window shows; `Super+Alt` + left click (or middle
 click) goes back to 1:1 from anywhere.
 `Super+Alt` + arrows swap places with the neighbouring window (Hyprland's own swap); `Super+Alt` + `H J K L` move a
-tiled window through the layout. This needs the small compositor plugin
+tiled window through the layout. Hyprland keeps the plugin build it loaded at login: after an update the shell says so, and
+`bash ~/.config/quickshell/velvet/tools/reload-zoom-plugin.sh` puts the new one in without logging out. This needs the small compositor plugin
 in `plugin/velvetzoom/` (`tools/build-zoom-plugin.sh`, built by `install.sh`; rebuild after a Hyprland update).
 Without it the zoom falls back to moving and resizing the windows. `touch /tmp/velvet-zoom-noplugin` forces the fallback.
 

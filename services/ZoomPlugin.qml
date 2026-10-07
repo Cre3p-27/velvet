@@ -15,11 +15,38 @@ Singleton {
 
     property bool ready: false
 
+    // The plugin build this shell expects. Hyprland keeps the build it loaded
+    // at login, so after an update the running one can be older — say so, and
+    // how to fix it without logging out.
+    readonly property string want: "0.6"
+    property string loaded: ""
+
     Process {
         id: loader
 
         running: true
         command: ["python3", Quickshell.shellPath("scripts/desktop_zoom.py"), "load"]
-        onExited: root.ready = true
+        onExited: {
+            root.ready = true;
+            version.running = true;
+        }
+    }
+
+    Process {
+        id: version
+
+        command: ["hyprctl", "plugin", "list", "-j"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                let list = [];
+                try {
+                    list = JSON.parse(text);
+                } catch (e) {}
+                const p = (list || []).find(x => x && x.name === "velvetzoom");
+                root.loaded = p ? String(p.version) : "";
+                if (root.loaded && root.loaded !== root.want)
+                    Toast.show(`ZOOM PLUGIN ${root.loaded} IS STILL RUNNING (NEW: ${root.want})  ·  LOG OUT AND IN, OR RUN tools/reload-zoom-plugin.sh`, "warn", 15000);
+            }
+        }
     }
 }
