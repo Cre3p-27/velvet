@@ -83,7 +83,8 @@ Item {
     // A gentle lift: quiet passages still move the curve, loud ones round
     // off towards the reach instead of slamming into it.
     function target(i: int): real {
-        const v = Math.min(1, Math.max(0, root.band(i)));
+        const b = Number(root.band(i));
+        const v = Number.isFinite(b) ? Math.min(1, Math.max(0, b)) : 0;
         return 1 - (1 - v) * (1 - v);
     }
 
@@ -110,13 +111,13 @@ Item {
     // no corners, and never above the reach or below the edge.
     function curve(vals: var, w: real, h: real, closed: bool): string {
         const n = vals.length;
-        if (n < 2 || w <= 0 || h <= 0)
+        if (n < 2 || !(w > 0) || !(h > 0) || !Number.isFinite(w) || !Number.isFinite(h))
             return "";
         const step = w / (n - 1);
         const room = h - root.floor;
         const ys = [];
         for (let i = 0; i < n; i++)
-            ys.push(h - root.floor - Math.min(1, Math.max(0, vals[i])) * room);
+            ys.push(h - root.floor - Math.min(1, Math.max(0, Number.isFinite(vals[i]) ? vals[i] : 0)) * room);
         const clampY = y => Math.max(0, Math.min(h, y));
         let d = closed ? `M 0 ${h} L 0 ${ys[0].toFixed(1)}` : `M 0 ${ys[0].toFixed(1)}`;
         for (let i = 0; i < n - 1; i++) {
@@ -158,7 +159,11 @@ Item {
             const next = [];
             for (let i = 0; i < n; i++) {
                 const t = root.target(i);
-                next.push(s[i] + (t - s[i]) * (t > s[i] ? up : down));
+                const was = Number.isFinite(s[i]) ? s[i] : 0;
+                const v = was + (t - was) * (t > was ? up : down);
+                // one bad number would make the whole path NaN — and Qt's
+                // triangulator crash on it (the shell died like that)
+                next.push(Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0);
             }
             root.shown = next;
             // The path is rebuilt at most ~90 times a second; the bars
@@ -188,10 +193,16 @@ Item {
                 right: -90
             })[root.edge] ?? 0
 
+        // The geometry renderer, not the curve renderer: this path changes up
+        // to 90 times a second, and the curve renderer's triangulation crashed
+        // the shell on it once (qTriangulate in QSGCurveProcessor::processFill).
+        // Smooth edges come from 4x multisampling while it is on screen.
         Shape {
             anchors.fill: parent
             visible: root.style !== "bars"
-            preferredRendererType: Shape.CurveRenderer
+            preferredRendererType: Shape.GeometryRenderer
+            layer.enabled: root.style !== "bars" && root.opacity > 0.01
+            layer.samples: 4
 
             ShapePath {
                 strokeWidth: -1

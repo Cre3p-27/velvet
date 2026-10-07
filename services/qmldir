@@ -41,3 +41,4 @@ singleton Presets 1.0 Presets.qml
 singleton WinTheme 1.0 WinTheme.qml
 singleton ZoomPlugin 1.0 ZoomPlugin.qml
 singleton WorkspaceModes 1.0 WorkspaceModes.qml
+singleton Updates 1.0 Updates.qml

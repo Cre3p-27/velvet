@@ -432,7 +432,10 @@ Item {
                     y: 36
                     width: parent.width - 32
                     height: 44
-                    preferredRendererType: Shape.CurveRenderer
+                    // a live polyline: the geometry renderer (see Resources.qml)
+                    preferredRendererType: Shape.GeometryRenderer
+                    layer.enabled: true
+                    layer.samples: 4
 
                     readonly property var pts: {
                         const h = SysInfo.cpuHistory ?? [];

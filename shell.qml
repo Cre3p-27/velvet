@@ -310,7 +310,9 @@ ShellRoot {
         // The audio-reactive layer: starting the shell starts the meter.
         Spectrum.available,
         // DESKTOP → WINDOWS ON THIS DESKTOP: its rules and the sweep.
-        WorkspaceModes.anyForced
+        WorkspaceModes.anyForced,
+        // Is this install in step with itself? (SHELL → UPDATE & REPAIR)
+        Updates.checked
     ]
 
     // ────────────────────────────────────────────────────────── the health check

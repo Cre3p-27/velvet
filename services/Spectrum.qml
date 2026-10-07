@@ -43,7 +43,8 @@ Singleton {
     readonly property int count: root.bands.length
 
     function at(i: int): real {
-        return (i >= 0 && i < root.bands.length) ? root.bands[i] : 0;
+        const v = (i >= 0 && i < root.bands.length) ? Number(root.bands[i]) : 0;
+        return Number.isFinite(v) ? v : 0;
     }
 
     // The average of the i-th of `of` slices of the spectrum: four equal bars

@@ -68,9 +68,14 @@ Item {
             color: Colours.alpha(Colours.ink, 0.07)
         }
 
+        // straight segments that change every couple of seconds: the geometry
+        // renderer (the curve renderer's triangulation has crashed the shell
+        // on a live-updating fill)
         Shape {
             anchors.fill: parent
-            preferredRendererType: Shape.CurveRenderer
+            preferredRendererType: Shape.GeometryRenderer
+            layer.enabled: true
+            layer.samples: 4
 
             // Memory sits behind, CPU in front — CPU is the one you watch.
             ShapePath {

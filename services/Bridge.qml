@@ -328,6 +328,9 @@ Singleton {
         case "openWorkflow":
             Panels.openSettingsZoneNamed("WORKFLOW");
             break;
+        case "updateVelvet":
+            Updates.run();
+            break;
         case "resetSettings":
             // Written while the shell is down, so its own in-memory settings
             // cannot be saved back over the fresh file on the way out.

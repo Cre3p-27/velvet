@@ -22,7 +22,9 @@ comes with it.
    your screen, your wallpapers and your current Hyprland settings.
 3. **Log out and back in.** A welcome page opens and shows you the first steps.
 
-Updating later: run the same line again.  
+Updating later: **Super+Tab → SHELL → UPDATE & REPAIR** — it downloads the newest Velvet, brings its
+Hyprland files up to date, rebuilds and swaps the zoom plugin and restarts the shell, all in one go (or run the
+same install line again). Velvet checks this by itself after it starts and tells you when something is out of step.  
 **Removing Velvet completely:** Super+Tab → SHELL → *Uninstall Velvet* — or in a terminal:
 
 ```bash

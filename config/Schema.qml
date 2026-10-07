@@ -4090,6 +4090,13 @@ Singleton {
         },
         {
             kind: "action",
+            name: "UPDATE & REPAIR",
+            help: "Everything an update needs, in one go: downloads the newest Velvet (never over files you changed yourself), brings Velvet's Hyprland files in ~/.config/hypr up to date (the old ones are kept as *.before-update), rebuilds the zoom plugin if needed and swaps it into the running Hyprland, then reloads Hyprland and restarts the shell. A terminal shows each step. Velvet also checks this by itself a few seconds after it starts and says so when something is out of step.",
+            sub: "DOWNLOAD · HYPRLAND FILES · ZOOM PLUGIN · RESTART — IN ONE GO",
+            fn: "updateVelvet"
+        },
+        {
+            kind: "action",
             name: "RESTART SHELL",
             help: "Restarts the whole shell from disk. Use it after editing files by hand or if something got stuck.",
             sub: "RELOAD VELVET FROM DISK",

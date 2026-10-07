@@ -44,8 +44,8 @@ Singleton {
                 } catch (e) {}
                 const p = (list || []).find(x => x && x.name === "velvetzoom");
                 root.loaded = p ? String(p.version) : "";
-                if (root.loaded && root.loaded !== root.want)
-                    Toast.show(`ZOOM PLUGIN ${root.loaded} IS STILL RUNNING (NEW: ${root.want})  ·  LOG OUT AND IN, OR RUN tools/reload-zoom-plugin.sh`, "warn", 15000);
+                // an older one still running is reported by Updates, whose
+                // UPDATE & REPAIR swaps it in place
             }
         }
     }
