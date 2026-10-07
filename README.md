@@ -475,14 +475,15 @@ screen while you pan and zoom (widgets always do, and so does cava by default),
 zoom out to see the canvas around your screen and drag modules out onto it; a
 fixed module dropped out there switches to *moves* by itself.
 
-**Zoom out like a canvas** — `Super+Alt` + mouse wheel. Wheel up magnifies the screen (Hyprland's own zoom; the
-view stays where it is and the pointer stops at its edge instead of dragging it along); wheel down shrinks the
-**whole desktop**: every window scales down around the pointer as a live texture — its content included — while the
-wallpaper and the bar stay where they are, down to 10 %. Windows that sit off screen at 1:1 slide into view. Zoomed
-out, everything works as usual: click, type, scroll, `Super`+drag to move and `Super`+right-drag to resize land on
-the window where you see it. `Super+Alt` + right click zooms out just far enough that every window shows;
-`Super+Alt` + left click (or middle click) goes back to 1:1 — from a zoom-out and from a magnified screen alike.
-`Super+Alt` + arrows swap places with the neighbouring window (Hyprland's own swap); `Super+Alt` + `H J K L` move a tiled window through the layout. This needs the small compositor plugin
+**Zoom like a canvas** — `Super+Alt` + mouse wheel, in and out, from 10 % to 300 %. The windows grow or shrink
+around the pointer as live textures — content included — while the wallpaper, the bar, the screen frame and every
+Velvet panel stay exactly as they are. 1:1 is a stop: a turn of the wheel that reaches it lands on it, the next
+one goes on. Windows that sit off screen at 1:1 slide into view. Zoomed in or out, everything works as usual: click,
+type, scroll, `Super`+drag to move and `Super`+right-drag to resize land on the window where you see it.
+`Super+Alt` + right click zooms out just far enough that every window shows; `Super+Alt` + left click (or middle
+click) goes back to 1:1 from anywhere.
+`Super+Alt` + arrows swap places with the neighbouring window (Hyprland's own swap); `Super+Alt` + `H J K L` move a
+tiled window through the layout. This needs the small compositor plugin
 in `plugin/velvetzoom/` (`tools/build-zoom-plugin.sh`, built by `install.sh`; rebuild after a Hyprland update).
 Without it the zoom falls back to moving and resizing the windows. `touch /tmp/velvet-zoom-noplugin` forces the fallback.
 

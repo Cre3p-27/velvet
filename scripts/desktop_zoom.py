@@ -3,9 +3,10 @@
 
 One wheel, one continuous zoom from 0.25x to 3.0x:
 
-  · z >= 1.0 — Hyprland's compositor zoom (`cursor:zoom_factor`), crisp
-    magnification around the pointer. The only zoom Hyprland offers; the
-    `zoomFactor` animation in hyprland.lua makes every step glide.
+  · z >= 1.0 — the plugin (0.6+) grows the windows around the pointer while
+    the wallpaper, the bar and every panel stay exactly as they are. Without
+    the plugin: Hyprland's compositor zoom (`cursor:zoom_factor`), which
+    magnifies the whole picture, bar included.
 
   · z < 1.0, THE REAL ONE — plugin/velvetzoom renders every window of the
     desktop through a scale-about-a-pivot, so each window shrinks as a live
@@ -421,8 +422,10 @@ def zoom_in() -> None:
         write_state(st)
         return
 
-    ps = plugin_status()
-    if ps and ps["active"] and ps["target"] < 0.999 and plugin_wheel(-1, ps):
+    # the plugin (0.6+) magnifies the windows only — bar and panels keep their
+    # size; Hyprland's cursor zoom (below) magnifies the whole picture
+    ps = plugin_ready()
+    if ps and ps["wheel"] and plugin_wheel(-1, ps):
         return
 
     cur = sync_cursor_z()

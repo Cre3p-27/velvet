@@ -47,12 +47,13 @@ KEY_MOVE_STEP = 20
 ZOOM_STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "velvet-zoom-state")
 
 def zoom_factor():
-    """How far the velvetzoom plugin has the desk zoomed out (1.0 = not).
+    """How far the velvetzoom plugin has the desk zoomed (1.0 = not; below 1
+    is out, above 1 is in).
     The plugin writes "<z> <active>" there whenever the zoom changes."""
     try:
         with open(ZOOM_STATE) as f:
             z, active = f.read().split()[:2]
-        return max(0.05, min(1.0, float(z))) if active == "1" else 1.0
+        return max(0.05, min(3.0, float(z))) if active == "1" else 1.0
     except Exception:
         return 1.0
 
@@ -214,8 +215,8 @@ def monitor_window_drag():
                 dragged_window_addr = None
                 last_window_bounds = None
             
-            # zoomed out the whole canvas is in view: no pushing at the edges
-            if window_drag_active and dragged_window_addr and zoom_factor() < 0.999:
+            # zoomed, the canvas is not where the edges are: no pushing there
+            if window_drag_active and dragged_window_addr and abs(zoom_factor() - 1.0) > 0.001:
                 time.sleep(0.016)
                 continue
 
@@ -545,10 +546,9 @@ while True:
     if not active_drag:
         continue
 
-    # zoomed out, a pixel of mouse moves the shrunken canvas as far on screen
-    # as it does at 1:1
+    # zoomed, a pixel of mouse moves the canvas as far on screen as at 1:1
     z = zoom_factor()
-    if z < 0.999:
+    if abs(z - 1.0) > 0.001:
         dx /= z
         dy /= z
 

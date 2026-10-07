@@ -125,6 +125,7 @@ namespace {
     constexpr double OMEGA    = 15.0;
     constexpr float  STEP     = 1.28F; // one wheel notch
     constexpr float  MIN_ZOOM = 0.1F;
+    constexpr float  MAX_ZOOM = 3.F;
     // Blur and shadows go below this zoom and come back above it, so their
     // switch is never seen at 1:1 — it happens while everything is moving.
     constexpr float LIGHT_BELOW = 0.93F;
@@ -140,11 +141,12 @@ namespace {
     bool g_sticky    = false; // the press that started the hold was on a window
 
     bool light() {
-        return g_lightOn && g_zoom.active && g_zoom.cur < LIGHT_BELOW;
+        return g_lightOn && g_zoom.active && (g_zoom.cur < LIGHT_BELOW || g_zoom.cur > 1.F / LIGHT_BELOW);
     }
 
+    // zoomed out OR in: the windows are not where they are at 1:1
     bool zoomedOut() {
-        return g_zoom.active && g_zoom.cur < 0.999F;
+        return g_zoom.active && std::abs(g_zoom.cur - 1.F) > 0.001F;
     }
 
     void setCur(float z) {
@@ -295,7 +297,7 @@ namespace {
             g_zoom.cur = (float)std::exp(g_zoom.lx);
         if (g_zoom.anchored)
             g_zoom.t = g_zoom.a - g_zoom.ax * g_zoom.cur;
-        if (settled() && g_zoom.target >= 0.9995F)
+        if (settled() && std::abs(g_zoom.target - 1.F) < 0.0005F)
             deactivate();
     }
 
@@ -816,7 +818,7 @@ namespace {
             return;
         if (access("/tmp/velvet-map-open", F_OK) == 0)
             return;
-        // Hyprland's own zoom (z > 1) is magnified: that one is not ours. The
+        // Hyprland's own cursor zoom (a trackpad gesture, an old script) is not ours. The
         // key bind runs desktop_zoom.py (reset / fit), which puts the screen
         // back to 1:1 first — so the click is left alone for it.
         if (Pointer::mgr()) {
@@ -836,9 +838,13 @@ namespace {
     //  The key bind used to start a script per notch: ~100 ms of process
     //  start-up, irregular — the zoom moved in lumps. Here every notch lands
     //  the moment it happens and just moves the target; the glide in onPre
-    //  does the rest, so quick notches run together. Magnifying (z >= 1) is
-    //  Hyprland's own cursor zoom and stays with the script: we only step
-    //  aside when the screen is already magnified, or the wheel turns up.
+    //  does the rest, so quick notches run together.
+    //
+    //  Since 0.6 the plugin zooms IN as well (to 3x): the windows grow around
+    //  the pointer, the wallpaper, the bar, the frame and every shell panel stay
+    //  exactly as they are. Hyprland's own cursor zoom magnifies the whole
+    //  picture, bar included — it is only left alone when someone else turned
+    //  it on (a trackpad gesture): then the wheel steps it down first.
     float cursorZoom() {
         const std::string out = HyprlandAPI::invokeHyprctlCommand("getoption", "cursor:zoom_factor");
         const auto        at  = out.find("float:");
@@ -849,19 +855,27 @@ namespace {
         } catch (...) { return 1.F; }
     }
 
-    Vector2D anchorNow() {
+    PHLMONITOR pointerMonitor() {
         const Vector2D at = Pointer::mgr() ? pointerPos() : Vector2D{0, 0};
         PHLMONITOR     m  = monitorAt(at);
         if (!m && !State::monitorState()->monitors().empty())
             m = State::monitorState()->monitors().front();
-        if (!m)
+        return m;
+    }
+
+    // Where the zoom is pinned. Zooming in: exactly the pointer, so what is
+    // under it stays under it. Zooming out: the pointer, held inside the
+    // central half of the screen so the shrunken desktop stays on screen.
+    Vector2D anchorNow(bool zoomIn = false) {
+        const Vector2D at = Pointer::mgr() ? pointerPos() : Vector2D{0, 0};
+        const auto     m  = pointerMonitor();
+        if (!m || zoomIn)
             return at;
-        // inside the central half, so the shrunken desktop stays on screen
         return {std::clamp(at.x, m->m_position.x + m->m_size.x * 0.25, m->m_position.x + m->m_size.x * 0.75),
                 std::clamp(at.y, m->m_position.y + m->m_size.y * 0.25, m->m_position.y + m->m_size.y * 0.75)};
     }
 
-    // Start a fresh overview anchored at a: the layout point under a stays.
+    // Start a fresh zoom anchored at a: the layout point under a stays.
     void begin(const Vector2D& a) {
         setCur(1.F);
         g_zoom.target   = 1.F;
@@ -876,42 +890,46 @@ namespace {
         readFixed();
     }
 
+    Clock::time_point g_detentAt  = Clock::now() - std::chrono::seconds(10);
     int               g_burst     = 0;
     Clock::time_point g_lastNotch = Clock::now() - std::chrono::seconds(10);
 
-    // notches > 0 shrink (wheel down), < 0 grow. Returns whether the plugin took it.
+    // notches > 0 shrink (wheel down), < 0 grow (wheel up). Returns whether the plugin took it.
     bool wheelNotches(double notches, bool dryRun = false) {
         if (notches == 0)
             return false;
         // no desktop zoom under the window map (it writes this file while it is up)
         if (access("/tmp/velvet-map-open", F_OK) == 0)
             return false;
-        const bool out = notches > 0;
-        if (!g_zoom.active) {
-            if (!out)
-                return false; // magnifying belongs to Hyprland's own zoom
-            if (cursorZoom() > 1.005F)
-                return false; // shrink the magnified screen first
-            if (dryRun)
-                return true;
-            begin(anchorNow());
-        } else if (g_zoom.target > 0.999F && !out) {
-            return false; // already on the way home: let the wheel magnify after
-        } else if (dryRun) {
+        if (cursorZoom() > 1.005F)
+            return false; // somebody magnified the whole screen: step that down first
+        if (dryRun)
             return true;
-        } else if (!g_zoom.anchored) {
+        const bool out = notches > 0;
+        if (!g_zoom.active)
+            begin(anchorNow(!out));
+        else if (!g_zoom.anchored) {
             // after a fit or on the way home: zoom around the pointer from here
-            anchorAt(anchorNow());
+            anchorAt(anchorNow(!out));
         }
 
         const auto now = Clock::now();
         g_burst        = std::chrono::duration<double>(now - g_lastNotch).count() < 0.14 ? std::min(8, g_burst + 1) : 0;
         g_lastNotch    = now;
         const double accel = 1.0 + 0.9 * std::min(1.0, g_burst / 5.0);
-        float        z     = g_zoom.target * (float)std::pow((double)STEP, -notches * accel);
-        z                  = std::clamp(z, MIN_ZOOM, 1.F);
-        if (z >= 0.995F) {
-            goHome(); // home is 1:1 with no shift, wherever the anchor was
+        const float  from  = g_zoom.target;
+        // just landed on 1:1: a spinning wheel does not run straight past it
+        if (std::abs(from - 1.F) < 0.0005F && now - g_detentAt < std::chrono::milliseconds(450)) {
+            g_lastNotch = now;
+            return true;
+        }
+        float        z     = from * (float)std::pow((double)STEP, -notches * accel);
+        z                  = std::clamp(z, MIN_ZOOM, MAX_ZOOM);
+        // 1:1 is a stop: a turn that would pass it (or come close) lands on it,
+        // gliding home with no shift — the next turn goes on from there
+        if ((from < 0.999F && z >= 0.98F) || (from > 1.001F && z <= 1.02F)) {
+            g_detentAt = now;
+            goHome();
             return true;
         }
         g_zoom.target = z;
@@ -964,7 +982,7 @@ namespace {
         if (g_zoom.anchored && std::abs(g_zoom.a.x - g_zoom.ax.x) < 0.5 && std::abs(g_zoom.a.y - g_zoom.ax.y) < 0.5)
             return g_zoom.a;
         const double k = 1.0 - g_zoom.cur;
-        return k > 0.0005 ? g_zoom.t / k : g_zoom.a;
+        return std::abs(k) > 0.0005 ? g_zoom.t / k : g_zoom.a;
     }
 
     IPC::Socket1::SResponse onCommand(const IPC::Socket1::SRequest& req) {
@@ -977,8 +995,8 @@ namespace {
             double px = 0, py = 0;
             if (!(in >> z >> px >> py))
                 return "usage: velvetzoom set|snap <z> <px> <py>";
-            z = std::clamp(z, 0.05F, 1.F);
-            if (z >= 0.9995F) {
+            z = std::clamp(z, 0.05F, MAX_ZOOM);
+            if (std::abs(z - 1.F) < 0.0005F) {
                 goHome();
                 return "ok";
             }
@@ -1140,7 +1158,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_command   = HyprlandAPI::registerHyprCtlCommand(PHANDLE, cmd);
 
     writeState();
-    return {"velvetzoom", "Zoom the desktop out: windows shrink as textures, the wallpaper stays", "Velvet", "0.5"};
+    return {"velvetzoom", "Zoom the desktop out: windows shrink as textures, the wallpaper stays", "Velvet", "0.6"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
