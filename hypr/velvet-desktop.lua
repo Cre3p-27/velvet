@@ -10,7 +10,8 @@
 --    Super + D                   floating windows ⇄ tiled
 --    Super + Shift + arrows      move the window on the canvas
 --    Super + Ctrl + arrows       jump to the next window in that direction
---    Super + Alt + arrows        swap a tiled window in that direction
+--    Super + Alt + arrows        swap places with the window in that direction
+--    Super + Alt + H J K L       move a tiled window through the layout
 --    Super + Alt + mouse wheel   zoom the desktop out and back
 --    Super + Alt + left click    zoom back to 1:1 (middle click too)
 --    Super + Alt + right click   zoom out until every window shows
@@ -47,8 +48,14 @@ hl.bind(mainMod .. " + D", py("floating_tile_toggle.py"))
 for _, d in ipairs({ "left", "right", "up", "down" }) do
     hl.bind(mainMod .. " + SHIFT + " .. d, py("move_window.py", d), { repeating = true })
     hl.bind(mainMod .. " + CTRL + " .. d, py("navigate_windows.py", d))
-    hl.bind(mainMod .. " + ALT + " .. d, py("move_window_tiled.py", d))
+    -- Hyprland's own swap: the window trades places with its neighbour
+    hl.bind(mainMod .. " + ALT + " .. d, hl.dsp.window.swap({ direction = d }))
 end
+-- the same as a script (floating windows hop a step, tiled ones move in the layout)
+hl.bind(mainMod .. " + ALT + H", py("move_window_tiled.py", "left"))
+hl.bind(mainMod .. " + ALT + L", py("move_window_tiled.py", "right"))
+hl.bind(mainMod .. " + ALT + K", py("move_window_tiled.py", "up"))
+hl.bind(mainMod .. " + ALT + J", py("move_window_tiled.py", "down"))
 
 -- the zoom (the velvetzoom plugin takes the wheel itself once it is loaded;
 -- these binds are its fallback)

@@ -816,6 +816,14 @@ namespace {
             return;
         if (access("/tmp/velvet-map-open", F_OK) == 0)
             return;
+        // Hyprland's own zoom (z > 1) is magnified: that one is not ours. The
+        // key bind runs desktop_zoom.py (reset / fit), which puts the screen
+        // back to 1:1 first — so the click is left alone for it.
+        if (Pointer::mgr()) {
+            const auto mon = monitorAt(pointerPos());
+            if (mon && mon->m_cursorZoom && mon->m_cursorZoom->value() > 1.005F)
+                return;
+        }
         if (e.button == BTN_LEFT)
             goHome();
         else

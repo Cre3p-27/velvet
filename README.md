@@ -481,7 +481,8 @@ view stays where it is and the pointer stops at its edge instead of dragging it 
 wallpaper and the bar stay where they are, down to 10 %. Windows that sit off screen at 1:1 slide into view. Zoomed
 out, everything works as usual: click, type, scroll, `Super`+drag to move and `Super`+right-drag to resize land on
 the window where you see it. `Super+Alt` + right click zooms out just far enough that every window shows;
-`Super+Alt` + left click (or middle click) goes back to 1:1. This needs the small compositor plugin
+`Super+Alt` + left click (or middle click) goes back to 1:1 — from a zoom-out and from a magnified screen alike.
+`Super+Alt` + arrows swap places with the neighbouring window (Hyprland's own swap); `Super+Alt` + `H J K L` move a tiled window through the layout. This needs the small compositor plugin
 in `plugin/velvetzoom/` (`tools/build-zoom-plugin.sh`, built by `install.sh`; rebuild after a Hyprland update).
 Without it the zoom falls back to moving and resizing the windows. `touch /tmp/velvet-zoom-noplugin` forces the fallback.
 
