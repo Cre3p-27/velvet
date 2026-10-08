@@ -8,7 +8,10 @@
 //  camera. Launching sends a planet off with a double shockwave and a
 //  room-wide blink. Navigation snaps with a fighting-game tick; typing
 //  glides. Alt+P pins, Escape clears first and quits second, > runs shell,
-//  = does maths.
+//  = does maths. Alt+1…9 fires a planet by its number.
+//  The dials are the user's (MODULES → PILL LAUNCHER, Config.launcher): how
+//  the planets arrive, drift and lean, the orbit line, the lock-on ring, the
+//  stars, the size, the backdrop, the glow and the launch.
 import qs.config
 import qs.services
 import qs.components
@@ -50,6 +53,18 @@ PanelWindow {
     property bool overOrb: false
     property bool overPill: false
     property real flash: 0
+    property bool altHeld: false
+
+    // ── the user's dials
+    readonly property real spd: Math.max(0.25, Config.launcher.speed || 1)
+    function ms(v: real): int {
+        return Math.max(0, Math.round(v * Config.appearance.animationScale * Appearance.motionK / root.spd));
+    }
+    readonly property real k: Math.max(0.8, Math.min(1.3, Config.launcher.scale || 1))
+    readonly property string ent: root.ms(100) === 0 ? "none" : Config.launcher.orbitEntrance
+    readonly property string fxKind: Config.launcher.launchFx
+    // PLANETS SHOWN: 3 … 8 (the ring has room for eight)
+    readonly property int maxSlots: Math.max(3, Math.min(8, Config.launcher.maxShown))
     // A deterministic star field — same sky every time you open it.
     readonly property var stars: {
         const out = [];
@@ -68,7 +83,7 @@ PanelWindow {
     readonly property real orbC: boxSize / 2   // orbit centre
     readonly property real rx: 340             // ellipse x radius
     readonly property real ry: 215             // ellipse y radius
-    readonly property int slotCount: Math.min(8, root.results.length)
+    readonly property int slotCount: Math.min(root.maxSlots, root.results.length)
     readonly property real step: 360 / Math.max(1, root.slotCount)
     readonly property int selSlot: Math.max(0, root.index - root.winBase)
     // The selected slot's angle in world coordinates.
@@ -108,15 +123,15 @@ PanelWindow {
         ? root.results[Math.max(0, Math.min(root.results.length - 1, root.index))]
         : null
 
-    readonly property real panelW: Math.min(Config.launcher.width, root.width * 0.92)
-    readonly property real orbitScale: Math.min(1, (root.height * 0.86) / 850, (root.panelW * 0.94) / root.boxSize)
+    readonly property real panelW: Math.min(Config.launcher.width * root.k, root.width * 0.92)
+    readonly property real orbitScale: Math.min(root.k, (root.height * 0.86) / 850, (root.panelW * 0.94) / root.boxSize)
 
     // The ring turns the shortest way (a ±360° correction is invisible).
     // One behaviour, two moods — its parameters flip when typing starts,
     // so results glide while navigation snaps.
     Behavior on ringTarget {
         NumberAnimation {
-            duration: root.softSnap ? 300 : 340
+            duration: root.ms(root.softSnap ? 300 : 340)
             easing.type: root.softSnap ? Easing.OutCubic : Easing.OutBack
             easing.overshoot: root.softSnap ? 0 : 1.25
         }
@@ -174,12 +189,19 @@ PanelWindow {
             Sfx.launch();
         else
             Sfx.select();
+        // LAUNCHER → WHEN YOU OPEN SOMETHING: JUST CLOSE fires at once
+        if (root.fxKind === "none" || root.ms(100) === 0) {
+            root.doLaunch();
+            return;
+        }
         root.launchTick += 1;
         // The sun itself fires: a muzzle blink and a soft kick of recoil,
         // exactly on the beat the planet leaves.
-        fieldMuzzle.restart();
-        fieldRecoil.restart();
-        launchTimer.interval = item.kind === "app" ? 340 : 240;
+        if (root.fxKind === "burst") {
+            fieldMuzzle.restart();
+            fieldRecoil.restart();
+        }
+        launchTimer.interval = root.ms(item.kind === "app" ? 340 : 240);
         launchTimer.restart();
     }
 
@@ -217,7 +239,7 @@ PanelWindow {
             return;
         root.softSnap = false;
         root.index = next;
-        const slots = Math.min(8, n);
+        const slots = Math.min(root.maxSlots, n);
         const oldBase = root.winBase;
         if (root.index < root.winBase)
             root.winBase = root.index;
@@ -236,7 +258,10 @@ PanelWindow {
         root.holdUntil = Date.now() + 340 + 2400;
         if (root.winBase !== oldBase) {
             root.dip = 0.85;
-            dipBack.restart();
+            if (root.ms(100) > 0)
+                dipBack.restart();
+            else
+                root.dip = 1;
         }
         const t = Date.now();
         if (t - root.lastTurn > 60) {
@@ -262,7 +287,7 @@ PanelWindow {
         property: "dip"
         from: 0.85
         to: 1
-        duration: 240
+        duration: root.ms(240)
         easing.type: Easing.OutBack
         easing.overshoot: 1.5
     }
@@ -280,6 +305,7 @@ PanelWindow {
     // that flag: panels are loaded on demand (shell.qml, Parked), so the flag is
     // often already true by the time the window exists.
     function present(): void {
+        root.altHeld = false;
         if (Panels.launcher) {
             root.closing = false;
             root.rendered = true;
@@ -329,7 +355,7 @@ PanelWindow {
     Timer {
         id: exitTimer
 
-        interval: Appearance.anim.normal
+        interval: Math.max(root.ms(260), Appearance.anim.normal) + 20
         onTriggered: root.rendered = false
     }
 
@@ -340,17 +366,17 @@ PanelWindow {
 
         interval: 16
         repeat: true
-        running: root.entered
+        running: root.entered && Config.launcher.orbitSpin > 0
         onTriggered: {
-            if (Date.now() >= root.holdUntil)
-                root.idleAngle = (root.idleAngle + 0.07) % 360;
+            if (Date.now() >= root.holdUntil && Config.launcher.orbitSpin > 0)
+                root.idleAngle = (root.idleAngle + 0.07 * Config.launcher.orbitSpin) % 360;
         }
     }
 
     // ------------------------------------------------------------------ scrim
     Rectangle {
         anchors.fill: parent
-        color: Colours.alpha(Colours.paper, 0.82)
+        color: Colours.alpha(Colours.paper, Math.min(0.97, 0.82 * Math.max(0, Config.launcher.dim)))
         opacity: root.entered ? 1 : 0
 
         Behavior on opacity {
@@ -408,7 +434,7 @@ PanelWindow {
         // phase. They slide a little with the ring — parallax is how the
         // eye reads depth without any lines being drawn.
         Repeater {
-            model: root.stars
+            model: Config.launcher.stars ? root.stars : []
 
             Item {
                 id: starHost
@@ -544,7 +570,7 @@ PanelWindow {
 
                         GradientStop {
                             position: 0.0
-                            color: Colours.alpha(Colours.accent, 0.05)
+                            color: Colours.alpha(Colours.accent, 0.05 * Config.launcher.aura / 0.6)
                         }
                         GradientStop {
                             position: 1.0
@@ -572,8 +598,10 @@ PanelWindow {
                 width: 560
                 height: 560
 
+                visible: Config.launcher.aura > 0.01
+
                 SequentialAnimation on scale {
-                    running: root.entered
+                    running: root.entered && corona.visible
                     loops: Animation.Infinite
                     NumberAnimation {
                         from: 1
@@ -604,7 +632,7 @@ PanelWindow {
 
                         GradientStop {
                             position: 0.0
-                            color: Colours.alpha(Colours.accent, 0.11)
+                            color: Colours.alpha(Colours.accent, Math.min(0.3, 0.11 * Config.launcher.aura / 0.6))
                         }
                         GradientStop {
                             position: 1.0
@@ -620,6 +648,127 @@ PanelWindow {
                             Qt.point(0, 560),
                             Qt.point(0, 0)
                         ]
+                    }
+                }
+            }
+
+            // The orbit's own line (LAUNCHER → ORBIT LINE): a faint dotted
+            // ellipse along the planets' path. Drawn once — it never changes
+            // shape, it only grows in with the planets.
+            Shape {
+                id: ring
+
+                property real grow: 0
+
+                anchors.fill: parent
+                visible: Config.launcher.orbitRing && root.slotCount > 0
+                z: -300
+                opacity: 0.9 * ring.grow
+                scale: 0.6 + 0.4 * ring.grow
+                preferredRendererType: Shape.GeometryRenderer
+                layer.enabled: ring.visible
+                layer.samples: 4
+
+                ShapePath {
+                    fillColor: "transparent"
+                    strokeColor: Colours.alpha(Colours.accent, 0.30)
+                    strokeWidth: 1.6
+                    strokeStyle: ShapePath.DashLine
+                    dashPattern: [1.2, 5]
+                    capStyle: ShapePath.RoundCap
+
+                    PathAngleArc {
+                        centerX: root.orbC
+                        centerY: root.orbC
+                        radiusX: root.rx
+                        radiusY: root.ry
+                        startAngle: 0
+                        sweepAngle: 360
+                    }
+                }
+
+                NumberAnimation {
+                    id: ringIn
+
+                    target: ring
+                    property: "grow"
+                    from: 0
+                    to: 1
+                    duration: root.ms(520)
+                    easing.type: Easing.OutCubic
+                }
+                Connections {
+                    target: root
+
+                    function onEnteredChanged(): void {
+                        if (root.entered) {
+                            if (root.ms(100) > 0)
+                                ringIn.restart();
+                            else
+                                ring.grow = 1;
+                        }
+                    }
+                    function onClosingChanged(): void {
+                        if (root.closing)
+                            ring.grow = 0;
+                    }
+                }
+            }
+
+            // The lock-on ring (LAUNCHER → LOCK-ON RING): four arcs turning
+            // slowly round the chosen planet; it snaps tight when the
+            // choice jumps.
+            Item {
+                id: reticle
+
+                property real punch: 1
+
+                x: root.orbC + Math.cos(root.selAng) * root.rx - 70
+                y: root.orbC + Math.sin(root.selAng) * root.ry - 70
+                width: 140
+                height: 140
+                z: 400
+                visible: Config.launcher.reticle && root.slotCount > 0 && root.entered && !root.launching
+                scale: reticle.punch
+
+                SequentialAnimation {
+                    id: reticlePunch
+
+                    NumberAnimation { target: reticle; property: "punch"; from: 1.35; to: 1; duration: root.ms(300); easing.type: Easing.OutBack; easing.overshoot: 1.8 }
+                }
+                Connections {
+                    target: root
+
+                    function onIndexChanged(): void {
+                        if (root.ms(100) > 0 && root.entered)
+                            reticlePunch.restart();
+                    }
+                }
+
+                Shape {
+                    anchors.fill: parent
+                    preferredRendererType: Shape.GeometryRenderer
+                    layer.enabled: reticle.visible
+                    layer.samples: 4
+
+                    RotationAnimation on rotation {
+                        running: reticle.visible && root.ms(100) > 0
+                        loops: Animation.Infinite
+                        from: 0
+                        to: 360
+                        duration: 9000
+                    }
+
+                    ShapePath {
+                        fillColor: "transparent"
+                        strokeColor: Colours.alpha(Colours.accent, 0.85)
+                        strokeWidth: 2.2
+                        capStyle: ShapePath.RoundCap
+
+                        PathAngleArc { centerX: 70; centerY: 70; radiusX: 62; radiusY: 62; startAngle: 10; sweepAngle: 50; moveToStart: true }
+                        PathAngleArc { centerX: 70; centerY: 70; radiusX: 62; radiusY: 62; startAngle: 100; sweepAngle: 50; moveToStart: true }
+                        PathAngleArc { centerX: 70; centerY: 70; radiusX: 62; radiusY: 62; startAngle: 190; sweepAngle: 50; moveToStart: true }
+                        PathAngleArc { centerX: 70; centerY: 70; radiusX: 62; radiusY: 62; startAngle: 280; sweepAngle: 50; moveToStart: true }
                     }
                 }
             }
@@ -731,14 +880,20 @@ PanelWindow {
                         }
                     }
 
+                    // PLANETS ARRIVING: BLOOM grows out of the sun, SPIRAL
+                    // swings out along a turn, DROP falls in from above
+                    readonly property real spiralOff: root.ent === "spiral" ? (1 - Math.min(1, orb.born)) * 2.6 : 0
+                    readonly property real reach: root.ent === "drop" ? 1 : orb.born
+                    readonly property real dropOff: root.ent === "drop" ? (1 - Math.min(1, orb.born)) * -340 : 0
+
                     width: 92
                     height: 92
-                    x: root.orbC + Math.cos(orb.worldAng) * (root.rx * orb.born + 260 * orb.launchOut) - 46
-                    y: root.orbC + Math.sin(orb.worldAng) * (root.ry * orb.born + 260 * orb.launchOut) - 46
+                    x: root.orbC + Math.cos(orb.worldAng + orb.spiralOff) * (root.rx * orb.reach + 260 * orb.launchOut) - 46
+                    y: root.orbC + Math.sin(orb.worldAng + orb.spiralOff) * (root.ry * orb.reach + 260 * orb.launchOut) - 46 + orb.dropOff
                     // Depth sorts the stack: near planets render in front
                     // of far ones, the way the eye expects.
                     z: Math.round(orb.depth * 100)
-                    scale: orb.born * orb.dScale * orb.selBoost * root.dip * (1 + 0.05 * orb.hoverBoost) * (1 + 0.85 * orb.launchOff)
+                    scale: (root.ent === "drop" ? 0.7 + 0.3 * orb.born : orb.born) * orb.dScale * orb.selBoost * root.dip * (1 + 0.05 * orb.hoverBoost) * (1 + (root.fxKind === "zoom" ? 2.2 : 0.85) * orb.launchOff)
                     opacity: orb.born * (1 - orb.launchOff)
                     visible: orb.app !== null
 
@@ -775,8 +930,13 @@ PanelWindow {
                     Timer {
                         id: birthTimer
 
-                        interval: orb.index * 45
-                        onTriggered: birthAnim.restart()
+                        interval: root.ms(orb.index * (root.ent === "spiral" ? 60 : 45))
+                        onTriggered: {
+                            if (root.ent === "none")
+                                orb.born = 1;
+                            else
+                                birthAnim.restart();
+                        }
                     }
 
                     NumberAnimation {
@@ -786,23 +946,23 @@ PanelWindow {
                         property: "born"
                         from: 0
                         to: 1
-                        duration: 400
+                        duration: root.ms(root.ent === "spiral" ? 620 : (root.ent === "drop" ? 520 : 400))
                         easing.type: Easing.OutBack
-                        easing.overshoot: 1.3
+                        easing.overshoot: root.ent === "drop" ? 1.6 : 1.3
                     }
 
                     SequentialAnimation {
                         id: exitAnim
 
                         PauseAnimation {
-                            duration: Math.max(0, root.slotCount - 1 - orb.index) * 22
+                            duration: root.ms(Math.max(0, root.slotCount - 1 - orb.index) * 22)
                         }
                         NumberAnimation {
                             target: orb
                             property: "born"
                             from: orb.born
                             to: 0
-                            duration: 160
+                            duration: root.ms(160)
                             easing.type: Easing.OutCubic
                         }
                     }
@@ -815,15 +975,16 @@ PanelWindow {
                             property: "launchOff"
                             from: 0
                             to: 1
-                            duration: 320
+                            duration: root.ms(320)
                             easing.type: Easing.OutQuad
                         }
+                        // ZOOM flies the planet at you instead of off the ring
                         NumberAnimation {
                             target: orb
                             property: "launchOut"
                             from: 0
-                            to: 1
-                            duration: 320
+                            to: root.fxKind === "zoom" ? 0 : 1
+                            duration: root.ms(320)
                             easing.type: Easing.OutExpo
                         }
                     }
@@ -866,7 +1027,7 @@ PanelWindow {
                             if (!birthTimer)
                                 return;
                             if (root.entered) {
-                                birthTimer.interval = orb.index * 45;
+                                birthTimer.interval = root.ms(orb.index * (root.ent === "spiral" ? 60 : 45));
                                 birthTimer.start();
                             }
                         }
@@ -907,6 +1068,9 @@ PanelWindow {
                             radius: width / 2
                             antialiasing: true
                             clip: true
+                            // the chosen planet wears a thin rim of light
+                            border.width: orb.sel ? 2 : 0
+                            border.color: Colours.alpha(Colours.accent, 0.75)
                             gradient: Gradient {
                                 GradientStop {
                                     position: 0.0
@@ -998,6 +1162,43 @@ PanelWindow {
                         }
                     }
 
+                    // Alt held: the planet's quick key (LAUNCHER → QUICK KEYS)
+                    Rectangle {
+                        id: orbBadge
+
+                        readonly property bool shown: root.altHeld && orb.app !== null && orb.index < 9
+
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.margins: -2
+                        width: 26
+                        height: 26
+                        radius: 13
+                        z: 3
+                        color: orb.sel ? Colours.accent : Colours.paper
+                        border.width: 1.5
+                        border.color: Colours.accent
+                        opacity: orbBadge.shown ? 1 : 0
+                        scale: orbBadge.shown ? 1 : 0.4
+                        visible: opacity > 0.01
+
+                        Behavior on opacity {
+                            NumberAnimation { duration: root.ms(140) }
+                        }
+                        Behavior on scale {
+                            NumberAnimation { duration: root.ms(240); easing.type: Easing.OutBack; easing.overshoot: 2.4 }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: String(orb.index + 1)
+                            color: orb.sel ? Colours.on(Colours.accent) : Colours.accent
+                            font.family: Appearance.fontFamily.mono
+                            font.pixelSize: 13
+                            font.bold: true
+                        }
+                    }
+
                     // The planet's name rides beneath it — it speaks only
                     // when the planet comes around to the front.
                     Text {
@@ -1009,7 +1210,9 @@ PanelWindow {
                         property real labelSp: orb.sel ? 0.9 : 0.4
                         Behavior on labelSp { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
                         visible: orb.app !== null
-                        text: orb.app ? orb.app.name : ""
+                        // the typed letters lit (LAUNCHER → LIGHT THE TYPED LETTERS)
+                        text: orb.app ? Apps.marked(orb.app.name, input.text, String(Colours.accent), false) : ""
+                        textFormat: Text.StyledText
                         color: orb.sel ? Colours.ink : Colours.alpha(Colours.ink, 0.62)
                         opacity: Math.max(orb.dAlpha, orb.hoverBoost * 0.85)
                         font.family: Appearance.fontFamily.body
@@ -1057,7 +1260,7 @@ PanelWindow {
                         property: "scale"
                         from: 0.5
                         to: 2.4
-                        duration: 460
+                        duration: root.ms(460)
                         easing.type: Easing.OutCubic
                     }
                     NumberAnimation {
@@ -1065,7 +1268,7 @@ PanelWindow {
                         property: "opacity"
                         from: 0.5
                         to: 0
-                        duration: 460
+                        duration: root.ms(460)
                         easing.type: Easing.OutQuad
                     }
                 }
@@ -1074,7 +1277,7 @@ PanelWindow {
                     target: root
 
                     function onLaunchTickChanged(): void {
-                        if (root.launchTick > 0)
+                        if (root.launchTick > 0 && root.fxKind === "burst")
                             shockAnim.restart();
                     }
                 }
@@ -1106,7 +1309,7 @@ PanelWindow {
                         property: "scale"
                         from: 0.3
                         to: 1.6
-                        duration: 320
+                        duration: root.ms(320)
                         easing.type: Easing.OutCubic
                     }
                     NumberAnimation {
@@ -1114,7 +1317,7 @@ PanelWindow {
                         property: "opacity"
                         from: 0.7
                         to: 0
-                        duration: 320
+                        duration: root.ms(320)
                         easing.type: Easing.OutQuad
                     }
                 }
@@ -1123,7 +1326,7 @@ PanelWindow {
                     target: root
 
                     function onLaunchTickChanged(): void {
-                        if (root.launchTick > 0) {
+                        if (root.launchTick > 0 && root.fxKind === "burst") {
                             shock2Anim.restart();
                             flashAnim.restart();
                         }
@@ -1467,9 +1670,32 @@ PanelWindow {
                                 }
                             }
 
+                            Keys.onReleased: event => {
+                                if (event.key === Qt.Key_Alt || event.key === Qt.Key_Meta || !(event.modifiers & Qt.AltModifier))
+                                    root.altHeld = false;
+                            }
                             Keys.onPressed: event => {
                                 const ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
                                 const t = event.text;
+
+                                // hold Alt: the planets show their numbers;
+                                // Alt+1 … Alt+9 fires that one
+                                if (event.key === Qt.Key_Alt) {
+                                    root.altHeld = Config.launcher.quickKeys;
+                                    return;
+                                }
+                                if ((event.modifiers & Qt.AltModifier) && Config.launcher.quickKeys && event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
+                                    const n = event.key - Qt.Key_1;
+                                    const it = n < root.slotCount ? root.orbitList[n] : null;
+                                    if (it) {
+                                        root.gotoIndex(root.winBase + n);
+                                        root.run(it);
+                                    } else {
+                                        Sfx.back();
+                                    }
+                                    event.accepted = true;
+                                    return;
+                                }
 
                                 // Typing ticks like a keypad; backspace
                                 // clicks back. Feel, not noise.
@@ -1634,7 +1860,7 @@ PanelWindow {
 
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
-                            visible: root.selected?.sub !== undefined && root.selected?.sub !== ""
+                            visible: Config.launcher.subtitles && root.selected?.sub !== undefined && root.selected?.sub !== ""
                             text: root.selected ? root.selected.sub : ""
                             color: Colours.alpha(Colours.inkDim, 0.9)
                             font.family: Appearance.fontFamily.body
@@ -1731,8 +1957,8 @@ PanelWindow {
                 root.mouseY = mouse.y;
                 const nx = Math.max(-1, Math.min(1, (mouse.x / Math.max(1, root.panelW) - 0.5) * 2));
                 const ny = Math.max(-1, Math.min(1, (mouse.y / Math.max(1, panel.height) - 0.5) * 2));
-                root.tiltX = nx * 2.4;
-                root.tiltY = -ny * 1.6;
+                root.tiltX = nx * 2.4 * Config.launcher.orbitTilt;
+                root.tiltY = -ny * 1.6 * Config.launcher.orbitTilt;
                 // The text field keeps its beam cursor.
                 const pillW = Math.min(520, root.panelW - 40) * root.orbitScale / 2;
                 const pillH = 38 * root.orbitScale;
@@ -1753,6 +1979,28 @@ PanelWindow {
                     root.moveCursor(-1);
                 else
                     root.moveCursor(1);
+            }
+        }
+    }
+
+    // The key line under the orbit (LAUNCHER → KEY HINTS): it comes in a
+    // moment after opening and steps aside once you type.
+    Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: Math.min(root.height - 40, panel.y + panel.height + 6)
+        visible: Config.launcher.hints
+        text: "↑ ↓  ORBIT   ·   ⏎  LAUNCH   ·   ALT+P  PIN" + (Config.launcher.quickKeys ? "   ·   ALT+1…9  QUICK" : "") + "   ·   =  MATHS   ·   " + Config.launcher.actionPrefix + "  COMMAND   ·   ESC  BACK"
+        color: Colours.alpha(Colours.inkDim, 0.7)
+        font.family: Appearance.fontFamily.body
+        font.pixelSize: 11
+        font.weight: Font.DemiBold
+        font.letterSpacing: 1.4
+        opacity: root.entered && !root.typing && !root.launching ? 1 : 0
+
+        Behavior on opacity {
+            SequentialAnimation {
+                PauseAnimation { duration: root.entered && !root.typing ? root.ms(700) : 0 }
+                NumberAnimation { duration: root.ms(260) }
             }
         }
     }

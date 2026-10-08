@@ -602,6 +602,30 @@ Singleton {
                 property bool searchSettings: true
                 property string actionPrefix: ">"
                 property real width: 720
+                // ── how it looks and moves (MODULES → PILL LAUNCHER)
+                // every look's launcher, the orbit included
+                property real scale: 1             // SIZE, 0.8–1.3
+                property real speed: 1             // ANIMATION SPEED: 0.5 slow … 2 fast
+                property real dim: 1               // BACKDROP: × the look's own darkening
+                property real aura: 0.6            // the soft accent light behind it
+                property bool highlight: true      // the typed letters lit in each name
+                property bool quickKeys: true      // Alt+1…9 opens the n-th result
+                property bool subtitles: true      // the line under/after a name
+                property bool hints: true          // the key line at the foot
+                property string launchFx: "burst"  // burst | zoom | none
+                // the list launchers of the looks
+                property string entrance: "auto"   // auto | rise | drop | zoom | swing | fade | none
+                property string cascade: "slide"   // slide | pop | fade | none (results arriving)
+                property string motion: "spring"   // spring | smooth | snap (the selection moving)
+                property string position: "auto"   // auto | top | centre
+                property bool preview: true        // the detail card beside the list
+                // Velvet's orbit
+                property string orbitEntrance: "bloom" // bloom | spiral | drop | none
+                property real orbitSpin: 1         // idle drift, 0 = still
+                property real orbitTilt: 1         // the lean toward the pointer
+                property bool orbitRing: true      // the orbit's own line
+                property bool reticle: true        // the lock-on ring round the chosen planet
+                property bool stars: true          // the sky
             }
 
             // ============================================================ NOTIFS

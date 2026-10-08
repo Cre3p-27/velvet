@@ -114,6 +114,52 @@ Singleton {
         return s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
     }
 
+    // A result's name as StyledText with the letters you typed lit — the run
+    // of them when it is in there in one piece, else the letters one by one
+    // in order (how fuzzy found it). LAUNCHER → LIGHT THE TYPED LETTERS.
+    function marked(name: string, query: string, colour: string, underline: bool): string {
+        const n = String(name ?? "");
+        const esc = c => c === "&" ? "&amp;" : (c === "<" ? "&lt;" : (c === ">" ? "&gt;" : c));
+        const plain = () => n.split("").map(esc).join("");
+        const q = String(query ?? "").trim().toLowerCase();
+        if (!Config.launcher.highlight || q === "" || q.startsWith(Config.launcher.actionPrefix) || q.startsWith("="))
+            return plain();
+        const low = n.toLowerCase();
+        const hit = [];
+        const at = low.indexOf(q);
+        if (at >= 0) {
+            for (let i = 0; i < q.length; i++)
+                hit[at + i] = true;
+        } else {
+            let j = 0;
+            for (let i = 0; i < n.length && j < q.length; i++)
+                if (q[j] === " ") {
+                    j++;
+                    i--;
+                } else if (low[i] === q[j]) {
+                    hit[i] = true;
+                    j++;
+                }
+            if (j < q.length)
+                return plain();
+        }
+        const open = underline ? "<u>" : `<font color="${colour}"><b>`;
+        const close = underline ? "</u>" : "</b></font>";
+        let out = "";
+        let on = false;
+        for (let i = 0; i < n.length; i++) {
+            if (hit[i] && !on) {
+                out += open;
+                on = true;
+            } else if (!hit[i] && on) {
+                out += close;
+                on = false;
+            }
+            out += esc(n[i]);
+        }
+        return on ? out + close : out;
+    }
+
     function search(query: string): var {
         const q = query.trim();
 

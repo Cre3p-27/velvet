@@ -850,7 +850,7 @@ Singleton {
         {
             kind: "page",
             name: "PILL LAUNCHER",
-            help: "The orbital app launcher (Super+Space): type to find apps, do maths, run commands or find shell settings.",
+            help: "The app launcher (Super+Space): type to find apps, do maths, run commands or find shell settings. Below: how it looks and moves, on every look.",
             sub: "TYPE TO RUN  ·  APPS · MATHS · COMMANDS",
             icon: "search",
             items: [
@@ -924,7 +924,7 @@ Singleton {
                     sub: "HOW WIDE THE LAUNCHER OPENS",
                     min: 480, max: 1100, step: 20, fmt: "int", unit: "px"
                 }
-            ]
+            ].concat(root.launcherRows)
         },
         {
             kind: "page",
@@ -1738,6 +1738,83 @@ Singleton {
         }
         return out;
     }
+
+    // MODULES → PILL LAUNCHER and SHELL → LAUNCHER: how every launcher looks
+    // and moves (Launcher.qml, the orbit, and LookLauncher.qml, the looks')
+    readonly property var launcherRows: [
+        { kind: "info", name: "LOOK", sub: "SIZE · BACKDROP · LIGHT · WHAT EACH ROW SHOWS", help: "These work on every look's launcher — Velvet's orbit and the list launchers of the other looks." },
+        { kind: "slider", key: "launcher.scale", name: "SIZE", help: "How big the whole launcher is drawn. The orbit still never grows past the screen.", sub: "SMALLER OR BIGGER", min: 0.8, max: 1.3, step: 0.05, fmt: "percent" },
+        { kind: "slider", key: "launcher.dim", name: "BACKDROP", help: "How much the desktop behind the launcher is darkened. 0 leaves it as it is; 100 % is the look's own amount.", sub: "HOW DARK THE ROOM GOES", min: 0, max: 2, step: 0.05, fmt: "percent" },
+        { kind: "slider", key: "launcher.aura", name: "GLOW", help: "The soft light in the accent colour behind the launcher. It breathes slowly and flares when something opens. 0 switches it off.", sub: "ACCENT LIGHT BEHIND IT", min: 0, max: 1, step: 0.05, fmt: "percent" },
+        { kind: "toggle", key: "launcher.highlight", name: "LIGHT THE TYPED LETTERS", help: "The letters you typed light up in every result, so you see why it was found.", sub: "\"FRFX\" LIGHTS F·R·F·X IN FIREFOX" },
+        { kind: "toggle", key: "launcher.subtitles", name: "DESCRIPTIONS", help: "The short description next to or under each name (\"Web Browser\").", sub: "A LINE ABOUT EACH RESULT" },
+        { kind: "toggle", key: "launcher.preview", name: "DETAIL CARD", help: "A card beside the list with the chosen result big: its icon, name, description and what Enter will do. Not on the terminal line and the poster, which have no room for it.", sub: "THE CHOSEN RESULT, BIG, BESIDE THE LIST" },
+        { kind: "toggle", key: "launcher.quickKeys", name: "QUICK KEYS", help: "Hold Alt and the first nine results show a number; Alt+1 … Alt+9 opens that one straight away.", sub: "ALT+1 … ALT+9 OPENS A RESULT" },
+        { kind: "toggle", key: "launcher.hints", name: "KEY HINTS", help: "The line at the foot that says which keys do what.", sub: "THE LINE AT THE FOOT" },
+        {
+            kind: "choice", key: "launcher.position", name: "POSITION", help: "Where the list launchers open. THE LOOK'S OWN keeps each look's place (the start menu at the bottom, the terminal line at the top).", sub: "WHERE IT OPENS",
+            options: [
+                { value: "auto", label: "THE LOOK'S OWN" },
+                { value: "top", label: "HIGH" },
+                { value: "centre", label: "MIDDLE" }
+            ]
+        },
+        { kind: "info", name: "MOTION", sub: "OPENING · RESULTS · SELECTION · LAUNCH", help: "How the launcher moves. ANIMATION SPEED works on all of it, and the system-wide animation speed still applies on top." },
+        { kind: "slider", key: "launcher.speed", name: "ANIMATION SPEED", help: "Faster or slower launcher animations. 2× is twice as fast.", sub: "SLOWER · FASTER", min: 0.5, max: 2, step: 0.1, fmt: "float1", unit: "×" },
+        {
+            kind: "choice", key: "launcher.entrance", name: "OPENING", help: "How the list launchers come in. THE LOOK'S OWN: the start menu rises, the terminal line drops, the arcade menu bounces in, the others grow out of the middle.", sub: "HOW IT COMES IN",
+            options: [
+                { value: "auto", label: "THE LOOK'S OWN" },
+                { value: "rise", label: "RISE" },
+                { value: "drop", label: "DROP" },
+                { value: "zoom", label: "ZOOM" },
+                { value: "swing", label: "SWING" },
+                { value: "fade", label: "FADE" },
+                { value: "none", label: "INSTANT" }
+            ]
+        },
+        {
+            kind: "choice", key: "launcher.cascade", name: "RESULTS ARRIVING", help: "How the results come in when it opens and while you type: one after another sliding in, popping up, fading in, or all at once.", sub: "ONE AFTER ANOTHER OR ALL AT ONCE",
+            options: [
+                { value: "slide", label: "SLIDE IN" },
+                { value: "pop", label: "POP" },
+                { value: "fade", label: "FADE" },
+                { value: "none", label: "AT ONCE" }
+            ]
+        },
+        {
+            kind: "choice", key: "launcher.motion", name: "SELECTION", help: "How the highlight follows you from row to row: with a little spring, smoothly, or jumping.", sub: "HOW THE HIGHLIGHT MOVES",
+            options: [
+                { value: "spring", label: "SPRING" },
+                { value: "smooth", label: "SMOOTH" },
+                { value: "snap", label: "JUMP" }
+            ]
+        },
+        {
+            kind: "choice", key: "launcher.launchFx", name: "WHEN YOU OPEN SOMETHING", help: "What the launcher does when you start a result: a burst of light from it, a zoom toward you, or simply closing.", sub: "THE LAUNCH EFFECT",
+            options: [
+                { value: "burst", label: "BURST" },
+                { value: "zoom", label: "ZOOM" },
+                { value: "none", label: "JUST CLOSE" }
+            ]
+        },
+        { kind: "info", name: "VELVET ORBIT", sub: "ONLY ON VELVET'S OWN LAUNCHER", help: "The orbit is Velvet's launcher: the results circle the search field like planets. These change only the orbit." },
+        {
+            kind: "choice", key: "launcher.orbitEntrance", name: "PLANETS ARRIVING", help: "How the planets come out when the orbit opens: blooming out of the search field, spiralling out, dropping in from above, or simply there.", sub: "HOW THE ORBIT OPENS",
+            options: [
+                { value: "bloom", label: "BLOOM" },
+                { value: "spiral", label: "SPIRAL" },
+                { value: "drop", label: "DROP" },
+                { value: "none", label: "INSTANT" }
+            ]
+        },
+        { kind: "slider", key: "launcher.orbitSpin", name: "DRIFT", help: "How fast the planets circle while you do nothing. 0 holds them still.", sub: "THE SLOW CIRCLING", min: 0, max: 3, step: 0.1, fmt: "float1", unit: "×" },
+        { kind: "slider", key: "launcher.orbitTilt", name: "LEAN", help: "How far the orbit leans toward the mouse, like a camera in a game. 0 keeps it flat.", sub: "TILTS TOWARD THE POINTER", min: 0, max: 2.5, step: 0.1, fmt: "float1", unit: "×" },
+        { kind: "toggle", key: "launcher.orbitRing", name: "ORBIT LINE", help: "A faint dotted line along the path the planets travel.", sub: "THE PATH THE PLANETS TAKE" },
+        { kind: "toggle", key: "launcher.reticle", name: "LOCK-ON RING", help: "A slowly turning ring round the chosen planet.", sub: "MARKS THE CHOSEN PLANET" },
+        { kind: "toggle", key: "launcher.stars", name: "STARS", help: "The slow twinkling stars behind the orbit.", sub: "THE SKY BEHIND IT" },
+        { kind: "action", fn: "resetLauncherLook", name: "BACK TO DEFAULTS", help: "Puts every look and motion setting above back as designed. What the launcher searches is left alone.", sub: "LOOK AND MOTION AS DESIGNED" }
+    ]
 
     // A row may carry `when: { key, is | in | not }`: it is there only while that
     // setting holds that value (the GLASS rows of THIS LOOK on the glass look).
@@ -3817,8 +3894,8 @@ Singleton {
         {
             kind: "page",
             name: "LAUNCHER",
-            help: "How the launcher (Super+Space) searches.",
-            sub: "APP SEARCH BEHAVIOUR",
+            help: "How the launcher (Super+Space) searches, looks and moves.",
+            sub: "SEARCH · LOOK · MOTION",
             items: [
                 {
                     kind: "slider",
@@ -3871,7 +3948,7 @@ Singleton {
                     fmt: "int",
                     unit: "px"
                 }
-            ]
+            ].concat(root.launcherRows)
         },
         {
             kind: "page",

@@ -12,13 +12,18 @@
 //    raycast    CLEAN · MINIMAL · FLAT · NEUMORPH · CLAY, each its own way
 //    start      WINDOWS       the start menu of the edition (95 · XP · 7 · 10 · 11)
 //  Same apps, maths (=) and commands (>) as the orbit; same keys: ↑ ↓ / Tab,
-//  Ctrl+J/K, Enter, Alt+P pins, Esc clears first and closes second.
+//  Ctrl+J/K, Enter, Alt+P pins, Alt+1…9 opens the n-th row, Esc clears first
+//  and closes second.
+//  How it looks and moves is the user's (MODULES → PILL LAUNCHER): size,
+//  backdrop, glow, the detail card, the opening, the results cascading in,
+//  the selection's spring, the launch burst — all from Config.launcher.*.
 import qs.config
 import qs.services
 import qs.components
 import Quickshell
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Shapes
 
 PanelWindow {
     id: root
@@ -26,6 +31,41 @@ PanelWindow {
     property bool rendered: false
     property bool entered: false
     property int index: 0
+    property bool altHeld: false
+    property bool launching: false
+    property real openedAt: 0
+
+    // ── the user's dials (Config.launcher)
+    readonly property real spd: Math.max(0.25, Config.launcher.speed || 1)
+    // a duration in ms through the launcher's own speed and the system's
+    function ms(v: real): int {
+        return Math.max(0, Math.round(v * Config.appearance.animationScale * Appearance.motionK / root.spd));
+    }
+    readonly property real k: Math.max(0.8, Math.min(1.3, Config.launcher.scale || 1))
+    readonly property string entranceKind: Config.launcher.entrance !== "auto" ? Config.launcher.entrance : (({
+                start: "rise",
+                prompt: "drop",
+                arcade: "bounce",
+                spotlight: "zoom",
+                raycast: "zoom",
+                poster: "swing"
+            })[root.style] ?? "rise")
+    // the look's own share of the glow — none on the paper looks and old Windows
+    readonly property real auraK: Math.max(0, Config.launcher.aura) * (({
+                prompt: 0.5,
+                arcade: 1,
+                hud: 1,
+                index: 0,
+                spotlight: 1,
+                grimoire: 0.7,
+                poster: 0,
+                raycast: root.fl === "minimal" || root.fl === "flat" ? 0.35 : 0.8,
+                start: root.winOld ? 0 : 0.6
+            })[root.style] ?? 0.6)
+    // the selection is a solid block on these, so lit letters are underlined
+    readonly property bool solidSel: root.style === "prompt" || root.style === "poster" || (root.style === "raycast" && root.fl === "flat") || (root.style === "start" && (root.wv === "95" || root.wv === "xp"))
+    // the first visible row: Alt+1 is that one
+    readonly property int topIndex: Math.max(0, Math.round(list.contentY / Math.max(1, root.rowH)))
 
     readonly property string skin: Appearance.skin
     readonly property string fl: Appearance.flavour
@@ -44,7 +84,7 @@ PanelWindow {
     readonly property real sw: root.width
     readonly property real sh: root.height
     readonly property bool winOld: root.wv === "95" || root.wv === "xp" || root.wv === "7"
-    readonly property real panelW: ({
+    readonly property real baseW: ({
             prompt: root.sw,
             arcade: 660,
             hud: 760,
@@ -55,6 +95,10 @@ PanelWindow {
             raycast: root.fl === "minimal" ? 700 : 720,
             start: root.winOld ? 440 : 640
         })[root.style] ?? 720
+    // the detail card beside the list (LAUNCHER → DETAIL CARD)
+    readonly property real previewW: 300
+    readonly property bool hasPreview: Config.launcher.preview && ["prompt", "poster"].indexOf(root.style) < 0 && !(root.style === "start" && root.winOld) && (root.baseW + root.previewW + 12) * root.k <= root.sw - 40
+    readonly property real panelW: root.style === "prompt" ? root.sw / root.k : root.baseW + (root.hasPreview ? root.previewW + 12 : 0)
     readonly property int rows: root.style === "prompt" ? 9 : (root.style === "poster" ? 6 : (root.style === "start" ? 9 : 8))
     readonly property real rowH: ({
             prompt: 28,
@@ -89,11 +133,17 @@ PanelWindow {
             raycast: 60,
             start: 44
         })[root.style] ?? 56
-    readonly property real footH: root.style === "prompt" || root.style === "poster" ? 0 : 34
+    readonly property real footH: root.style === "prompt" || root.style === "poster" || !Config.launcher.hints ? 0 : 34
     readonly property real listH: Math.min(root.rows, Math.max(1, root.results.length)) * root.rowH
-    readonly property real panelH: root.headH + root.fieldH + 10 + root.listH + root.footH + (root.style === "prompt" ? 0 : 18)
+    readonly property real bodyH: root.hasPreview ? Math.max(root.listH, 264) : root.listH
+    readonly property real panelH: root.headH + root.fieldH + 10 + root.bodyH + root.footH + (root.style === "prompt" ? 0 : 18)
     readonly property real panelX: root.style === "start" ? (root.wv === "11" ? (root.sw - root.panelW) / 2 : 8) : (root.sw - root.panelW) / 2
     readonly property real panelY: {
+        // LAUNCHER → POSITION (the terminal line and the start menu keep their edge)
+        if (Config.launcher.position === "top" && root.style !== "prompt" && root.style !== "start")
+            return root.sh * 0.12;
+        if (Config.launcher.position === "centre" && root.style !== "prompt" && root.style !== "start")
+            return (root.sh - root.panelH * root.k) / 2;
         switch (root.style) {
         case "prompt":
             return 0;
@@ -105,7 +155,7 @@ PanelWindow {
         case "start":
             return root.sh - root.panelH - (root.winOld ? 44 : 64);
         default:
-            return (root.sh - root.panelH) / 2;
+            return (root.sh - root.panelH * root.k) / 2;
         }
     }
 
@@ -171,13 +221,16 @@ PanelWindow {
     // ── open, close, run
     function present(): void {
         if (Panels.launcher) {
+            root.launching = false;
+            root.altHeld = false;
             root.rendered = true;
             enterTimer.restart();
             Sfx.open();
         } else {
-            if (root.entered)
+            if (root.entered && !root.launching)
                 Sfx.close();
             root.entered = false;
+            root.altHeld = false;
             exitTimer.restart();
         }
     }
@@ -190,15 +243,39 @@ PanelWindow {
         Sfx.cursor();
     }
     function run(it: var): void {
-        if (!it)
+        if (!it || root.launching) {
+            if (!it)
+                root.nope();
             return;
+        }
         if (it.kind === "app")
             Sfx.launch();
         else
             Sfx.select();
         Apps.launch(it);
-        if (it.kind !== "setting")
+        // settings open their own window, which already closed the panels
+        if (it.kind === "setting")
+            return;
+        // the app starts at once; the launcher plays its goodbye on top
+        // (LAUNCHER → WHEN YOU OPEN SOMETHING) and closes a beat later
+        if (Config.launcher.launchFx === "none" || root.ms(100) === 0) {
             Panels.closeAll();
+            return;
+        }
+        root.launching = true;
+        launchFx.restart();
+        closeAfterFx.interval = root.ms(Config.launcher.launchFx === "zoom" ? 120 : 190);
+        closeAfterFx.restart();
+    }
+    // Enter on nothing, Alt+7 with six rows: the field shakes its head
+    function nope(): void {
+        Sfx.back();
+        shake.restart();
+    }
+    Timer {
+        id: closeAfterFx
+
+        onTriggered: Panels.closeAll()
     }
 
     Connections {
@@ -219,6 +296,7 @@ PanelWindow {
 
         interval: 1
         onTriggered: {
+            root.openedAt = Date.now();
             root.entered = true;
             input.text = "";
             root.index = 0;
@@ -228,7 +306,7 @@ PanelWindow {
     Timer {
         id: exitTimer
 
-        interval: 200
+        interval: root.ms(240) + 20
         onTriggered: root.rendered = false
     }
 
@@ -248,19 +326,21 @@ PanelWindow {
         right: true
     }
 
-    // ── the scrim
+    // ── the scrim (LAUNCHER → BACKDROP scales the look's own darkening)
     Rectangle {
-        anchors.fill: parent
-        color: ({
+        readonly property color own: ({
                 prompt: Qt.rgba(0, 0, 0, 0.35),
                 poster: Colours.alpha(Colours.paper, 0.94),
                 start: Qt.rgba(0, 0, 0, 0.12),
                 spotlight: Qt.rgba(0, 0, 0, 0.28)
             })[root.style] ?? Colours.alpha(Colours.paper, root.style === "raycast" && root.fl === "minimal" ? 0.9 : 0.6)
+
+        anchors.fill: parent
+        color: Qt.rgba(own.r, own.g, own.b, Math.min(0.97, own.a * Math.max(0, Config.launcher.dim)))
         opacity: root.entered ? 1 : 0
 
         Behavior on opacity {
-            NumberAnimation { duration: 160 }
+            NumberAnimation { duration: root.entered ? root.ms(200) : root.ms(240) }
         }
         MouseArea {
             anchors.fill: parent
@@ -272,25 +352,147 @@ PanelWindow {
     Item {
         id: panel
 
+        // where it is away from: the opening (LAUNCHER → OPENING) played back
+        readonly property string ek: root.entranceKind
+        readonly property real awayY: ({
+                rise: 46,
+                drop: root.style === "prompt" ? -root.panelH : -46,
+                bounce: -60,
+                swing: -14
+            })[ek] ?? 0
+        // the launch: ZOOM grows toward you, BURST swells a touch
+        property real fx: 0
+
         x: root.panelX
-        y: root.panelY + (root.entered ? 0 : (root.style === "start" ? 40 : (root.style === "prompt" ? -root.panelH : (root.style === "arcade" ? -30 : 16))))
+        y: root.panelY + (root.entered ? 0 : panel.awayY)
         width: root.panelW
         height: root.panelH
         opacity: root.entered ? 1 : 0
-        scale: root.entered ? 1 : (root.style === "spotlight" || root.style === "raycast" ? 0.97 : 1)
+        scale: root.entered ? 1 : (ek === "zoom" ? 0.9 : (ek === "rise" || ek === "drop" ? 0.985 : 1))
+        transformOrigin: root.style === "start" ? Item.Bottom : (root.style === "prompt" ? Item.Top : Item.Center)
+        transform: [
+            // LAUNCHER → SIZE
+            Scale {
+                origin.x: root.style === "prompt" || (root.style === "start" && root.wv !== "11") ? 0 : panel.width / 2
+                origin.y: root.style === "start" ? panel.height : 0
+                xScale: root.k
+                yScale: root.k
+            },
+            // the launch swell (no Behavior here: it is animated as it is)
+            Scale {
+                origin.x: panel.width / 2
+                origin.y: panel.height / 2
+                xScale: 1 + panel.fx * (Config.launcher.launchFx === "zoom" ? 0.07 : 0.012)
+                yScale: xScale
+            },
+            // SWING: the card flips down from its top edge
+            Rotation {
+                origin.x: panel.width / 2
+                origin.y: 0
+                axis.x: 1
+                axis.y: 0
+                axis.z: 0
+                angle: panel.ek === "swing" && !root.entered ? -32 : 0
+
+                Behavior on angle {
+                    NumberAnimation { duration: root.entered ? root.ms(420) : root.ms(200); easing.type: Easing.OutBack; easing.overshoot: 1.4 }
+                }
+            }
+        ]
 
         Behavior on y {
-            NumberAnimation { duration: root.style === "arcade" ? 340 : 200; easing.type: root.style === "arcade" ? Easing.OutBack : Easing.OutCubic }
+            NumberAnimation {
+                duration: !root.entered ? root.ms(200) : root.ms(panel.ek === "bounce" ? 420 : 300)
+                easing.type: root.entered && (panel.ek === "bounce" || panel.ek === "rise") ? Easing.OutBack : Easing.OutCubic
+                easing.overshoot: panel.ek === "bounce" ? 1.7 : 1.1
+            }
         }
         Behavior on opacity {
-            NumberAnimation { duration: 160 }
+            NumberAnimation { duration: root.entered ? root.ms(200) : root.ms(180) }
         }
         Behavior on scale {
-            NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.entered ? root.ms(320) : root.ms(180); easing.type: root.entered && panel.ek === "zoom" ? Easing.OutBack : Easing.OutCubic; easing.overshoot: 1.25 }
+        }
+        Behavior on height {
+            NumberAnimation { duration: root.ms(180); easing.type: Easing.OutCubic }
+        }
+
+        SequentialAnimation {
+            id: launchFx
+
+            NumberAnimation { target: panel; property: "fx"; from: 0; to: 1; duration: root.ms(Config.launcher.launchFx === "zoom" ? 200 : 110); easing.type: Easing.OutCubic }
+            NumberAnimation { target: panel; property: "fx"; to: Config.launcher.launchFx === "zoom" ? 1 : 0; duration: root.ms(260); easing.type: Easing.OutCubic }
+        }
+        Connections {
+            target: root
+
+            function onRenderedChanged(): void {
+                if (!root.rendered)
+                    panel.fx = 0;
+            }
         }
 
         MouseArea {
             anchors.fill: parent
+        }
+
+        // ── the glow behind it (LAUNCHER → GLOW): a fixed radial drawing
+        // stretched to the panel, so typing never re-tessellates it
+        Item {
+            id: aura
+
+            visible: root.auraK > 0.01
+            anchors.centerIn: parent
+            width: parent.width + 260
+            height: parent.height + 220
+            z: -10
+            opacity: Math.min(1, root.auraK) * (0.75 + 0.25 * auraPulse.v) + panel.fx * 0.6 * root.auraK
+
+            Item {
+                id: auraPulse
+
+                visible: false
+
+                property real v: 0
+
+                SequentialAnimation on v {
+                    running: root.entered && aura.visible && root.ms(100) > 0
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 0; to: 1; duration: 3200; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 1; to: 0; duration: 3200; easing.type: Easing.InOutSine }
+                }
+            }
+
+            Shape {
+                width: 400
+                height: 400
+                transform: Scale {
+                    xScale: aura.width / 400
+                    yScale: aura.height / 400
+                }
+                preferredRendererType: Shape.GeometryRenderer
+
+                ShapePath {
+                    strokeColor: "transparent"
+                    strokeWidth: 0
+                    fillGradient: RadialGradient {
+                        centerX: 200
+                        centerY: 200
+                        focalX: 200
+                        focalY: 200
+                        centerRadius: 200
+                        focalRadius: 0
+
+                        GradientStop { position: 0.0; color: Colours.alpha(Colours.accent, 0.30) }
+                        GradientStop { position: 0.45; color: Colours.alpha(Colours.accent, 0.14) }
+                        GradientStop { position: 1.0; color: Colours.alpha(Colours.accent, 0) }
+                    }
+
+                    PathPolyline {
+                        path: [Qt.point(0, 0), Qt.point(400, 0), Qt.point(400, 400), Qt.point(0, 400), Qt.point(0, 0)]
+                    }
+                }
+            }
         }
 
         // ── the ground of each style
@@ -541,6 +743,19 @@ PanelWindow {
             y: root.headH + (root.style === "prompt" ? 0 : 8)
             width: parent.width - x - (root.style === "prompt" ? 0 : 16)
             height: root.fieldH
+            transform: Translate {
+                id: shakeT
+            }
+
+            SequentialAnimation {
+                id: shake
+
+                NumberAnimation { target: shakeT; property: "x"; to: -9; duration: root.ms(45) }
+                NumberAnimation { target: shakeT; property: "x"; to: 8; duration: root.ms(70) }
+                NumberAnimation { target: shakeT; property: "x"; to: -5; duration: root.ms(60) }
+                NumberAnimation { target: shakeT; property: "x"; to: 3; duration: root.ms(55) }
+                NumberAnimation { target: shakeT; property: "x"; to: 0; duration: root.ms(70); easing.type: Easing.OutCubic }
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -558,8 +773,13 @@ PanelWindow {
                         grimoire: Qt.rgba(0, 0, 0, 0.2),
                         start: root.wv === "95" ? "#ffffff" : (root.wv === "10" ? "#2b2b2b" : (root.wv === "7" ? Qt.rgba(1, 1, 1, 0.9) : "#ffffff"))
                     })[root.style] ?? (root.fl === "neu" ? Colours.alpha(Colours.ink, 0.04) : Colours.alpha(Colours.ink, 0.04))
-                border.width: root.style === "index" ? 0 : 1
-                border.color: root.style === "arcade" ? Colours.accent : (root.style === "start" ? Qt.rgba(0, 0, 0, 0.25) : Colours.alpha(root.ink, 0.12))
+                border.width: root.style === "index" ? 0 : (input.text !== "" && !(root.style === "start" && root.winOld) ? 1.5 : 1)
+                // the field lights up while you type in it
+                border.color: root.style === "arcade" ? Colours.accent : (root.style === "start" && root.winOld ? Qt.rgba(0, 0, 0, 0.25) : (input.text !== "" ? Colours.alpha(Colours.accent, 0.65) : (root.style === "start" ? Qt.rgba(0, 0, 0, 0.25) : Colours.alpha(root.ink, 0.12))))
+
+                Behavior on border.color {
+                    ColorAnimation { duration: root.ms(180) }
+                }
             }
             // the index's ruled line and the minimal underline
             Rectangle {
@@ -624,6 +844,34 @@ PanelWindow {
                     font.capitalization: root.upper ? Font.AllUppercase : (root.lower ? Font.AllLowercase : Font.MixedCase)
                     font.letterSpacing: root.style === "poster" ? -4 : 0
 
+                    // a caret of the look's kind: a block on the consoles and
+                    // the arcade, a thin accent bar elsewhere — it breathes
+                    // instead of blinking hard
+                    cursorDelegate: Rectangle {
+                        readonly property bool block: root.style === "prompt" || root.style === "arcade" || root.style === "hud"
+                        width: block ? Math.max(6, input.font.pixelSize * 0.55) : (root.style === "poster" ? 8 : 2)
+                        height: input.font.pixelSize * 1.15
+                        radius: block ? 0 : 1
+                        color: root.style === "start" && root.winOld ? "#000000" : Colours.accent
+                        opacity: input.activeFocus ? caretBlink.v : 0
+
+                        Item {
+                            id: caretBlink
+
+                            visible: false
+
+                            property real v: 1
+
+                            SequentialAnimation on v {
+                                running: root.entered && input.activeFocus
+                                loops: Animation.Infinite
+                                PauseAnimation { duration: 420 }
+                                NumberAnimation { to: 0.15; duration: 260; easing.type: Easing.InOutSine }
+                                NumberAnimation { to: 1; duration: 260; easing.type: Easing.InOutSine }
+                            }
+                        }
+                    }
+
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: input.text === ""
@@ -641,8 +889,30 @@ PanelWindow {
                         font: input.font
                     }
 
+                    Keys.onReleased: event => {
+                        if (event.key === Qt.Key_Alt || event.key === Qt.Key_Meta || !(event.modifiers & Qt.AltModifier))
+                            root.altHeld = false;
+                    }
                     Keys.onPressed: event => {
                         const ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
+                        const alt = (event.modifiers & Qt.AltModifier) !== 0;
+                        // hold Alt: the first nine rows show their number
+                        if (event.key === Qt.Key_Alt) {
+                            root.altHeld = Config.launcher.quickKeys;
+                            return;
+                        }
+                        // Alt+1 … Alt+9 opens that row (LAUNCHER → QUICK KEYS)
+                        if (alt && Config.launcher.quickKeys && event.key >= Qt.Key_1 && event.key <= Qt.Key_9) {
+                            const i = root.topIndex + (event.key - Qt.Key_1);
+                            if (i < root.results.length) {
+                                root.index = i;
+                                root.run(root.results[i]);
+                            } else {
+                                root.nope();
+                            }
+                            event.accepted = true;
+                            return;
+                        }
                         if (ctrl && (event.key === Qt.Key_J || event.key === Qt.Key_N)) {
                             root.moveCursor(1);
                             event.accepted = true;
@@ -710,19 +980,76 @@ PanelWindow {
 
             x: fieldBox.x
             y: fieldBox.y + fieldBox.height + (root.style === "prompt" ? 0 : 10)
-            width: fieldBox.width
+            width: fieldBox.width - (root.hasPreview ? root.previewW + 12 : 0)
             height: root.listH
             clip: true
             interactive: true
             model: root.results
             currentIndex: root.index
             boundsBehavior: Flickable.StopAtBounds
-            highlightMoveDuration: root.style === "prompt" ? 0 : 120
+            // the selection travels by itself (LAUNCHER → SELECTION)
+            highlightFollowsCurrentItem: false
 
             // the selection, drawn per style
             highlight: Item {
+                id: hl
+
                 width: list.width
                 height: root.rowH
+                y: list.currentItem ? list.currentItem.y : 0
+                z: 0
+
+                Behavior on y {
+                    enabled: Config.launcher.motion !== "snap" && root.style !== "prompt"
+                    NumberAnimation {
+                        duration: root.ms(Config.launcher.motion === "spring" ? 260 : 150)
+                        easing.type: Config.launcher.motion === "spring" ? Easing.OutBack : Easing.OutCubic
+                        easing.overshoot: 1.5
+                    }
+                }
+
+                // a glint runs across the bar each time it lands on a new row
+                Item {
+                    anchors.fill: parent
+                    anchors.leftMargin: 2
+                    anchors.rightMargin: 2
+                    clip: true
+                    z: 2
+                    visible: ["spotlight", "raycast", "hud", "arcade"].indexOf(root.style) >= 0 || (root.style === "start" && !root.winOld)
+
+                    Rectangle {
+                        id: glint
+
+                        width: parent.width * 0.35
+                        height: parent.height
+                        x: -width
+                        opacity: 0.0
+                        gradient: Gradient {
+                            orientation: Gradient.Horizontal
+                            GradientStop { position: 0; color: Qt.rgba(1, 1, 1, 0) }
+                            GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, Colours.light ? 0.35 : 0.13) }
+                            GradientStop { position: 1; color: Qt.rgba(1, 1, 1, 0) }
+                        }
+                    }
+                    ParallelAnimation {
+                        id: glintRun
+
+                        NumberAnimation { target: glint; property: "x"; from: -glint.width; to: hl.width; duration: root.ms(520); easing.type: Easing.OutCubic }
+                        SequentialAnimation {
+                            NumberAnimation { target: glint; property: "opacity"; from: 0; to: 1; duration: root.ms(90) }
+                            PauseAnimation { duration: root.ms(220) }
+                            NumberAnimation { target: glint; property: "opacity"; to: 0; duration: root.ms(210) }
+                        }
+                    }
+                    Connections {
+                        target: root
+
+                        function onIndexChanged(): void {
+                            if (root.ms(100) > 0 && root.entered)
+                                glintRun.restart();
+                        }
+                    }
+                }
 
                 Rectangle {
                     anchors.fill: parent
@@ -763,7 +1090,6 @@ PanelWindow {
                     color: root.ink
                 }
             }
-            highlightFollowsCurrentItem: true
 
             delegate: Item {
                 id: row
@@ -790,6 +1116,48 @@ PanelWindow {
 
                 width: list.width
                 height: root.rowH
+                z: 1
+
+                // ── arriving (LAUNCHER → RESULTS ARRIVING): one after another
+                // when it opens, quicker while you type
+                property real enter: Config.launcher.cascade === "none" ? 1 : 0
+                readonly property string cas: Config.launcher.cascade
+                opacity: row.enter
+                transform: [
+                    Translate {
+                        x: row.cas === "slide" ? (1 - row.enter) * (root.style === "start" ? 0 : 26) : 0
+                        y: row.cas === "slide" && root.style === "start" ? (1 - row.enter) * 14 : 0
+                    },
+                    Scale {
+                        origin.x: 0
+                        origin.y: row.height / 2
+                        xScale: row.cas === "pop" ? 0.82 + 0.18 * row.enter : 1
+                        yScale: xScale
+                    }
+                ]
+
+                SequentialAnimation {
+                    id: arrive
+
+                    PauseAnimation {
+                        duration: root.ms(Math.min(row.index, 10) * (Date.now() - root.openedAt < 500 ? 34 : 14))
+                    }
+                    NumberAnimation {
+                        target: row
+                        property: "enter"
+                        from: 0
+                        to: 1
+                        duration: root.ms(row.cas === "fade" ? 220 : 300)
+                        easing.type: row.cas === "pop" ? Easing.OutBack : Easing.OutCubic
+                        easing.overshoot: 1.6
+                    }
+                }
+                Component.onCompleted: {
+                    if (row.cas === "none" || root.ms(100) === 0)
+                        row.enter = 1;
+                    else
+                        arrive.start();
+                }
 
                 HoverHandler {
                     onHoveredChanged: if (hovered && root.index !== row.index)
@@ -830,6 +1198,12 @@ PanelWindow {
                         visible: Config.launcher.showIcons && ["prompt", "poster", "index", "grimoire", "hud"].indexOf(root.style) < 0
                         width: visible ? root.rowH - 16 : 0
                         height: width
+                        // the chosen row's icon steps forward
+                        scale: row.sel ? 1.14 : 1
+
+                        Behavior on scale {
+                            NumberAnimation { duration: root.ms(220); easing.type: Easing.OutBack; easing.overshoot: 2 }
+                        }
 
                         Image {
                             anchors.fill: parent
@@ -852,9 +1226,19 @@ PanelWindow {
                         id: nameT
 
                         anchors.verticalCenter: parent.verticalCenter
-                        text: root.cased(row.modelData.name ?? "")
+                        // the typed letters lit (LAUNCHER → LIGHT THE TYPED LETTERS)
+                        text: Apps.marked(root.cased(row.modelData.name ?? ""), input.text, String(Colours.accent), row.sel && root.solidSel)
+                        textFormat: Text.StyledText
                         color: row.fg
                         elide: Text.ElideRight
+                        // and the chosen name leans in a little
+                        transform: Translate {
+                            x: row.sel && root.style !== "prompt" && root.style !== "start" ? 5 : 0
+
+                            Behavior on x {
+                                NumberAnimation { duration: root.ms(200); easing.type: Easing.OutCubic }
+                            }
+                        }
                         width: Math.min(implicitWidth, parent.width * 0.62)
                         font.family: root.face
                         font.pixelSize: ({
@@ -884,7 +1268,7 @@ PanelWindow {
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        visible: (row.modelData.sub ?? "") !== "" && ["spotlight", "raycast", "start"].indexOf(root.style) >= 0 && root.fl !== "minimal"
+                        visible: Config.launcher.subtitles && (row.modelData.sub ?? "") !== "" && ["spotlight", "raycast", "start"].indexOf(root.style) >= 0 && root.fl !== "minimal"
                         width: Math.max(0, parent.width - nameT.width - kindT.width - 120)
                         elide: Text.ElideRight
                         text: row.modelData.sub ?? ""
@@ -900,18 +1284,244 @@ PanelWindow {
                     anchors.rightMargin: 16
                     anchors.verticalCenter: parent.verticalCenter
                     visible: root.style !== "start" && root.style !== "poster"
+                    opacity: badge.shown ? 0 : 1
                     text: root.cased(root.kindWord(row.modelData))
                     color: row.sel && root.style !== "index" ? (root.style === "prompt" || root.fl === "flat" ? row.fg : Colours.accent) : Colours.alpha(root.dim, 0.8)
                     font.family: root.style === "hud" || root.style === "prompt" ? Appearance.fontFamily.mono : root.face
                     font.pixelSize: 12
                     font.italic: root.style === "index" || root.style === "grimoire"
                     font.letterSpacing: root.upper ? 2 : 0.5
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: root.ms(120) }
+                    }
+                }
+                // Alt held: the row's quick key (LAUNCHER → QUICK KEYS)
+                Rectangle {
+                    id: badge
+
+                    readonly property int n: row.index - root.topIndex + 1
+                    readonly property bool shown: root.altHeld && n >= 1 && n <= 9
+
+                    anchors.right: parent.right
+                    anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(26, badgeT.implicitWidth + 14)
+                    height: Math.min(26, root.rowH - 10)
+                    radius: root.style === "prompt" || root.style === "hud" || root.style === "arcade" || root.winOld && root.style === "start" ? 2 : height / 2
+                    color: row.sel ? Colours.accent : Colours.alpha(Colours.accent, 0.16)
+                    border.width: 1
+                    border.color: Colours.alpha(Colours.accent, 0.6)
+                    opacity: badge.shown ? 1 : 0
+                    scale: badge.shown ? 1 : 0.6
+                    visible: opacity > 0.01
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: root.ms(140) }
+                    }
+                    Behavior on scale {
+                        NumberAnimation { duration: root.ms(220); easing.type: Easing.OutBack; easing.overshoot: 2.2 }
+                    }
+
+                    Text {
+                        id: badgeT
+
+                        anchors.centerIn: parent
+                        text: "Alt " + badge.n
+                        color: row.sel ? Colours.on(Colours.accent) : Colours.accent
+                        font.family: Appearance.fontFamily.mono
+                        font.pixelSize: 11
+                        font.bold: true
+                    }
                 }
             }
 
             SmoothScroll {
                 view: list
                 step: root.rowH * 2
+            }
+        }
+
+        // ── the detail card (LAUNCHER → DETAIL CARD): the chosen result, big
+        Item {
+            id: preview
+
+            readonly property var it: root.selected
+            readonly property color pInk: root.style === "start" ? (root.wv === "10" ? "#ffffff" : "#111111") : root.ink
+            readonly property color pDim: root.style === "start" ? (root.wv === "10" ? "#bbbbbb" : "#555555") : root.dim
+
+            visible: root.hasPreview
+            x: list.x + list.width + 12
+            y: list.y
+            width: root.previewW
+            height: root.bodyH
+
+            Rectangle {
+                anchors.fill: parent
+                radius: Math.min(18, body.radius)
+                color: root.style === "start" ? (root.wv === "10" ? Qt.rgba(1, 1, 1, 0.05) : Qt.rgba(0, 0, 0, 0.04)) : Colours.alpha(root.ink, root.style === "spotlight" ? 0.07 : 0.045)
+                border.width: 1
+                border.color: root.style === "hud" || root.style === "arcade" || root.style === "grimoire" ? Colours.alpha(Colours.accent, 0.45) : Colours.alpha(root.ink, 0.08)
+            }
+
+            Item {
+                id: pv
+
+                // played again for every new choice
+                property real t: 1
+
+                anchors.fill: parent
+                anchors.margins: 18
+                opacity: pv.t
+                visible: preview.it !== null
+                transform: Translate {
+                    y: (1 - pv.t) * 12
+                }
+
+                NumberAnimation {
+                    id: pvAnim
+
+                    target: pv
+                    property: "t"
+                    from: 0
+                    to: 1
+                    duration: root.ms(280)
+                    easing.type: Easing.OutCubic
+                }
+                Connections {
+                    target: root
+
+                    function onSelectedChanged(): void {
+                        if (root.ms(100) > 0)
+                            pvAnim.restart();
+                    }
+                }
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: -12
+                    width: parent.width
+                    spacing: 10
+
+                    Item {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: 96
+                        height: 96
+                        scale: 0.8 + 0.2 * pv.t
+
+                        Rectangle {
+                            anchors.centerIn: parent
+                            width: 112
+                            height: 112
+                            radius: 56
+                            color: Colours.alpha(Colours.accent, 0.16 * Math.min(1, Config.launcher.aura + 0.3))
+                            scale: 0.9 + 0.12 * auraPulse.v
+                            visible: root.style !== "start" || !root.winOld
+                        }
+                        Image {
+                            anchors.centerIn: parent
+                            width: 72
+                            height: 72
+                            visible: preview.it !== null && preview.it.kind === "app" && (preview.it.icon ?? "") !== ""
+                            source: visible ? Quickshell.iconPath(preview.it.icon, "application-x-executable") : ""
+                            sourceSize.width: 128
+                            sourceSize.height: 128
+                            smooth: true
+                            asynchronous: true
+                        }
+                        Icon {
+                            anchors.centerIn: parent
+                            visible: preview.it !== null && !(preview.it.kind === "app" && (preview.it.icon ?? "") !== "")
+                            name: preview.it ? (preview.it.kind === "app" ? "apps" : (preview.it.icon || "bolt")) : "search"
+                            color: Colours.accent
+                            font.pixelSize: 56
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: preview.it ? root.cased(preview.it.name ?? "") : ""
+                        color: preview.pInk
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        font.family: root.face
+                        font.pixelSize: preview.it && preview.it.kind === "calc" ? 34 : 21
+                        font.bold: true
+                        font.italic: root.style === "index" || root.style === "grimoire"
+                    }
+                    Text {
+                        width: parent.width
+                        visible: text !== "" && Config.launcher.subtitles
+                        horizontalAlignment: Text.AlignHCenter
+                        text: preview.it ? String(preview.it.sub ?? "") : ""
+                        color: preview.pDim
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 3
+                        elide: Text.ElideRight
+                        font.family: root.style === "arcade" || root.style === "hud" ? Appearance.fontFamily.body : root.face
+                        font.pixelSize: 12
+                        font.letterSpacing: 0.4
+                    }
+                    // what it is, and that it is pinned
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: 6
+
+                        Rectangle {
+                            width: kindChip.implicitWidth + 18
+                            height: 22
+                            radius: root.style === "hud" || root.style === "arcade" || root.style === "prompt" ? 2 : 11
+                            color: Colours.alpha(Colours.accent, 0.15)
+                            border.width: 1
+                            border.color: Colours.alpha(Colours.accent, 0.5)
+
+                            Text {
+                                id: kindChip
+
+                                anchors.centerIn: parent
+                                text: root.cased(root.kindWord(preview.it)).toUpperCase()
+                                color: Colours.accent
+                                font.family: Appearance.fontFamily.body
+                                font.pixelSize: 10
+                                font.bold: true
+                                font.letterSpacing: 1.4
+                            }
+                        }
+                        Rectangle {
+                            visible: preview.it !== null && preview.it.kind === "app" && preview.it.pinned === true
+                            width: 22
+                            height: 22
+                            radius: 11
+                            color: Colours.alpha(Colours.accent, 0.15)
+
+                            Icon {
+                                anchors.centerIn: parent
+                                name: "star"
+                                color: Colours.accent
+                                font.pixelSize: 13
+                            }
+                        }
+                    }
+                }
+
+                // what Enter does, at the foot of the card
+                Text {
+                    anchors.bottom: parent.bottom
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: {
+                        const it = preview.it;
+                        if (!it)
+                            return "";
+                        const verb = ({ app: "open", calc: "copy", exec: "run", setting: "go there" })[it.kind] ?? "open";
+                        const pin = it.kind === "app" ? (it.pinned ? "   ·   Alt+P unpin" : "   ·   Alt+P pin") : "";
+                        return root.cased("⏎ " + verb + pin);
+                    }
+                    color: Colours.alpha(preview.pDim, 0.85)
+                    font.family: root.face
+                    font.pixelSize: 11
+                    font.letterSpacing: root.upper ? 1.6 : 0.3
+                }
             }
         }
 
@@ -946,7 +1556,7 @@ PanelWindow {
                     index: "↑ ↓ to turn · return to read · esc to fold the paper",
                     grimoire: "↑ ↓ to leaf · return to cast · esc to close the book",
                     start: root.wv === "95" ? "" : "Enter to open  ·  Esc to close"
-                })[root.style] ?? "↑↓ to move  ·  ⏎ to open  ·  = sum  ·  > command  ·  Alt+P pin"
+                })[root.style] ?? ("↑↓ to move  ·  ⏎ to open  ·  = sum  ·  " + Config.launcher.actionPrefix + " command  ·  Alt+P pin" + (Config.launcher.quickKeys ? "  ·  Alt+1…9 quick" : ""))
             color: root.style === "start" && root.wv !== "10" && root.wv !== "7" ? "#555555" : Colours.alpha(root.dim, 0.8)
             font.family: root.face
             font.pixelSize: 11

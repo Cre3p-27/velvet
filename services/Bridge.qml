@@ -285,6 +285,32 @@ Singleton {
         case "openLauncher":
             Panels.toggleLauncher();
             break;
+        case "resetLauncherLook":
+            // only the look-and-motion dials; what it searches stays yours
+            Config.setMany({
+                "launcher.scale": 1,
+                "launcher.speed": 1,
+                "launcher.dim": 1,
+                "launcher.aura": 0.6,
+                "launcher.highlight": true,
+                "launcher.quickKeys": true,
+                "launcher.subtitles": true,
+                "launcher.hints": true,
+                "launcher.launchFx": "burst",
+                "launcher.entrance": "auto",
+                "launcher.cascade": "slide",
+                "launcher.motion": "spring",
+                "launcher.position": "auto",
+                "launcher.preview": true,
+                "launcher.orbitEntrance": "bloom",
+                "launcher.orbitSpin": 1,
+                "launcher.orbitTilt": 1,
+                "launcher.orbitRing": true,
+                "launcher.reticle": true,
+                "launcher.stars": true
+            });
+            Toast.ok("THE LAUNCHER LOOKS AND MOVES AS DESIGNED AGAIN");
+            break;
         case "resetThisLook":
             if (Presets.resetTune())
                 Toast.ok("THIS LOOK IS BACK AS IT WAS DESIGNED");
