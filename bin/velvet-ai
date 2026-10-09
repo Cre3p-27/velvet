@@ -1097,8 +1097,8 @@ def memory() -> dict:
 
 
 def save_memory(mem: dict) -> None:
-    if isinstance(mem.get("history"), list) and len(mem["history"]) > 80:
-        mem["history"] = mem["history"][-80:]
+    if isinstance(mem.get("history"), list) and len(mem["history"]) > 400:
+        mem["history"] = mem["history"][-400:]
     write_json(MEMORY_PATH, mem)
 
 
@@ -1414,6 +1414,11 @@ ARG_DOCS = {
     "weather.forecast": {"place": "a city or place; empty for here",
                          "when": "heute, morgen, übermorgen, Wochenende, a weekday or a date; empty for the next days"},
     "clipboard.write": {"text": "the text to put into the clipboard"},
+    "settings.find": {"query": "a few ENGLISH words for the setting, e.g. 'island position', 'launcher animation speed', "
+                               "'accent colour', 'notification position', 'bar autohide'"},
+    "settings.set": {"key": "the setting's key exactly as settings.find gave it, e.g. 'map.islandSide'",
+                     "value": "true/false, a number, or one of the option values from settings.find"},
+    "history.search": {"query": "words from what was said back then; empty lists the latest"},
 }
 # Arguments a call is useless without.
 REQUIRED = {"apps.search": ["query"], "apps.launch": ["name"], "win.focus": ["match"], "win.close": ["match"],
@@ -1424,7 +1429,8 @@ REQUIRED = {"apps.search": ["query"], "apps.launch": ["name"], "win.focus": ["ma
             "island.module": ["module"], "term.run": ["command"], "cmd.run": ["command"], "pkg.search": ["query"],
             "pkg.install": ["name"], "web.lookup": ["query"], "web.read": ["url"], "web.open": ["url"],
             "web.search": ["query"], "web.download": ["url"], "file.write": ["name", "text"], "calc.eval": ["expr"],
-            "date.lookup": ["when"], "clipboard.write": ["text"]}
+            "date.lookup": ["when"], "clipboard.write": ["text"], "settings.find": ["query"],
+            "settings.set": ["key", "value"]}
 
 
 def tool_schema() -> list:
@@ -2368,6 +2374,91 @@ def t_settings_open(key="", zone="", tab=""):
     else:
         shell_ipc("panels", "settings")
     return {"ok": True}
+
+
+# ── Velvet itself: every setting the settings window has, found by words and
+#  set through the same door the window uses (services/Velly.qml findSettings
+#  / applySetting). "Stell die Island an den rechten Rand", "mach die
+#  Animationen schneller", "wie ändere ich die Akzentfarbe" — she used to be
+#  able to open the settings and nothing else.
+# The keys she has seen in a settings.find this session: settings.set takes
+# no other. Measured: "Stell die Island an den rechten Rand" went straight to
+# a guessed key (map.islandShift = 200) instead of POSITION = right.
+FOUND_KEYS = set()
+
+
+@tool("settings.find", '{"query": "island position"}', "read",
+      "Find Velvet's own settings and shortcuts by ENGLISH words (the settings are named in English): what each "
+      "does, where it is in the settings (Super+Tab), its current value and the values it takes. Use it before "
+      "settings.set, and to answer 'how do I … in Velvet'.")
+def t_settings_find(query=""):
+    wanted = str(query or "").strip()
+    if not wanted:
+        return {"ok": False, "error": "which setting? a few English words"}
+    raw = shell_ipc("velly", "settingsFind", wanted)
+    try:
+        data = json.loads(raw) if raw else None
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "the shell is not answering"}
+    if not data.get("settings") and not data.get("shortcuts"):
+        return {"ok": True, "settings": [], "note": "nothing found — try other English words"}
+    for row in data.get("settings") or []:
+        if isinstance(row, dict) and row.get("key"):
+            FOUND_KEYS.add(str(row["key"]))
+    return {"ok": True, **data}
+
+
+@tool("settings.set", '{"key": "map.islandSide", "value": "right"}', "write",
+      "Change one Velvet setting, by the key settings.find gave you. value: true/false for a switch, a number "
+      "for a slider (a fraction where the setting says 1 = 100 %), one of the option VALUES for a choice. "
+      "Returns the old value, so the change can be undone.")
+def t_settings_set(key="", value=""):
+    k = str(key or "").strip()
+    if not k:
+        return {"ok": False, "error": "which key? look it up with settings.find"}
+    if k not in FOUND_KEYS:
+        # never a guessed key: show her what is there for those words
+        words = " ".join(w for w in re.split(r"[^A-Za-z]+", re.sub(r"([a-z])([A-Z])", r"\1 \2", k)) if len(w) > 2)
+        found = t_settings_find(words or k)
+        return {"ok": False, "error": "look a setting up with settings.find before you set it — "
+                                      "these match the words of that key; pick the one that does what the user asked",
+                "settings": found.get("settings") or []}
+    raw = shell_ipc("velly", "settingApply", k, json.dumps(value, ensure_ascii=False))
+    try:
+        data = json.loads(raw) if raw else None
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "the shell is not answering"}
+    return data
+
+
+@tool("history.search", '{"query": "Restaurant"}', "read",
+      "Search what was said in earlier conversations with the user — days back: what they asked, what you "
+      "answered or recommended. For 'was hab ich dich gestern gefragt', 'wie hieß nochmal …'.")
+def t_history_search(query=""):
+    mem = memory()
+    hist = [h for h in (mem.get("history") or []) if isinstance(h, dict) and h.get("text")]
+    words = [w for w in re.findall(r"[\wäöüß]+", str(query or "").lower()) if len(w) > 2]
+    found = []
+    for i, h in enumerate(hist):
+        if h.get("role") != "user":
+            continue
+        reply = hist[i + 1] if i + 1 < len(hist) and hist[i + 1].get("role") == "velly" else {}
+        hay = f"{h.get('text')} {reply.get('text', '')}".lower()
+        hits = sum(1 for w in words if w in hay) if words else 1
+        if hits:
+            when = time.localtime(int(h.get("t") or 0) / 1000)
+            found.append((hits, int(h.get("t") or 0), {
+                "when": f"{date_de(when)}, {time.strftime('%H:%M', when)}",
+                "user": str(h.get("text"))[:240], "you": str(reply.get("text") or "")[:300]}))
+    found.sort(key=lambda f: (-f[0], -f[1]))
+    if not words:
+        found.sort(key=lambda f: -f[1])
+    return {"ok": True, "found": [f[2] for f in found[:6]],
+            "note": "" if found else "nichts dazu in den früheren Gesprächen"}
 
 
 @tool("toast.show", '{"text": "text", "kind": "ok|info|warn|error"}', "write", "Show a toast on the desktop.")
@@ -3438,6 +3529,12 @@ def local_skill(text: str, brain: bool = False) -> str:
         played = quick_media(low)
         if played:
             return played
+    # Updating, restarting, shutting down are the model's (with its tools and
+    # their confirmation): "Update mein System" was answered with the CPU
+    # load, "Starte den Rechner neu" tried to open an app "Rechner neu".
+    if re.search(r"\b(update\w*|upgrade\w*|aktualisier\w*|neustart\w*|neu starten|reboot\w*|herunterfahr\w*|"
+                 r"runterfahr\w*|ausschalt\w*|abmeld\w*|ruhezustand|standby|suspend)\b|\bneu\W*$", low.strip()):
+        return ""
     for pattern, kind in SKILLS:
         if not re.search(pattern, low):
             continue
@@ -3786,15 +3883,29 @@ def T(name: str, native: bool) -> str:
     return name.replace(".", "_") if native else name
 
 
+def velly_keys() -> str:
+    """The key that calls her: Super+A, or what the user rebound it to in the
+    key menu (~/.config/velvet/binds.json)."""
+    names = {"SUPER": "Super", "SHIFT": "Shift", "CTRL": "Ctrl", "ALT": "Alt"}
+    try:
+        o = read_json(os.path.join(CONF_DIR, "binds.json"), {}).get("velly") or {}
+        if o.get("key"):
+            return " + ".join([names.get(m, m) for m in o.get("mods") or []] + [str(o["key"]).upper()])
+    except Exception:                                          # noqa: BLE001
+        pass
+    return "Super + A"
+
+
 def system_prompt(native: bool = False) -> str:
     """Static all session — the moment's context rides on the user's message
     (with_context), so the server can keep this and the tool schema cached."""
     t = lambda n: T(n, native)                                # noqa: E731
     danger = ", ".join(sorted(t(n) for n in TOOLS if TOOLS[n].level == "danger"))
     persona = f"""You are Velly — the mind inside Velvet, a Quickshell desktop for Hyprland.
-You live in the Dynamic Island: a small black capsule at the top of the screen.
-The user wakes you by holding the island (or by saying "Hey Velly"), and most
-of what you say is SPOKEN aloud. You answer in the user's language (German in,
+You live in the Dynamic Island: a small black capsule at the edge of the screen.
+The user calls you with {velly_keys()} from anywhere, by holding the island, or
+(when it is switched on) by saying "Hey Velly" — and most of what you say is
+SPOKEN aloud. You answer in the user's language (German in,
 German out; English in, English out).
 
 WHO YOU ARE
@@ -3893,6 +4004,15 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
   user: wer hat eigentlich die em 2024 gewonnen
   you: (call {t("web.lookup")} with query "EM 2024 Sieger") → Spanien! Im Finale in Berlin zwei zu eins gegen England.
 
+  user: schau mal, wer noch pizza nach waldorf liefert   (it is 23:40)
+  you: (call {t("web.lookup")} with query "Pizza Lieferdienst Waldorf") → Um die Uhrzeit wird's knapp: Pizzeria Roma liefert bis Mitternacht, Da Mario hat schon zu. Soll ich dir Roma aufmachen?
+
+  user: stell die island an den rechten rand
+  you: (call {t("settings.find")} with query "island position edge") → (call {t("settings.set")} with key "map.islandSide", value "right") → Erledigt — die Island sitzt jetzt am rechten Rand. Sag Bescheid, wenn ich's zurückstellen soll.
+
+  user: wie ändere ich die akzentfarbe
+  you: (call {t("settings.find")} with query "accent colour") → Mit Super+Tab in die Einstellungen, dann VISUALS, THIS LOOK, ACCENT COLOUR. Soll ich sie dir gleich umstellen?
+
   you (before): … Sag mal, wie darf ich dich eigentlich nennen?
   user: Max. M-A-X.
   you: (call {t("memory.remember")} with text "Heißt Max") → Freut mich, Max! Merk ich mir.
@@ -3944,21 +4064,46 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
   you: [[tool:web.lookup {{"query": "EM 2024 Sieger"}}]]
   (the result comes back) you: Spanien! Im Finale in Berlin zwei zu eins gegen England.
 
+  user: stell die island an den rechten rand
+  you: [[tool:settings.find {{"query": "island position edge"}}]]
+  (the result comes back) you: [[tool:settings.set {{"key": "map.islandSide", "value": "right"}}]]
+  (the result comes back) you: Erledigt — die Island sitzt jetzt am rechten Rand.
+
   user: hey, wie geht's dir?
   you: Gut, danke! Ich bin heute richtig in Plauderlaune — und wie war dein Tag so?
 """
     rules = f"""RULES
  1. Only tools from your list. Never invent a tool or an argument.
  2. Pick the tool that does exactly what was asked:
-    · facts, news, results, people, prices, anything you are not sure of →
-      {t("web.lookup")}, then answer from what comes back in your own words;
-      {t("web.read")} reads a page in full when the snippets are not enough.
+    · facts, news, results, people, prices, places, opening hours, anything you
+      are not sure of — and every "schau (mal) nach", "find raus", "such mir
+      raus", "welche … gibt es", "wer liefert …" → {t("web.lookup")}, then ANSWER
+      from what comes back, in your own words: name the concrete things you
+      found (two or three), and say plainly when it is late, closed or unknown
+      (the context has the time). {t("web.read")} reads a page in full when the
+      snippets are not enough. Opening a search page is not an answer.
+    · When the user corrects a detail ("vergiss München", "nicht da, sondern
+      …"), drop it completely and do the whole thing again without it.
     · weather now, later, tomorrow, anywhere → {t("weather.forecast")}. Never guess it.
     · the time here or in another place → {t("sys.time")}; which date or weekday a
       day is ("nächsten Freitag", "Weihnachten") → {t("date.lookup")}.
     · PLAY music → {t("media.play")}; pause, next, back → {t("media.control")}.
-      SHOW something online (a video, a page, "such mir auf YouTube") →
-      {t("web.search")} or {t("web.open")}. {t("web.download")} is ONLY for a direct link to a file.
+      SHOW something online — only when the user wants to SEE it ("zeig mir",
+      "öffne", "such mir auf YouTube", a video, a page) → {t("web.search")} or
+      {t("web.open")}; after a look-up you may open the best page as well. {t("web.download")} is ONLY for a direct link to a file.
+    · Velvet itself — the island, the bar, the launcher, the look, sounds,
+      animations, any setting → {t("settings.find")} (ENGLISH words, the settings
+      are named in English), then {t("settings.set")} with the key and an allowed
+      value; say what you changed in plain words (and that you can undo it).
+      "Wie mache ich … in Velvet" / "wo stelle ich … ein" → {t("settings.find")},
+      then say where it is (Super+Tab opens the settings) or which keys do it,
+      in one or two sentences — and change NOTHING: a question how is not a
+      wish to have it done. Offer to do it instead.
+      "Etwas", "ein bisschen", "mehr", "weniger" change a setting FROM its
+      current value (in the settings.find result) by a modest step — "etwas
+      langsamer" on 2× is about 1.5×, not the minimum.
+    · what was said in earlier conversations ("was hab ich dich gestern
+      gefragt", "wie hieß das Restaurant nochmal") → {t("history.search")}.
     · facts about THIS machine (how many packages, disk space, which kernel,
       what is running) → {t("cmd.run")} with a command that only reads; read-only
       commands run at once, without asking. Never answer them from memory.
@@ -3971,6 +4116,10 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
       verpasst") → {t("notifs.list")}; writing something down for later → {t("file.write")}.
  3. Dangerous tools ({danger}) need a spoken confirmation first when the
     user did not already ask for that exact thing in this message. If they did, do it.
+    EVERY other tool runs at once — {t("sys.update")}, {t("pkg.install")} and {t("term.run")}
+    too: they open a terminal where the user types the password, and that IS
+    their yes. Never ask "sag ja" on your own: only a tool result with
+    needs_confirmation is a reason to ask.
     A tool result that says needs_confirmation is NOT a result: never pretend the
     command ran. Ask one short question — "Das braucht dein Okay — sag ja, dann
     mache ich es." — and stop there.
@@ -4007,9 +4156,27 @@ THINK_RE = re.compile(
     r"witz\w*|joke|lustig|gedicht|reim\w*|geschichte|erzähl|erzaehl|zähl\w*|zaehl\w*|aufzähl\w*|liste)\b", re.I)
 
 
+# "Sag ja, dann mache ich es" with no tool waiting for that yes.
+FAKE_GATE = re.compile(r"sag\s+(?:einfach\s+|mir\s+)?[„\"'»]?ja\b|braucht dein (?:okay|ok|ja)|dein okay|"
+                       r"(?:bestätige|bestaetige|bestätigst)\b|confirm", re.I)
+
+
+# Asked for outright: think it all the way through.
+DEEP_RE = re.compile(r"\b(denk\w*\s+(?:mal\s+)?(?:genau|gründlich|gruendlich|gut|in ruhe|richtig)|schritt für schritt|"
+                     r"schritt fuer schritt|ausführlich|ausfuehrlich|gründlich|gruendlich|genau erklär\w*|"
+                     r"step by step|think (?:hard|carefully)|in detail)\b", re.I)
+
+
 def effort_for(text: str) -> str:
-    words = len(re.findall(r"\w+", text or ""))
-    if THINK_RE.search(text or "") or words >= 16:
+    """How deep she thinks. A short command stays quick (low); a question, a
+    wish of more than a few words, anything to explain or decide gets medium —
+    about half a second more on this machine, and the factual slips of low go
+    away (measured); "denk genau nach" gets high."""
+    t = text or ""
+    if DEEP_RE.search(t):
+        return "high"
+    words = len(re.findall(r"\w+", t))
+    if THINK_RE.search(t) or words >= 9 or (t.strip().endswith("?") and words >= 4):
         return "medium"
     return "low"
 
@@ -4021,7 +4188,7 @@ def token_budget(prov, answer_tokens: int, effort: str) -> int:
     the prompt asks for it, not because the budget chokes it."""
     base = max(160, int(answer_tokens or 320))
     if prov.name == "local" and local_family() == "gpt-oss":
-        return base + (1400 if effort == "medium" else 600)
+        return base + {"high": 3200, "medium": 1400}.get(effort, 600)
     return base * 2
 
 
@@ -4085,10 +4252,28 @@ def clean_answer(text: str, user_text: str = "") -> str:
     out = re.sub(r"(?<![\w_])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w_])", r"\1", out)
     out = re.sub(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+", "", out)
     out = re.sub(r"(?<=[.!?:])\s+[-•]\s+", " ", out)
+    out = re.sub(r"(?<=[.!?:)])\s+\d{1,2}[.)]\s+(?=[A-ZÄÖÜ])", " ", out)
     out = re.sub(r"`([^`]*)`", r"\1", out)
     out = re.sub(r"^#+\s*", "", out, flags=re.M)
     out = re.sub(r"\s*\n+\s*", " ", out)
-    return out.strip()
+    return collapse_loops(out.strip())
+
+
+# A phrase the model got stuck on — "die ganze Zeit die ganze Zeit die ganze
+# Zeit …" ended a joke in her real history — is said once, and the turn stops
+# streaming the moment it starts (Runner.turn). No sampler penalty for it:
+# gpt-oss's channel markers repeat by design and penalties bent its tool calls.
+LOOP_RE = re.compile(r"(\b\S.{3,90}?)(?:[\s,–—-]+\1\b){2,}", re.S)
+
+
+def collapse_loops(text: str) -> str:
+    out = text or ""
+    for _ in range(3):
+        new = LOOP_RE.sub(r"\1", out)
+        if new == out:
+            break
+        out = new
+    return re.sub(r"(…\s*){2,}", "…", out).strip()
 
 
 def drop_repeat_name(answer: str, name: str, last_answer: str) -> str:
@@ -4367,8 +4552,14 @@ class Runner:
         try:
             for _round in range(MAX_TOOL_ROUNDS):
                 streamed = []
+                # a phrase repeating itself ends the stream at once (see
+                # collapse_loops) — what was said up to there is the answer
+                looped = [False, ""]
 
-                def on_delta(partial, streamed=streamed):
+                def on_delta(partial, streamed=streamed, looped=looped):
+                    looped[1] = partial
+                    if not looped[0] and LOOP_RE.search(strip_tool_lines(partial)):
+                        looped[0] = True
                     # A plan that starts to stream is not shown; the cleaned
                     # answer replaces it at the end of the round. The voice
                     # reads along (--follow), so it gets the same text the
@@ -4380,8 +4571,15 @@ class Runner:
 
                 # The first round thinks as deep as the question needs; after a
                 # tool round she only has to say what happened.
-                out = self.prov.stream(messages, system, on_delta, self.cancel, temperature,
-                                       budget, effort if _round == 0 else "low")
+                try:
+                    out = self.prov.stream(messages, system, on_delta, lambda looped=looped: self.cancel() or looped[0],
+                                           temperature, budget, effort if _round == 0 else "low")
+                except Cancelled:
+                    if not looped[0] or self.cancel():
+                        raise
+                    log("a phrase started repeating itself — stream cut, the answer kept once")
+                    out = looped[1]
+                    self.prov.last_calls = []
                 native_calls = list(self.prov.last_calls) if native else []
                 calls = [(c["name"], c["args"]) for c in native_calls] or parse_tool_calls(out)
                 spoken = clean_answer(strip_tool_lines(out), text)
@@ -4433,6 +4631,37 @@ class Runner:
                 # Six rounds of tools and still no sentence: the nudge below
                 # asks for one ("…" used to be the answer here — measured).
                 answer = spoken
+            # She asked for a yes that nothing is waiting for — the gate was
+            # imagined, and the user's "ja" would only have met another "sag
+            # ja" (measured with the update, at medium effort). Once, firmly:
+            # do it with the tool, or say why not.
+            if not asked_confirm and FAKE_GATE.search(answer or "") and not self.cancel():
+                nudge = messages + [{"role": "assistant", "content": answer},
+                                    {"role": "user", "content": "(System: Nichts wartet auf ein Ja — du hast kein Werkzeug "
+                                                                "aufgerufen. Ruf jetzt das passende Werkzeug auf, das tut, "
+                                                                "worum der Nutzer gebeten hat, und sag dann kurz, was passiert ist.)"}]
+                out = self.prov.stream(nudge, system, lambda *_: None, self.cancel, temperature, budget, "low")
+                retry_calls = [(c["name"], c["args"]) for c in (self.prov.last_calls if native else [])] or parse_tool_calls(out)
+                if retry_calls:
+                    results_txt = []
+                    for name, args in retry_calls[:3]:
+                        result = self.run_tool(name, args)
+                        if isinstance(result, dict) and result.get("needs_confirmation"):
+                            asked_confirm = True
+                        self.state["tools"] = (self.state.get("tools") or []) + [
+                            {"name": name, "ok": bool(result.get("ok")), "note": short_note(result)}]
+                        self.actions = (self.actions + [(turn_no, f"{T(name, native)} {json.dumps(args or {}, ensure_ascii=False)[:90]} → "
+                                                                  f"{'ok' if result.get('ok') else 'failed'}: {short_note(result)}")])[-8:]
+                        results_txt.append(f"{name} → {json.dumps(result, ensure_ascii=False)[:700]}")
+                    if asked_confirm:
+                        answer = 'Das braucht dein Okay — sag „ja“, dann mache ich es.'
+                    else:
+                        follow = messages + [{"role": "user", "content": "TOOL RESULTS\n" + "\n".join(results_txt)
+                                              + "\n(Sag dem Nutzer in ein, zwei kurzen Sätzen, was passiert ist — ohne Werkzeuge.)"}]
+                        out = self.prov.stream(follow, system, lambda *_: None, self.cancel, temperature, budget, "low")
+                        answer = clean_answer(strip_tool_lines(out), text)[:limit] or "Erledigt."
+                else:
+                    answer = clean_answer(strip_tool_lines(out), text)[:limit] or answer
             if asked_confirm and not (answer or "").strip():
                 # The model looped on the gate instead of asking. Ask for it
                 # here, in one plain sentence — nobody should get an empty
@@ -4586,7 +4815,7 @@ class Runner:
         hist.append({"t": now_ms(), "role": "user", "text": user_text[:600]})
         if answer:
             hist.append({"t": now_ms(), "role": "velly", "text": answer[:600]})
-        mem["history"] = hist[-80:]
+        mem["history"] = hist[-400:]
         save_memory(mem)
 
 
@@ -4653,6 +4882,9 @@ def short_note(result: dict) -> str:
             return f"CPU {result.get('cpu_percent', '?')} %"[:60]
         if "timers" in result:
             return f"{len(result['timers'])} OFFEN"
+        # a setting she changed: what it was, so "mach das rückgängig" knows
+        if "old" in result and "now" in result:
+            return f"{result.get('name') or result.get('key')}: {result['old']} → {result['now']}"[:60]
         for key in ("app", "window", "percent", "workspace", "action", "mood", "url"):
             if key in result:
                 return f"{key} {result[key]}"[:60]

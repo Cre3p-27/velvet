@@ -719,6 +719,132 @@ Singleton {
         Panels.openSettingsKey(key);
     }
 
+    // ── her hands on the shell itself (velvet-ai settings.find / settings.set)
+    //  The same rows the settings window shows (Schema.flat), searched by
+    //  words, and set through the same door the window uses (Bridge.set), so
+    //  a look change or a live value behaves exactly as if clicked. A few
+    //  switches stay the user's: her own safety catch, her brain, and the
+    //  locks that could shut the user out.
+    readonly property var settingsDenied: ["velly.confirmDanger", "velly.enabled", "velly.provider", "velly.model", "lock.useBuiltin", "lock.lockOnStart", "lock.listenToLogind", "lock.pamConfig"]
+
+    function settingId(item: var): string {
+        return item.key ? `${item.key}` : (item.live ? `live:${item.live}` : "");
+    }
+
+    function settingInfo(entry: var): var {
+        const it = entry.item;
+        const out = {
+            key: root.settingId(it),
+            name: `${it.name ?? ""}`,
+            where: `${entry.path ?? ""}`,
+            kind: `${it.kind}`,
+            value: Bridge.get(it)
+        };
+        const help = `${it.help ?? it.sub ?? ""}`;
+        if (help.length > 0)
+            out.help = help.length > 240 ? help.slice(0, 237) + "…" : help;
+        if (it.kind === "choice")
+            out.options = (it.options ?? []).map(o => ({ value: o.value, label: o.label }));
+        if (it.kind === "slider") {
+            out.min = it.min;
+            out.max = it.max;
+            if (it.unit)
+                out.unit = it.unit;
+            if (it.fmt === "percent")
+                out.note = "a fraction: 1 = 100 %";
+        }
+        return out;
+    }
+
+    function findSettings(query: string): string {
+        const words = `${query ?? ""}`.toLowerCase().split(/[^a-z0-9äöüß+]+/).filter(w => w.length > 1);
+        if (words.length === 0)
+            return JSON.stringify({ settings: [], shortcuts: [] });
+        const flat = Schema.flat;
+        const hits = [];
+        for (let i = 0; i < flat.length; i++) {
+            const it = flat[i].item;
+            if (["toggle", "slider", "choice", "colour"].indexOf(it.kind) < 0 || root.settingId(it) === "")
+                continue;
+            const name = `${it.name ?? ""}`.toLowerCase();
+            const hay = `${name} ${it.sub ?? ""} ${it.help ?? ""} ${flat[i].path ?? ""} ${it.key ?? ""} ${(it.options ?? []).map(o => o.label).join(" ")}`.toLowerCase();
+            let score = 0;
+            for (let w = 0; w < words.length; w++) {
+                if (name.indexOf(words[w]) >= 0)
+                    score += 3;
+                else if (hay.indexOf(words[w]) >= 0)
+                    score += 1;
+            }
+            if (score > 0)
+                hits.push({ s: score, e: flat[i] });
+        }
+        hits.sort((a, b) => b.s - a.s);
+        const best = hits.length > 0 ? hits[0].s : 0;
+        const settings = hits.filter(h => h.s >= Math.max(1, best - 2)).slice(0, 7).map(h => root.settingInfo(h.e));
+        const shortcuts = [];
+        const sections = Shortcuts.sections;
+        for (let i = 0; i < sections.length && shortcuts.length < 4; i++) {
+            const keys = sections[i].keys ?? [];
+            for (let k = 0; k < keys.length && shortcuts.length < 4; k++) {
+                const what = `${keys[k].v ?? ""}`.toLowerCase();
+                if (words.filter(w => what.indexOf(w) >= 0).length >= Math.min(2, words.length))
+                    shortcuts.push({ keys: `${keys[k].k}`, does: `${keys[k].v}`, where: `${sections[i].name}` });
+            }
+        }
+        return JSON.stringify({ settings: settings, shortcuts: shortcuts });
+    }
+
+    function applySetting(key: string, jsonValue: string): string {
+        const flat = Schema.flat;
+        let entry = null;
+        for (let i = 0; i < flat.length; i++)
+            if (root.settingId(flat[i].item) === key && ["toggle", "slider", "choice", "colour"].indexOf(flat[i].item.kind) >= 0) {
+                entry = flat[i];
+                break;
+            }
+        if (entry === null)
+            return JSON.stringify({ ok: false, error: `no setting "${key}" right now — look it up with settings.find (some only appear once another one is set)` });
+        if (root.settingsDenied.indexOf(key) >= 0)
+            return JSON.stringify({ ok: false, error: "that switch stays with the user — tell them where it is instead" });
+        const it = entry.item;
+        let v;
+        try {
+            v = JSON.parse(jsonValue);
+        } catch (e) {
+            v = `${jsonValue ?? ""}`;
+        }
+        if (it.kind === "toggle") {
+            if (typeof v === "string")
+                v = /^(true|on|an|ein|ja|1|yes)$/i.test(v.trim()) ? true : (/^(false|off|aus|nein|0|no)$/i.test(v.trim()) ? false : null);
+            if (typeof v === "number")
+                v = v !== 0;
+            if (typeof v !== "boolean")
+                return JSON.stringify({ ok: false, error: "a switch takes true or false" });
+        } else if (it.kind === "slider") {
+            v = Number(v);
+            if (!isFinite(v))
+                return JSON.stringify({ ok: false, error: `a number between ${it.min} and ${it.max}` });
+            v = Math.max(it.min ?? v, Math.min(it.max ?? v, v));
+            if (it.step)
+                v = Math.round(v / it.step) * it.step;
+            if (it.fmt === "int")
+                v = Math.round(v);
+            v = Math.round(v * 10000) / 10000;
+        } else if (it.kind === "choice") {
+            const opts = it.options ?? [];
+            const found = opts.find(o => `${o.value}` === `${v}`) ?? opts.find(o => `${o.label}`.toLowerCase() === `${v}`.toLowerCase());
+            if (!found)
+                return JSON.stringify({ ok: false, error: "one of: " + opts.map(o => `${o.value} (${o.label})`).join(", ") });
+            v = found.value;
+        } else if (it.kind === "colour") {
+            if (!/^#[0-9a-fA-F]{6}$/.test(`${v}`))
+                return JSON.stringify({ ok: false, error: "a colour as #rrggbb" });
+        }
+        const old = Bridge.get(it);
+        Bridge.set(it, v);
+        return JSON.stringify({ ok: true, key: key, name: `${it.name}`, where: `${entry.path}`, old: old, now: Bridge.get(it) });
+    }
+
     function setKey(key: string, jsonValue: string): void {
         try {
             Config.set(key, JSON.parse(jsonValue));
@@ -1710,6 +1836,13 @@ Singleton {
         // SUPER+A: wake her and show her, or put her back to sleep
         function summon(): void {
             root.summon();
+        }
+        // velvet-ai settings.find / settings.set
+        function settingsFind(query: string): string {
+            return root.findSettings(query);
+        }
+        function settingApply(key: string, value: string): string {
+            return root.applySetting(key, value);
         }
         function wake(): void {
             root.wake();

@@ -640,6 +640,7 @@ Item {
                             { t: "SPIEL MUSIK", q: "Spiel mir Musik, die gerade passt.", i: "music_note" },
                             { t: "IN 10 MIN ERINNERN", q: "Erinnere mich in zehn Minuten an eine Pause.", i: "alarm" },
                             { t: "SYSTEM-UPDATE", q: "Mach ein System-Update.", i: "system_update" },
+                            { t: "VELVET ANPASSEN", q: "Was kann ich an Velvet alles einstellen? Nenn mir ein paar Beispiele, die du für mich ändern kannst.", i: "tune" },
                             { t: "WAS KANNST DU?", q: "Was kannst du alles für mich tun?", i: "auto_awesome" }
                         ]
 
