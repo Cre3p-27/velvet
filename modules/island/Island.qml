@@ -55,12 +55,29 @@ PanelWindow {
     // touches the edge — the same touch that raises the pill).
     readonly property real barClear: Config.map.islandPlace === "below" && Config.bar.enabled && Config.bar.position === "top" ? Config.bar.thickness + Config.bar.margin * 2 : 0
 
-    // Which part of the top edge it keeps to — MODULES → DYNAMIC ISLAND →
-    // POSITION. On a side it stands 16 px in (clear of a taskbar on that
-    // side) and grows away from the edge; in the middle it grows both ways.
-    readonly property string side: Config.map.islandSide
+    // Which screen edge it lives on — MODULES → DYNAMIC ISLAND → POSITION.
+    // TOP: the middle of the top edge, it drops down and grows both ways.
+    // LEFT / RIGHT EDGE: it slides out of that side at ISLAND HEIGHT, stays
+    // flush with its edge (16 px in, clear of a taskbar there) and grows into
+    // the screen — sideways away from the edge, downwards from the pill.
+    readonly property string edge: Appearance.islandEdge
+    readonly property bool onSide: root.edge !== "top"
+    // 0 → 1 as it slides out of its side edge (the top uses its own y)
+    property real slide: root.active ? 1 : 0
+
+    Behavior on slide {
+        NumberAnimation {
+            duration: Appearance.anim.normal
+            easing.type: Easing.OutExpo
+        }
+    }
+
     function capsuleX(w: real): real {
-        const x = Appearance.sideX(root.side, root.width, w, 16) + Config.map.islandShift;
+        if (root.edge === "left")
+            return Math.round(16 + Config.map.islandGap + Appearance.barRoom("left") - (1 - root.slide) * (w + 40));
+        if (root.edge === "right")
+            return Math.round(root.width - w - 16 - Config.map.islandGap - Appearance.barRoom("right") + (1 - root.slide) * (w + 40));
+        const x = (root.width - w) / 2 + Config.map.islandShift;
         return Math.round(Math.max(4, Math.min(root.width - w - 4, x)));
     }
 
@@ -580,11 +597,17 @@ PanelWindow {
         id: shield
 
         readonly property int span: Math.max(capsule.width + 220, Math.max(80, Config.map.edgeWidth) + 44)
+        // on a side edge: the capsule and its margin, reaching the edge, and
+        // at least the whole hot zone that raised it (the pointer may still
+        // be up there when the pill slides out)
+        readonly property real zone: Math.max(80, Config.map.edgeWidth) + 44
+        readonly property real sideTop: Math.min(capsule.y - 44, capsule.y + root.pillH / 2 - zone / 2)
+        readonly property real sideBottom: Math.max(capsule.y + capsule.height + 44, capsule.y + root.pillH / 2 + zone / 2)
 
-        x: Math.round(capsule.x + capsule.width / 2 - shield.span / 2)
-        y: 0
-        width: shield.span
-        height: capsule.y + capsule.height + 44
+        x: root.edge === "left" ? 0 : (root.edge === "right" ? capsule.x - 44 : Math.round(capsule.x + capsule.width / 2 - shield.span / 2))
+        y: root.onSide ? shield.sideTop : 0
+        width: root.edge === "left" ? capsule.x + capsule.width + 44 : (root.edge === "right" ? root.width - capsule.x + 44 : shield.span)
+        height: root.onSide ? shield.sideBottom - shield.sideTop : capsule.y + capsule.height + 44
 
         z: 50
 
@@ -648,7 +671,7 @@ PanelWindow {
         id: capsule
 
         x: root.capsuleX(capsule.width) + (root.axis === "h" ? Math.max(-30, Math.min(30, root.dragDX * 0.12)) : 0)
-        y: root.active ? 10 + root.barClear + Config.map.islandGap : -capsule.height - 14
+        y: root.onSide ? Appearance.edgeY(root.height, capsule.height, root.pillH) : (root.active ? 10 + root.barClear + Config.map.islandGap : -capsule.height - 14)
         width: root.shellW
         height: root.shellH
         scale: root.expanded ? 1 : (root.pressed && root.axis === "v" ? 0.985 : 1)
@@ -668,17 +691,18 @@ PanelWindow {
             }
         }
 
-        // On a side the x follows the width spring exactly (the edge it keeps
-        // to must not wobble); in the middle it settles with its own ease.
+        // On a side edge x and y follow the width/height spring and the slide
+        // exactly (the edge it keeps to must not wobble); on top it settles
+        // with its own ease.
         Behavior on x {
-            enabled: !root.pressed && root.side === "centre"
+            enabled: !root.pressed && !root.onSide
             NumberAnimation {
                 duration: Appearance.anim.normal
                 easing.type: Easing.OutExpo
             }
         }
         Behavior on y {
-            enabled: !root.pressed
+            enabled: !root.pressed && !root.onSide
             NumberAnimation {
                 duration: Appearance.anim.normal
                 easing.type: Easing.OutExpo

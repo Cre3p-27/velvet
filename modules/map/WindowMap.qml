@@ -599,11 +599,17 @@ PanelWindow {
         id: shield
 
         readonly property int span: Math.max(plate.width + 44, Math.max(80, Config.map.edgeWidth) + 44)
+        readonly property string edge: Appearance.islandEdge
+        // on a side edge: the plate and its margin, reaching the edge, and
+        // the whole hot zone beside it
+        readonly property real zone: Math.max(80, Config.map.edgeWidth) + 44
+        readonly property real sideTop: Math.min(plate.y - 28, plate.y + plate.height / 2 - zone / 2)
+        readonly property real sideBottom: Math.max(plate.y + plate.height + 28, plate.y + plate.height / 2 + zone / 2)
 
-        x: Math.round(plate.x + plate.width / 2 - shield.span / 2)
-        y: 0
-        width: shield.span
-        height: plate.y + plate.height + 28
+        x: shield.edge === "left" ? 0 : (shield.edge === "right" ? plate.x - 28 : Math.round(plate.x + plate.width / 2 - shield.span / 2))
+        y: shield.edge === "top" ? 0 : shield.sideTop
+        width: shield.edge === "left" ? plate.x + plate.width + 28 : (shield.edge === "right" ? root.width - plate.x + 28 : shield.span)
+        height: shield.edge === "top" ? plate.y + plate.height + 28 : shield.sideBottom - shield.sideTop
 
         z: 50
 
@@ -820,17 +826,26 @@ PanelWindow {
 
         width: plate.innerW + plate.pad * 2
         height: plate.innerH + plate.pad * 2 + plate.footer
-        // where the island stood: the map slides in from the same part of
-        // the edge (MODULES → DYNAMIC ISLAND → POSITION)
-        x: Math.round(Math.max(8, Math.min(root.width - width - 8, Appearance.sideX(Config.map.islandSide, root.width, width, 16) + Config.map.islandShift)))
-        y: 14
+        // where the island lives: the map slides in from the same edge
+        // (MODULES → DYNAMIC ISLAND → POSITION) — down from the top, or out
+        // of the left or right side at ISLAND HEIGHT
+        readonly property string edge: Appearance.islandEdge
+        x: plate.edge === "left" ? 16 + Appearance.barRoom("left") : (plate.edge === "right" ? root.width - width - 16 - Appearance.barRoom("right") : Math.round((root.width - width) / 2))
+        y: plate.edge === "top" ? 14 : Math.round(Math.max(14, Math.min(root.height - height - 14, root.height * Math.max(0.05, Math.min(0.95, Config.map.islandEdgeY)) + Config.map.islandShift - height / 2)))
 
         opacity: root.shown ? 1 : 0
         visible: opacity > 0.01
 
         transform: Translate {
-            y: root.shown ? 0 : -plate.height - 30
+            x: root.shown || plate.edge === "top" ? 0 : (plate.edge === "left" ? -plate.width - 30 : plate.width + 30)
+            y: root.shown || plate.edge !== "top" ? 0 : -plate.height - 30
 
+            Behavior on x {
+                NumberAnimation {
+                    duration: Appearance.anim.normal
+                    easing.type: Easing.OutExpo
+                }
+            }
             Behavior on y {
                 NumberAnimation {
                     duration: Appearance.anim.normal

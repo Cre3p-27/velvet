@@ -323,6 +323,17 @@ Singleton {
             return areaW - w - margin - root.barRoom("right");
         return (areaW - w) / 2;
     }
+    // The island's edge (MODULES → DYNAMIC ISLAND → POSITION): "top", or the
+    // "left" / "right" edge it slides out of. The map and the hot zone follow.
+    readonly property string islandEdge: Config.map.islandSide === "left" ? "left" : (Config.map.islandSide === "right" ? "right" : "top")
+    // On a side edge: the y of an item `h` tall whose first `anchorH` pixels
+    // are centred on the chosen height (ISLAND HEIGHT, plus the nudge), kept
+    // on screen — an island that opens downwards stays where the pill was
+    // until the bottom of the screen pushes it up.
+    function edgeY(areaH: real, h: real, anchorH: real): real {
+        const centre = areaH * Math.max(0.05, Math.min(0.95, Config.map.islandEdgeY)) + Config.map.islandShift;
+        return Math.round(Math.max(8, Math.min(areaH - h - 8, centre - anchorH / 2)));
+    }
     // the room a vertical taskbar takes on the left or right edge
     function barRoom(side: string): real {
         if (!Config.bar.enabled || Config.bar.position !== side)

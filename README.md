@@ -646,10 +646,12 @@ AMBIENT — only the clock, the lyric and the music stay until you move or type.
 
 Touch the top edge and the island rises: swipe it for music, the desktop map,
 tasks, weather, the system and Velly; pull it down to open one. **MODULES →
-DYNAMIC ISLAND → POSITION** puts it in the middle, on the left or on the right
-of the top edge — the hot zone that raises it and the map it opens move with
-it, on a side it grows away from the edge, and a taskbar on that side is
-stepped round (SHIFT SIDEWAYS still nudges it from there). The other floating
+DYNAMIC ISLAND → POSITION** moves it to the **left or right screen edge**: it
+then slides out of that side at **ISLAND HEIGHT** (the middle by default),
+stays flush with its edge and opens into the screen, and a taskbar on that
+edge is stepped round. Its hot zone is a thin strip on that edge, only as long
+as HOT ZONE LENGTH and centred on the island — scrollbars further up and down
+stay yours — and the desktop map slides in from the same edge. The other floating
 parts have the same choice: **SIDE** for the volume pop-up (OSD), the desktop
 lyrics and the launcher, and notifications can rise from the middle of the top
 or bottom edge as well as from a corner.

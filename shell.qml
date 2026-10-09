@@ -109,6 +109,13 @@ ShellRoot {
         EdgeSensor {}
     }
 
+    // …and its twin for an island on the left or right screen edge.
+    Variants {
+        model: Quickshell.screens
+
+        EdgeSensorSide {}
+    }
+
     // The Dynamic Island — one per screen, like the map. Only the screen
     // whose top edge you touch raises the pill.
     Variants {

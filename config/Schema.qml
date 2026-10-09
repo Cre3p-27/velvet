@@ -297,29 +297,38 @@ Singleton {
                 {
                     kind: "slider",
                     key: "map.islandGap",
-                    name: "DISTANCE FROM THE TOP",
-                    help: "Extra room between the top edge (or the bar) and the pill, in pixels.",
-                    sub: "EXTRA ROOM ABOVE THE PILL",
+                    name: "DISTANCE FROM THE EDGE",
+                    help: "Extra room between the pill and its edge (or a taskbar on that edge), in pixels.",
+                    sub: "EXTRA ROOM BETWEEN THE PILL AND ITS EDGE",
                     min: 0, max: 200, step: 2, fmt: "int", unit: "px"
                 },
                 {
                     kind: "choice",
                     key: "map.islandSide",
                     name: "POSITION",
-                    help: "Which part of the top edge the island keeps to: the middle, or the left or right side. The hot zone that raises it and the desktop map it opens follow it there, and on a side it grows away from the edge. A taskbar on that side is stepped round.",
-                    sub: "MIDDLE, LEFT OR RIGHT ALONG THE TOP EDGE",
+                    help: "Which screen edge the island lives on. TOP: it drops down from the middle of the top edge. LEFT EDGE / RIGHT EDGE: it slides out of that side of the screen at ISLAND HEIGHT and opens into the screen. Touching that edge raises it, and the desktop map slides in from the same edge. A taskbar on that edge is stepped round.",
+                    sub: "TOP, LEFT EDGE OR RIGHT EDGE",
                     options: [
-                        { value: "left", label: "LEFT" },
-                        { value: "centre", label: "MIDDLE" },
-                        { value: "right", label: "RIGHT" }
+                        { value: "centre", label: "TOP" },
+                        { value: "left", label: "LEFT EDGE" },
+                        { value: "right", label: "RIGHT EDGE" }
                     ]
+                },
+                {
+                    kind: "slider",
+                    key: "map.islandEdgeY",
+                    name: "ISLAND HEIGHT",
+                    help: "On the left or right edge: how far down the island sits. 50 % is the middle of the screen. The hot zone moves with it.",
+                    sub: "WHERE ON THE SIDE EDGE IT SITS",
+                    when: { key: "map.islandSide", in: ["left", "right"] },
+                    min: 0.1, max: 0.9, step: 0.05, fmt: "percent"
                 },
                 {
                     kind: "slider",
                     key: "map.islandShift",
                     name: "SHIFT SIDEWAYS",
-                    help: "Fine-tunes the pill left (minus) or right (plus) of its POSITION, in pixels. Handy when the bar has something just there.",
-                    sub: "A NUDGE FROM ITS POSITION",
+                    help: "Fine-tunes where the pill sits along its edge, in pixels: left or right on the top edge, up or down on a side edge. Handy when the bar has something just there.",
+                    sub: "A NUDGE ALONG ITS EDGE",
                     min: -800, max: 800, step: 10, fmt: "int", unit: "px"
                 },
                 {
@@ -332,8 +341,8 @@ Singleton {
                 {
                     kind: "slider",
                     key: "map.edgeWidth",
-                    name: "HOT ZONE WIDTH",
-                    help: "How much of the top edge reacts to the pointer, in pixels (at least 80). Narrow it if you reach the top edge by accident, e.g. to hit a window's title.",
+                    name: "HOT ZONE LENGTH",
+                    help: "How much of the island's edge reacts to the pointer, in pixels (at least 80), centred on the island. Shorten it if you reach that edge by accident, e.g. to hit a window's title or scrollbar.",
                     sub: "HOW MUCH OF THE TOP EDGE LISTENS",
                     min: 120, max: 1400, step: 20, fmt: "int", unit: "px"
                 },
@@ -341,7 +350,7 @@ Singleton {
                     kind: "slider",
                     key: "map.edgeHeight",
                     name: "HOT ZONE HEIGHT",
-                    help: "How thick the invisible strip at the top edge is, in pixels. Anything below 10 px counts as 10; thicker is easier to hit but easier to trigger by accident.",
+                    help: "How thick the invisible strip at the island's edge is, in pixels. On the top edge anything below 10 px counts as 10; on a side edge 3 to 12 px, so scrollbars there stay usable.",
                     sub: "HOW THICK THE LISTENING STRIP IS",
                     min: 1, max: 40, step: 1, fmt: "int", unit: "px"
                 },

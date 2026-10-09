@@ -511,9 +511,11 @@ Singleton {
                 property string islandPlace: "below"   // below | over
                 property int islandGap: 0               // extra px from the top
                 property int islandShift: 0             // px sideways
-                // Which part of the top edge the island (and the map it hands
-                // off to, and the hot zone that raises it) keeps to.
-                property string islandSide: "centre"    // left | centre | right
+                // Which screen edge the island lives on — the top (middle), or the
+                // left or right edge, where it slides out of the side. The map it
+                // hands off to and the hot zone that raises it follow it.
+                property string islandSide: "centre"    // centre (top) | left | right
+                property real islandEdgeY: 0.5          // on a side edge: how far down, 0 top … 1 bottom
                 // The TASKS module in the island's swipe cycle, between the
                 // map and the weather — configure it in WORKFLOW.
                 property bool islandTasks: true

@@ -29,7 +29,9 @@ PanelWindow {
     screen: modelData
     // Away while the island or the map itself is up: both need the top
     // edge, and the strip must not steal from it.
-    visible: Config.map.enabled && Config.map.hoverEdge && !Panels.windowMap && Panels.mapHover === "" && (Config.map.island ? Panels.islandScreen === "" : true)
+    // Only while the island lives on the top edge: on a side edge its own
+    // strip there (EdgeSensorSide) raises it.
+    visible: Config.map.enabled && Config.map.hoverEdge && Appearance.islandEdge === "top" && !Panels.windowMap && Panels.mapHover === "" && (Config.map.island ? Panels.islandScreen === "" : true)
     color: "transparent"
     WlrLayershell.namespace: "velvet-map-edge"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -68,10 +70,8 @@ PanelWindow {
             // origin in the layout.
             const sx = root.modelData?.x ?? 0;
             const localX = pt.x - sx;
-            // the zone stands where the pill rests: middle, left or right
-            // (MODULES → DYNAMIC ISLAND → POSITION)
-            const pillW = Math.max(220, Config.map.islandWidth);
-            const centre = Appearance.sideX(Config.map.islandSide, root.width, pillW, 16) + Config.map.islandShift + pillW / 2;
+            // the zone stands where the pill rests (SHIFT SIDEWAYS moves both)
+            const centre = root.width / 2 + Config.map.islandShift;
             const dx = Math.abs(localX - Math.max(root.stripW / 2, Math.min(root.width - root.stripW / 2, centre)));
             if (dx <= root.stripW / 2)
                 openTimer.restart();
