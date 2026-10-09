@@ -313,6 +313,23 @@ Singleton {
     // A corner radius from a pixel size written into a module: 0 where the
     // vibe has no round corners, wider where it has more. Radii under 6 px
     // are details (a dot, a tick), not corners, and stay as they are.
+    // ── where a part stands along an edge (the …side settings: left | centre |
+    // right). The x of an item `w` wide in an area `areaW` wide, `margin` in
+    // from the edge it keeps to; a taskbar standing on that side is cleared.
+    function sideX(side: string, areaW: real, w: real, margin: real): real {
+        if (side === "left")
+            return margin + root.barRoom("left");
+        if (side === "right")
+            return areaW - w - margin - root.barRoom("right");
+        return (areaW - w) / 2;
+    }
+    // the room a vertical taskbar takes on the left or right edge
+    function barRoom(side: string): real {
+        if (!Config.bar.enabled || Config.bar.position !== side)
+            return 0;
+        return Config.bar.thickness + Config.bar.margin * 2;
+    }
+
     function r(px: real): real {
         if (px < 6)
             return px;

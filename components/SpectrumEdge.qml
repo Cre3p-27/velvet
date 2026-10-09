@@ -201,7 +201,9 @@ Item {
             anchors.fill: parent
             visible: root.style !== "bars"
             preferredRendererType: Shape.GeometryRenderer
-            layer.enabled: root.style !== "bars" && root.opacity > 0.01
+            // (on the wish to be seen, not on the opacity itself: reading
+            // the fading opacity here was reported as a binding loop)
+            layer.enabled: root.style !== "bars" && (root.playing || root.demo) && root.running
             layer.samples: 4
 
             ShapePath {

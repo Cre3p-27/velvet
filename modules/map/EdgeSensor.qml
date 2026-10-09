@@ -68,7 +68,11 @@ PanelWindow {
             // origin in the layout.
             const sx = root.modelData?.x ?? 0;
             const localX = pt.x - sx;
-            const dx = Math.abs(localX - root.width / 2);
+            // the zone stands where the pill rests: middle, left or right
+            // (MODULES → DYNAMIC ISLAND → POSITION)
+            const pillW = Math.max(220, Config.map.islandWidth);
+            const centre = Appearance.sideX(Config.map.islandSide, root.width, pillW, 16) + Config.map.islandShift + pillW / 2;
+            const dx = Math.abs(localX - Math.max(root.stripW / 2, Math.min(root.width - root.stripW / 2, centre)));
             if (dx <= root.stripW / 2)
                 openTimer.restart();
             else

@@ -303,11 +303,23 @@ Singleton {
                     min: 0, max: 200, step: 2, fmt: "int", unit: "px"
                 },
                 {
+                    kind: "choice",
+                    key: "map.islandSide",
+                    name: "POSITION",
+                    help: "Which part of the top edge the island keeps to: the middle, or the left or right side. The hot zone that raises it and the desktop map it opens follow it there, and on a side it grows away from the edge. A taskbar on that side is stepped round.",
+                    sub: "MIDDLE, LEFT OR RIGHT ALONG THE TOP EDGE",
+                    options: [
+                        { value: "left", label: "LEFT" },
+                        { value: "centre", label: "MIDDLE" },
+                        { value: "right", label: "RIGHT" }
+                    ]
+                },
+                {
                     kind: "slider",
                     key: "map.islandShift",
                     name: "SHIFT SIDEWAYS",
-                    help: "Moves the pill left (minus) or right (plus) of the screen's middle, in pixels. Handy when the bar has something in the centre.",
-                    sub: "LEFT OR RIGHT OF THE MIDDLE",
+                    help: "Fine-tunes the pill left (minus) or right (plus) of its POSITION, in pixels. Handy when the bar has something just there.",
+                    sub: "A NUDGE FROM ITS POSITION",
                     min: -800, max: 800, step: 10, fmt: "int", unit: "px"
                 },
                 {
@@ -1055,13 +1067,15 @@ Singleton {
                     kind: "choice",
                     key: "notifs.position",
                     name: "POSITION",
-                    help: "Which screen corner the popups rise from.",
+                    help: "Where the popups rise from: a corner, or the middle of the top or bottom edge.",
                     sub: "WHICH CORNER THE POPUPS RISE FROM",
                     options: [
                         { value: "top-right", label: "TOP RIGHT" },
                         { value: "top-left", label: "TOP LEFT" },
                         { value: "bottom-right", label: "BOTTOM RIGHT" },
-                        { value: "bottom-left", label: "BOTTOM LEFT" }
+                        { value: "bottom-left", label: "BOTTOM LEFT" },
+                        { value: "top-centre", label: "TOP MIDDLE" },
+                        { value: "bottom-centre", label: "BOTTOM MIDDLE" }
                     ]
                 },
                 {
@@ -1117,6 +1131,18 @@ Singleton {
                     ]
                 },
                 {
+                    kind: "choice",
+                    key: "osd.side",
+                    name: "SIDE",
+                    help: "Whether the volume and brightness pop-up sits in the middle of its edge or towards the left or right.",
+                    sub: "LEFT, MIDDLE OR RIGHT",
+                    options: [
+                        { value: "left", label: "LEFT" },
+                        { value: "centre", label: "MIDDLE" },
+                        { value: "right", label: "RIGHT" }
+                    ]
+                },
+                {
                     kind: "slider",
                     key: "osd.timeout",
                     name: "LINGER",
@@ -1157,6 +1183,18 @@ Singleton {
                         { value: "bottom", label: "BOTTOM" },
                         { value: "top", label: "TOP" },
                         { value: "centre", label: "CENTRE" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "lyrics.side",
+                    name: "SIDE",
+                    help: "Whether the lyrics sit in the middle or towards the left or right. MIDDLE keeps the STACK card where it always was.",
+                    sub: "LEFT, MIDDLE OR RIGHT",
+                    options: [
+                        { value: "left", label: "LEFT" },
+                        { value: "centre", label: "MIDDLE" },
+                        { value: "right", label: "RIGHT" }
                     ]
                 },
                 {
@@ -1757,6 +1795,14 @@ Singleton {
                 { value: "auto", label: "THE LOOK'S OWN" },
                 { value: "top", label: "HIGH" },
                 { value: "centre", label: "MIDDLE" }
+            ]
+        },
+        {
+            kind: "choice", key: "launcher.side", name: "SIDE", help: "Whether the launcher opens in the middle or towards the left or right of the screen. The Windows start menu keeps its corner and the terminal line its full width.", sub: "LEFT, MIDDLE OR RIGHT",
+            options: [
+                { value: "left", label: "LEFT" },
+                { value: "centre", label: "MIDDLE" },
+                { value: "right", label: "RIGHT" }
             ]
         },
         { kind: "info", name: "MOTION", sub: "OPENING · RESULTS · SELECTION · LAUNCH", help: "How the launcher moves. ANIMATION SPEED works on all of it, and the system-wide animation speed still applies on top." },
@@ -3795,6 +3841,18 @@ Singleton {
                     ]
                 },
                 {
+                    kind: "choice",
+                    key: "lyrics.side",
+                    name: "SIDE",
+                    help: "Whether the lyrics sit in the middle or towards the left or right. MIDDLE keeps the STACK card where it always was.",
+                    sub: "LEFT, MIDDLE OR RIGHT",
+                    options: [
+                        { value: "left", label: "LEFT" },
+                        { value: "centre", label: "MIDDLE" },
+                        { value: "right", label: "RIGHT" }
+                    ]
+                },
+                {
                     kind: "slider",
                     key: "lyrics.size",
                     help: "How big the lyrics are.",
@@ -4058,6 +4116,18 @@ Singleton {
                             value: "centre",
                             label: "CENTRE"
                         }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "osd.side",
+                    name: "OSD SIDE",
+                    help: "Whether the pop-up sits in the middle of its edge or towards the left or right.",
+                    sub: "LEFT, MIDDLE OR RIGHT",
+                    options: [
+                        { value: "left", label: "LEFT" },
+                        { value: "centre", label: "MIDDLE" },
+                        { value: "right", label: "RIGHT" }
                     ]
                 }
             ]

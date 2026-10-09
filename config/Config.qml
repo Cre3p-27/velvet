@@ -511,6 +511,9 @@ Singleton {
                 property string islandPlace: "below"   // below | over
                 property int islandGap: 0               // extra px from the top
                 property int islandShift: 0             // px sideways
+                // Which part of the top edge the island (and the map it hands
+                // off to, and the hot zone that raises it) keeps to.
+                property string islandSide: "centre"    // left | centre | right
                 // The TASKS module in the island's swipe cycle, between the
                 // map and the weather — configure it in WORKFLOW.
                 property bool islandTasks: true
@@ -555,6 +558,7 @@ Singleton {
                 property bool enabled: false
                 property bool desktop: true         // draw it on the desktop
                 property string position: "bottom"  // bottom | top | centre
+                property string side: "centre"      // left | centre | right
                 property real size: 1.0
                 // "word" shows one word at a time, huge, the way the inspo
                 // does it; "line" shows the whole line and fills it in as it
@@ -618,6 +622,7 @@ Singleton {
                 property string cascade: "slide"   // slide | pop | fade | none (results arriving)
                 property string motion: "spring"   // spring | smooth | snap (the selection moving)
                 property string position: "auto"   // auto | top | centre
+                property string side: "centre"     // left | centre | right (the start menu keeps its corner)
                 property bool preview: true        // the detail card beside the list
                 // Velvet's orbit
                 property string orbitEntrance: "bloom" // bloom | spiral | drop | none
@@ -644,6 +649,7 @@ Singleton {
                 property bool enabled: true
                 property int timeout: 1600
                 property string position: "bottom"
+                property string side: "centre"      // left | centre | right
             }
 
             // ============================================================ WALLPAPER

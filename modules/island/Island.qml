@@ -55,6 +55,15 @@ PanelWindow {
     // touches the edge — the same touch that raises the pill).
     readonly property real barClear: Config.map.islandPlace === "below" && Config.bar.enabled && Config.bar.position === "top" ? Config.bar.thickness + Config.bar.margin * 2 : 0
 
+    // Which part of the top edge it keeps to — MODULES → DYNAMIC ISLAND →
+    // POSITION. On a side it stands 16 px in (clear of a taskbar on that
+    // side) and grows away from the edge; in the middle it grows both ways.
+    readonly property string side: Config.map.islandSide
+    function capsuleX(w: real): real {
+        const x = Appearance.sideX(root.side, root.width, w, 16) + Config.map.islandShift;
+        return Math.round(Math.max(4, Math.min(root.width - w - 4, x)));
+    }
+
     // ──────────────────────────────────────────────────────────── the modules
     //  Width and height are the capsule's full size once the module is open;
     //  closed, the capsule is just the pill row (38 px) on top. The TASKS
@@ -497,7 +506,10 @@ PanelWindow {
         }
 
         function onIslandSetExpandChanged(): void {
-            if (!root.active)
+            // -2 is "nothing asked": the reset below fires this handler once
+            // more, and reading it as "collapse" shut every IPC expand again
+            // in the same breath
+            if (!root.active || Panels.islandSetExpand === -2)
                 return;
             if (Panels.islandSetExpand < 0) {
                 root.expanded = false;
@@ -569,7 +581,7 @@ PanelWindow {
 
         readonly property int span: Math.max(capsule.width + 220, Math.max(80, Config.map.edgeWidth) + 44)
 
-        x: Math.round((root.width - shield.span) / 2) + Config.map.islandShift
+        x: Math.round(capsule.x + capsule.width / 2 - shield.span / 2)
         y: 0
         width: shield.span
         height: capsule.y + capsule.height + 44
@@ -635,7 +647,7 @@ PanelWindow {
     Item {
         id: capsule
 
-        x: Math.round((root.width - capsule.width) / 2) + Config.map.islandShift + (root.axis === "h" ? Math.max(-30, Math.min(30, root.dragDX * 0.12)) : 0)
+        x: root.capsuleX(capsule.width) + (root.axis === "h" ? Math.max(-30, Math.min(30, root.dragDX * 0.12)) : 0)
         y: root.active ? 10 + root.barClear + Config.map.islandGap : -capsule.height - 14
         width: root.shellW
         height: root.shellH
@@ -656,8 +668,10 @@ PanelWindow {
             }
         }
 
+        // On a side the x follows the width spring exactly (the edge it keeps
+        // to must not wobble); in the middle it settles with its own ease.
         Behavior on x {
-            enabled: !root.pressed
+            enabled: !root.pressed && root.side === "centre"
             NumberAnimation {
                 duration: Appearance.anim.normal
                 easing.type: Easing.OutExpo

@@ -88,7 +88,9 @@ PanelWindow {
     Item {
         id: card
 
-        anchors.centerIn: parent
+        // MODULES → OSD → SIDE: left, middle or right of its edge
+        anchors.verticalCenter: parent.verticalCenter
+        x: Math.round(Appearance.sideX(Config.osd.side, parent.width, card.width, 24))
         width: 420
         height: 68
         scale: root.shown ? 1 : 0.9

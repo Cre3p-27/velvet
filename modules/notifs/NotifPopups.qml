@@ -14,6 +14,9 @@ PanelWindow {
 
     readonly property bool onTop: Config.notifs.position.startsWith("top")
     readonly property bool onRight: Config.notifs.position.endsWith("right")
+    // top-centre / bottom-centre: anchored to one edge only, the compositor
+    // centres the stack along it
+    readonly property bool onCentre: Config.notifs.position.endsWith("centre")
 
     screen: modelData
     visible: Notifs.shownPopups.length > 0
@@ -27,7 +30,7 @@ PanelWindow {
     anchors {
         top: root.onTop
         bottom: !root.onTop
-        left: !root.onRight
+        left: !root.onRight && !root.onCentre
         right: root.onRight
     }
 

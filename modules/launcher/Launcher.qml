@@ -492,7 +492,8 @@ PanelWindow {
     Item {
         id: panel
 
-        anchors.horizontalCenter: parent.horizontalCenter
+        // LAUNCHER → SIDE
+        x: Math.round(Appearance.sideX(Config.launcher.side, root.width, panel.width, 24))
         y: Math.max(8, (root.height - panel.height) / 2)
         width: root.panelW
         height: root.boxSize * root.orbitScale + 24
@@ -1986,7 +1987,7 @@ PanelWindow {
     // The key line under the orbit (LAUNCHER → KEY HINTS): it comes in a
     // moment after opening and steps aside once you type.
     Text {
-        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.horizontalCenter: panel.horizontalCenter
         y: Math.min(root.height - 40, panel.y + panel.height + 6)
         visible: Config.launcher.hints
         text: "↑ ↓  ORBIT   ·   ⏎  LAUNCH   ·   ALT+P  PIN" + (Config.launcher.quickKeys ? "   ·   ALT+1…9  QUICK" : "") + "   ·   =  MATHS   ·   " + Config.launcher.actionPrefix + "  COMMAND   ·   ESC  BACK"

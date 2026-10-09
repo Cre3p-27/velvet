@@ -600,7 +600,7 @@ PanelWindow {
 
         readonly property int span: Math.max(plate.width + 44, Math.max(80, Config.map.edgeWidth) + 44)
 
-        x: Math.round((root.width - shield.span) / 2)
+        x: Math.round(plate.x + plate.width / 2 - shield.span / 2)
         y: 0
         width: shield.span
         height: plate.y + plate.height + 28
@@ -820,7 +820,9 @@ PanelWindow {
 
         width: plate.innerW + plate.pad * 2
         height: plate.innerH + plate.pad * 2 + plate.footer
-        x: Math.round((root.width - width) / 2)
+        // where the island stood: the map slides in from the same part of
+        // the edge (MODULES → DYNAMIC ISLAND → POSITION)
+        x: Math.round(Math.max(8, Math.min(root.width - width - 8, Appearance.sideX(Config.map.islandSide, root.width, width, 16) + Config.map.islandShift)))
         y: 14
 
         opacity: root.shown ? 1 : 0

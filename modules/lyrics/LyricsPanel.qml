@@ -53,7 +53,8 @@ PanelWindow {
         width: Config.lyrics.tile ? Math.round(root.width * Math.max(0.2, Math.min(1, Config.lyrics.width))) : root.width - 128
         height: Math.round(240 * root.unit)
 
-        anchors.horizontalCenter: parent.horizontalCenter
+        // MODULES → LYRICS → SIDE
+        x: Math.round(Appearance.sideX(Config.lyrics.side, parent.width, tile.width, Math.round(32 * root.unit)))
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: Config.lyrics.position === "bottom" ? -20 : (Config.lyrics.position === "top" ? 20 : 0)
 
@@ -311,9 +312,14 @@ PanelWindow {
         visible: root.stack
         running: root.active && root.stack
         unit: root.unit
-        anchors.right: Config.lyrics.position === "centre" ? undefined : parent.right
-        anchors.rightMargin: Math.round(32 * root.unit)
-        anchors.horizontalCenter: Config.lyrics.position === "centre" ? parent.horizontalCenter : undefined
+        // SIDE left / right puts the card there; MIDDLE keeps the old way
+        // (centred in the middle of the screen, on the right otherwise)
+        readonly property string at: Config.lyrics.side !== "centre" ? Config.lyrics.side : (Config.lyrics.position === "centre" ? "centre" : "right")
+        anchors.right: at === "right" ? parent.right : undefined
+        anchors.rightMargin: Math.round(32 * root.unit) + Appearance.barRoom("right")
+        anchors.left: at === "left" ? parent.left : undefined
+        anchors.leftMargin: Math.round(32 * root.unit) + Appearance.barRoom("left")
+        anchors.horizontalCenter: at === "centre" ? parent.horizontalCenter : undefined
         anchors.verticalCenter: parent.verticalCenter
     }
 
