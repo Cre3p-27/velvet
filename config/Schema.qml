@@ -215,16 +215,16 @@ Singleton {
         {
             kind: "page",
             name: "DYNAMIC ISLAND",
-            help: "The black pill that rises when you touch the top edge. Swipe on it to flip between its modules (map, tasks, weather, music, system, Velly), pull it down to open the mini desktop, hold it to wake Velly.",
-            sub: "THE BLACK PILL AT THE TOP EDGE",
+            help: "The island that rises when you touch its screen edge: a pill on the top edge, a rail of icons on the left or right edge. It holds the modules (music, map, tasks, weather, system, Velly): swipe, scrub or scroll to flip between them, click or pull one out to open it, hold it to wake Velly. Docked, it grows out of the screen frame or the taskbar.",
+            sub: "TOP PILL OR SIDE RAIL  ·  DOCKED IN THE FRAME",
             icon: "view_agenda",
             items: [
                 {
                     kind: "toggle",
                     key: "map.island",
                     name: "DYNAMIC ISLAND",
-                    help: "Turns the pill on. Off means touching the top edge opens the mini desktop straight away, the old way, and the island's modules are gone.",
-                    sub: "THE PILL ITSELF  ·  SWIPE FOR MODULES  ·  PULL DOWN TO OPEN"
+                    help: "Turns the island on. Off means touching its edge opens the mini desktop straight away, the old way, and the island's modules are gone.",
+                    sub: "THE ISLAND ITSELF  ·  ITS MODULES  ·  ITS GESTURES"
                 },
                 {
                     kind: "toggle",
@@ -244,7 +244,8 @@ Singleton {
                     kind: "slider",
                     key: "map.islandWidth",
                     name: "PILL WIDTH",
-                    help: "How wide the resting pill is, in pixels. It widens by itself when a module needs the room.",
+                    help: "How wide the resting pill on the top edge is, in pixels. It widens by itself when a module needs the room. (On a side edge the island is a rail of icons.)",
+                    when: { key: "map.islandSide", is: "centre" },
                     sub: "HOW WIDE THE RESTING PILL IS",
                     min: 220, max: 560, step: 4, fmt: "int", unit: "px"
                 },
@@ -260,8 +261,9 @@ Singleton {
                     kind: "choice",
                     key: "map.islandTheme",
                     name: "ISLAND THEME",
-                    help: "The ground the pill sits on. INK BLACK is the classic solid black, GLASS is frosted and see-through, WALLPAPER tints it with the colours of the current wallpaper.",
-                    sub: "THE GROUND THE PILL SITS ON  ·  GLASS IS FROSTED  ·  WALLPAPER MATCHES THE PICTURE",
+                    aka: "ISLAND COLOUR",
+                    help: "The island's colour. INK BLACK is the classic solid black. GLASS is a dark frost over the blurred desktop. WALLPAPER wears the picture's own colours. FRAME takes the screen frame's colour (and the bar's, when they are connected): docked, the island, frame and bar are one surface. TONE is the accent's deep shade.",
+                    sub: "INK BLACK · GLASS · WALLPAPER · FRAME · TONE",
                     options: [
                         {
                             value: "dark",
@@ -274,13 +276,103 @@ Singleton {
                         {
                             value: "wallpaper",
                             label: "WALLPAPER"
+                        },
+                        {
+                            value: "frame",
+                            label: "FRAME"
+                        },
+                        {
+                            value: "tone",
+                            label: "TONE"
                         }
                     ]
+                },
+                {
+                    kind: "toggle",
+                    key: "map.islandDock",
+                    name: "DOCK TO THE EDGE",
+                    help: "The island grows out of its edge instead of floating near it: flush with the screen frame or the taskbar there, square where it meets them and flared into them with soft inner curves. With SCREEN FRAME on and the theme FRAME, island, frame and bar read as one surface, and the frame's OUTLINE runs round the island. Off: a free pill a little way off the edge.",
+                    sub: "FLUSH WITH THE FRAME OR TASKBAR  ·  FLARED INTO IT"
+                },
+                {
+                    kind: "info",
+                    name: "THE SCREEN FRAME",
+                    sub: "THE FRAME THE ISLAND GROWS OUT OF",
+                    help: "The same switches as TASKBAR → SCREEN FRAME, here because the island docks into the frame."
+                },
+                {
+                    kind: "action",
+                    fn: "islandJoinFrame",
+                    name: "ISLAND + FRAME AS ONE",
+                    help: "One click for the integrated look: the screen frame on and connected to the bar, the island docked and wearing the frame's colour.",
+                    sub: "FRAME ON · DOCKED · THEME FRAME"
+                },
+                {
+                    kind: "toggle",
+                    key: "bar.frame",
+                    name: "SCREEN FRAME",
+                    help: "A frame (a border round the whole screen, not round each window) in the bar's colour, with the desktop's corners rounded inside it. A docked island grows out of its inner edge.",
+                    sub: "A FRAME ROUND THE SCREEN"
+                },
+                {
+                    kind: "slider",
+                    key: "bar.frameWidth",
+                    name: "FRAME WIDTH",
+                    help: "How thick the frame is on the edges the bar does not hold, in pixels. A docked island on such an edge sits right on its inner line.",
+                    sub: "HOW THICK THE FRAME IS",
+                    when: { key: "bar.frame", is: true },
+                    min: 0, max: 24, step: 1, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "slider",
+                    key: "bar.frameRounding",
+                    name: "FRAME ROUNDING",
+                    help: "How round the desktop's corners are inside the frame. The docked island's flared curves grow with it.",
+                    sub: "THE DESKTOP'S CORNERS  ·  THE ISLAND'S CURVES",
+                    when: { key: "bar.frame", is: true },
+                    min: 0, max: 48, step: 1, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "choice",
+                    key: "bar.frameColour",
+                    name: "FRAME COLOUR",
+                    help: "The frame's colour — and the island's, when its theme is FRAME: BAR follows the bar's colour, TONE is the accent's deep shade, BLACK, or ACCENT.",
+                    sub: "BAR · TONE · BLACK · ACCENT",
+                    when: { key: "bar.frame", is: true },
+                    options: [
+                        { value: "bar", label: "BAR" },
+                        { value: "tone", label: "TONE" },
+                        { value: "black", label: "BLACK" },
+                        { value: "accent", label: "ACCENT" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "bar.frameConnect",
+                    name: "BAR JOINS THE FRAME",
+                    help: "Bar and frame become one surface (no seam). With the island docked and themed FRAME, all three are one.",
+                    sub: "BAR AND FRAME, ONE SURFACE",
+                    when: { key: "bar.frame", is: true }
+                },
+                {
+                    kind: "toggle",
+                    key: "bar.frameOutline",
+                    name: "FRAME OUTLINE",
+                    help: "A thin accent line along the frame's inner edge. A docked island carries it round itself, as if the frame's edge bent round the island.",
+                    sub: "AN ACCENT HAIRLINE  ·  IT BENDS ROUND THE ISLAND",
+                    when: { key: "bar.frame", is: true }
+                },
+                {
+                    kind: "info",
+                    name: "PLACE AND REACH",
+                    sub: "EDGE · HEIGHT · DISTANCE · HOT ZONE",
+                    help: "Where the island sits and how much of its edge listens."
                 },
                 {
                     kind: "choice",
                     key: "map.islandPlace",
                     name: "WITH A BAR ON TOP",
+                    when: { key: "map.islandSide", is: "centre" },
                     help: "Where the pill stands when your taskbar is on the top edge. BELOW THE BAR keeps the two apart; OVER THE BAR lets the pill cover it, as before.",
                     sub: "THE PILL AND A TOP TASKBAR  ·  BELOW KEEPS THEM APART",
                     options: [
@@ -298,7 +390,8 @@ Singleton {
                     kind: "slider",
                     key: "map.islandGap",
                     name: "DISTANCE FROM THE EDGE",
-                    help: "Extra room between the pill and its edge (or a taskbar on that edge), in pixels.",
+                    help: "Extra room between the island and its edge (or a taskbar on that edge), in pixels. Only when it is not docked.",
+                    when: { key: "map.islandDock", is: false },
                     sub: "EXTRA ROOM BETWEEN THE PILL AND ITS EDGE",
                     min: 0, max: 200, step: 2, fmt: "int", unit: "px"
                 },
@@ -306,8 +399,8 @@ Singleton {
                     kind: "choice",
                     key: "map.islandSide",
                     name: "POSITION",
-                    help: "Which screen edge the island lives on. TOP: it drops down from the middle of the top edge. LEFT EDGE / RIGHT EDGE: it slides out of that side of the screen at ISLAND HEIGHT and opens into the screen. Touching that edge raises it, and the desktop map slides in from the same edge. A taskbar on that edge is stepped round.",
-                    sub: "TOP, LEFT EDGE OR RIGHT EDGE",
+                    help: "Which screen edge the island lives on. TOP: a pill drops from the middle of the top edge. LEFT EDGE / RIGHT EDGE: a rail of the modules' icons slides out of that side at ISLAND HEIGHT, like a vertical taskbar — point at it and every module's live line unfolds beside its icon; click an icon (or pull it out) and that module opens beside the rail; scrub along the rail or scroll to flip between them. Touching that edge raises it, the desktop map slides in from the same edge, and a taskbar there is stepped round (docked, the rail grows out of it).",
+                    sub: "TOP PILL, OR A RAIL ON THE LEFT OR RIGHT EDGE",
                     options: [
                         { value: "centre", label: "TOP" },
                         { value: "left", label: "LEFT EDGE" },
@@ -343,7 +436,7 @@ Singleton {
                     key: "map.edgeWidth",
                     name: "HOT ZONE LENGTH",
                     help: "How much of the island's edge reacts to the pointer, in pixels (at least 80), centred on the island. Shorten it if you reach that edge by accident, e.g. to hit a window's title or scrollbar.",
-                    sub: "HOW MUCH OF THE TOP EDGE LISTENS",
+                    sub: "HOW MUCH OF ITS EDGE LISTENS",
                     min: 120, max: 1400, step: 20, fmt: "int", unit: "px"
                 },
                 {
@@ -2213,7 +2306,7 @@ Singleton {
             kind: "toggle",
             key: "bar.frame",
             name: "SCREEN FRAME",
-            help: "A thin frame in the bar's colour round the whole screen, with the desktop's corners rounded inside it — the wallpaper looks like it sits in a rounded window. It lies under every window and takes no clicks.",
+            help: "A thin frame (a border round the whole screen, not round each window) in the bar's colour, with the desktop's corners rounded inside it — the wallpaper looks like it sits in a rounded window. It takes no clicks. A docked island grows out of it.",
             sub: "A THIN FRAME IN THE BAR'S COLOUR ROUND THE DESKTOP, ITS CORNERS ROUNDED INSIDE"
         },
         {

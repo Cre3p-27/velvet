@@ -285,6 +285,16 @@ Singleton {
         case "openLauncher":
             Panels.toggleLauncher();
             break;
+        case "islandJoinFrame":
+            // the island, the screen frame and the bar as one surface
+            Config.setMany({
+                "bar.frame": true,
+                "bar.frameConnect": true,
+                "map.islandDock": true,
+                "map.islandTheme": "frame"
+            });
+            Toast.ok("ISLAND, FRAME AND BAR ARE ONE SURFACE NOW");
+            break;
         case "resetLauncherLook":
             // only the look-and-motion dials; what it searches stays yours
             Config.setMany({

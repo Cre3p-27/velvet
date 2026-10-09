@@ -41,6 +41,7 @@ Stdlib only, like everything in bin/.
 
 import base64
 import glob
+import difflib
 import inspect
 import json
 import mimetypes
@@ -1415,10 +1416,12 @@ ARG_DOCS = {
                          "when": "heute, morgen, übermorgen, Wochenende, a weekday or a date; empty for the next days"},
     "clipboard.write": {"text": "the text to put into the clipboard"},
     "settings.find": {"query": "a few ENGLISH words for the setting, e.g. 'island position', 'launcher animation speed', "
-                               "'accent colour', 'notification position', 'bar autohide'"},
+                               "'accent colour', 'notification position', 'bar autohide', 'screen frame' (der Rahmen um "
+                               "den Bildschirm — not 'window border', that is the line round each window)"},
     "settings.set": {"key": "the setting's key exactly as settings.find gave it, e.g. 'map.islandSide'",
                      "value": "true/false, a number, or one of the option values from settings.find"},
     "history.search": {"query": "words from what was said back then; empty lists the latest"},
+    "look.apply": {"look": "a look's id or name from look.list, e.g. 'win11', 'glass', 'paper'; 'velvet' is the original"},
 }
 # Arguments a call is useless without.
 REQUIRED = {"apps.search": ["query"], "apps.launch": ["name"], "win.focus": ["match"], "win.close": ["match"],
@@ -1430,7 +1433,7 @@ REQUIRED = {"apps.search": ["query"], "apps.launch": ["name"], "win.focus": ["ma
             "pkg.install": ["name"], "web.lookup": ["query"], "web.read": ["url"], "web.open": ["url"],
             "web.search": ["query"], "web.download": ["url"], "file.write": ["name", "text"], "calc.eval": ["expr"],
             "date.lookup": ["when"], "clipboard.write": ["text"], "settings.find": ["query"],
-            "settings.set": ["key", "value"]}
+            "settings.set": ["key"], "look.apply": ["look"]}
 
 
 def tool_schema() -> list:
@@ -2413,6 +2416,7 @@ def t_settings_find(query=""):
 @tool("settings.set", '{"key": "map.islandSide", "value": "right"}', "write",
       "Change one Velvet setting, by the key settings.find gave you. value: true/false for a switch, a number "
       "for a slider (a fraction where the setting says 1 = 100 %), one of the option VALUES for a choice. "
+      "A key 'action:…' is a one-click row (e.g. ISLAND + FRAME AS ONE): it runs, no value needed. "
       "Returns the old value, so the change can be undone.")
 def t_settings_set(key="", value=""):
     k = str(key or "").strip()
@@ -2425,6 +2429,10 @@ def t_settings_set(key="", value=""):
         return {"ok": False, "error": "look a setting up with settings.find before you set it — "
                                       "these match the words of that key; pick the one that does what the user asked",
                 "settings": found.get("settings") or []}
+    if k.startswith("action:"):
+        value = ""
+    elif value is None or value == "":
+        return {"ok": False, "error": "which value? the settings.find result lists what it takes"}
     raw = shell_ipc("velly", "settingApply", k, json.dumps(value, ensure_ascii=False))
     try:
         data = json.loads(raw) if raw else None
@@ -2433,6 +2441,78 @@ def t_settings_set(key="", value=""):
     if not isinstance(data, dict):
         return {"ok": False, "error": "the shell is not answering"}
     return data
+
+
+# ── the looks: whole-desktop styles (settings window, bar, lock, sounds, the
+#  island) — "mach's wie Windows 11", "zeig mal einen anderen Look". She
+#  could change single settings, but not put a look on.
+LOOK_ALIASES = {
+    "windows 11": "win11", "windows11": "win11", "win 11": "win11", "windows 10": "win10", "win 10": "win10",
+    "windows 7": "win7", "win 7": "win7", "windows xp": "winxp", "xp": "winxp", "windows 95": "win95",
+    "win 95": "win95", "windows": "windows", "glas": "glass", "glassmorphism": "glass", "papier": "paper",
+    "zeitung": "paper", "retro": "arcade", "spiel": "arcade", "konsole": "terminal", "hacker": "terminal",
+    "fantasy": "rpg", "rollenspiel": "rpg", "poster": "brutal", "brutalismus": "brutal", "neumorphism": "neu",
+    "neumorphismus": "neu", "claymorphism": "clay", "knete": "clay", "kirschblüte": "sakura", "rosa": "sakura",
+    "flach": "flat", "minimal": "minimal", "schlicht": "clean", "original": "velvet", "standard": "velvet",
+}
+
+
+def look_rows() -> list:
+    raw = shell_ipc("looks", "describe")
+    try:
+        data = json.loads(raw) if raw else None
+    except ValueError:
+        data = None
+    return data if isinstance(data, list) else []
+
+
+@tool("look.list", "", "read",
+      "Velvet's looks — whole-desktop styles (settings window, bar, lock screen, sounds, island): id, name, "
+      "what each is like, and which one is on.")
+def t_look_list():
+    rows = look_rows()
+    if not rows:
+        return {"ok": False, "error": "the shell is not answering"}
+    return {"ok": True, "looks": rows}
+
+
+@tool("look.apply", '{"look": "win11"}', "write",
+      "Put one of Velvet's looks on — the whole shell changes style at once. look: an id or name from "
+      "look.list ('velvet' is the original). look.undo takes it off again.")
+def t_look_apply(look=""):
+    want = re.sub(r"\s+", " ", str(look or "").strip().lower().replace("-look", "").replace(" look", ""))
+    if not want:
+        return {"ok": False, "error": "which look? look.list names them"}
+    rows = look_rows()
+    if not rows:
+        return {"ok": False, "error": "the shell is not answering"}
+    ids = {str(r.get("id", "")).lower(): r for r in rows}
+    pick = ids.get(LOOK_ALIASES.get(want, want))
+    if pick is None:
+        for r in rows:
+            if want == str(r.get("name", "")).lower() or want in str(r.get("name", "")).lower():
+                pick = r
+                break
+    if pick is None:
+        close = difflib.get_close_matches(want, list(ids) + [str(r.get("name", "")).lower() for r in rows], n=1, cutoff=0.72)
+        if close:
+            pick = ids.get(close[0]) or next((r for r in rows if str(r.get("name", "")).lower() == close[0]), None)
+    if pick is None and LOOK_ALIASES.get(want) == "windows":
+        pick = {"id": "windows", "name": "WINDOWS"}
+    if pick is None:
+        return {"ok": False, "error": f"no look called '{look}'",
+                "looks": [{"id": r.get("id"), "name": r.get("name"), "about": r.get("about")} for r in rows]}
+    out = shell_ipc("looks", "apply", pick["id"], timeout=8.0)
+    if not out.startswith("applied"):
+        return {"ok": False, "error": out or "the shell is not answering"}
+    return {"ok": True, "look": pick["id"], "name": pick.get("name"), "about": pick.get("about", ""),
+            "undo": "look.undo puts the look from before back"}
+
+
+@tool("look.undo", "", "write", "Take the look that was just put on off again — back to the look from before.")
+def t_look_undo():
+    out = shell_ipc("looks", "undo", timeout=8.0)
+    return {"ok": out.startswith("back"), "said": out or "the shell is not answering"}
 
 
 @tool("history.search", '{"query": "Restaurant"}', "read",
@@ -3493,6 +3573,35 @@ def weather_sentence(data: dict, low: str) -> str:
     return " ".join(parts)
 
 
+LOOKS_ASKED = re.compile(r"\b(?:was für|welche|wie viele|zeig\w*(?: mir)?(?: mal)?(?: die| alle)?|nenn\w*(?: mir)?(?: die| alle)?)\b"
+                         r"[^.?!]{0,30}\blooks?\b|\blooks?\b[^.?!]{0,24}\b(?:gibt es|gibt's|hast du|hat velvet|kennst du)\b")
+
+
+def quick_looks(low: str) -> str:
+    """'Was für Looks gibt es?' — read off the shell, never from memory: the
+    model named five looks that do not exist (measured, v8.49)."""
+    if not LOOKS_ASKED.search(low):
+        return ""
+    rows = look_rows()
+    if not rows:
+        return ""
+    def spoken(r):
+        n = str(r.get("name") or r.get("id") or "").strip()
+        return n if n.isupper() and len(n) <= 3 else n.title()
+    wins = [r for r in rows if str(r.get("id", "")).startswith("win")]
+    own = [r for r in rows if str(r.get("id", "")).startswith("custom")]
+    rest = [r for r in rows if r not in wins and r not in own]
+    parts = [spoken(r) + (" (das Original)" if r.get("id") == "velvet" else "") for r in rest]
+    if wins:
+        parts.append("Windows " + ", ".join(spoken(r).replace("Windows ", "") for r in wins).replace("Xp", "XP"))
+    line = ", ".join(parts)
+    if own:
+        line += f" — und {len(own)} eigene{'n' if len(own) == 1 else ''}"
+    on = next((spoken(r) for r in rows if r.get("on")), "")
+    tail = f" Gerade trägst du {on}." if on else ""
+    return f"Velvet hat {len(rows)} Looks: {line}.{tail} Sag einfach, welchen ich dir anziehen soll."
+
+
 def local_skill(text: str, brain: bool = False) -> str:
     """The quick answers that need no model — said the way a person says them.
     With a brain behind her (`brain`), anything this cannot really do (an app
@@ -3519,6 +3628,9 @@ def local_skill(text: str, brain: bool = False) -> str:
     sum_answer = quick_calc(text)
     if sum_answer:
         return sum_answer
+    looks = quick_looks(low)
+    if looks:
+        return looks
     if len((text or "").split()) > 8:
         return ""
     # A search is the model's (web.search): "starte eine Suche auf YouTube"
@@ -4010,6 +4122,9 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
   user: stell die island an den rechten rand
   you: (call {t("settings.find")} with query "island position edge") → (call {t("settings.set")} with key "map.islandSide", value "right") → Erledigt — die Island sitzt jetzt am rechten Rand. Sag Bescheid, wenn ich's zurückstellen soll.
 
+  user: mach mal alles wie windows 11
+  you: (call {t("look.apply")} with look "win11") → Erledigt — Velvet trägt jetzt den Windows-11-Look. Gefällt er dir nicht, sag einfach „zurück“.
+
   user: wie ändere ich die akzentfarbe
   you: (call {t("settings.find")} with query "accent colour") → Mit Super+Tab in die Einstellungen, dann VISUALS, THIS LOOK, ACCENT COLOUR. Soll ich sie dir gleich umstellen?
 
@@ -4099,6 +4214,10 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
       then say where it is (Super+Tab opens the settings) or which keys do it,
       in one or two sentences — and change NOTHING: a question how is not a
       wish to have it done. Offer to do it instead.
+      A whole new STYLE for the desktop ("mach's wie Windows 11", "ein anderer
+      Look", "was für Looks gibt es") → {t("look.list")} / {t("look.apply")};
+      "nimm den wieder raus" → {t("look.undo")}. One-click rows in the
+      settings.find result (key "action:…") run with {t("settings.set")}.
       "Etwas", "ein bisschen", "mehr", "weniger" change a setting FROM its
       current value (in the settings.find result) by a modest step — "etwas
       langsamer" on 2× is about 1.5×, not the minimum.
@@ -4157,6 +4276,9 @@ THINK_RE = re.compile(
 
 
 # "Sag ja, dann mache ich es" with no tool waiting for that yes.
+HOWTO_RE = re.compile(r"^\W*(?:und\s+|also\s+|sag\s+mal,?\s+|hey,?\s+|velly,?\s+)*(?:wie\s+(?:kann|könnte|muss|mache|mach|stelle|stell|"
+                      r"ändere|änder|krieg|kriege|bekomme|schalte|aktiviere|deaktiviere|docke|setze|bringe|verschiebe)\s+ich|"
+                      r"wo\s+(?:kann|stelle|stell|finde|ändere|schalte|mache)\s+ich|wie\s+geht\s+(?:das|es)|wie\s+funktioniert)\b", re.I)
 FAKE_GATE = re.compile(r"sag\s+(?:einfach\s+|mir\s+)?[„\"'»]?ja\b|braucht dein (?:okay|ok|ja)|dein okay|"
                        r"(?:bestätige|bestaetige|bestätigst)\b|confirm", re.I)
 
@@ -4412,6 +4534,12 @@ class Runner:
         spec = TOOLS.get(name)
         if spec is None:
             return {"ok": False, "error": f"there is no tool called {name}"}
+        # A question HOW is not a wish to have it done — measured: "Wie kann
+        # ich die Island an den Rand docken?" moved it (to the wrong side).
+        if name in ("settings.set", "look.apply") and HOWTO_RE.search(str(self.state.get("user") or "")):
+            return {"ok": False, "error": "the user asked HOW to do it, not to do it: change nothing. Tell them where "
+                                          "it is (the settings.find path; Super+Tab opens the settings) in one or two "
+                                          "sentences and offer to do it for them."}
         if not (self.forced or session_open()):
             return {"ok": False, "error": "session closed — Velly has no access right now"}
         # A command that needs a password opens in a terminal, and the password

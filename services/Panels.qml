@@ -349,6 +349,10 @@ Singleton {
         function wheel(): void {
             root.toggleWheel();
         }
+        // `panels key map.islandDock` opens the settings right at that row
+        function key(name: string): void {
+            root.openSettingsKey(name);
+        }
         function tab(name: string): void {
             root.openSettingsTabNamed(name);
         }

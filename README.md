@@ -645,16 +645,38 @@ AMBIENT — only the clock, the lyric and the music stay until you move or type.
 ## The Dynamic Island, and where things stand
 
 Touch the top edge and the island rises: swipe it for music, the desktop map,
-tasks, weather, the system and Velly; pull it down to open one. **MODULES →
-DYNAMIC ISLAND → POSITION** moves it to the **left or right screen edge**: it
-then slides out of that side at **ISLAND HEIGHT** (the middle by default),
-stays flush with its edge and opens into the screen, and a taskbar on that
-edge is stepped round. Its hot zone is a thin strip on that edge, only as long
-as HOT ZONE LENGTH and centred on the island — scrollbars further up and down
-stay yours — and the desktop map slides in from the same edge. The other floating
-parts have the same choice: **SIDE** for the volume pop-up (OSD), the desktop
-lyrics and the launcher, and notifications can rise from the middle of the top
-or bottom edge as well as from a corner.
+tasks, weather, the system and Velly; pull it down to open one.
+
+**On a side edge it is built for the edge.** MODULES → DYNAMIC ISLAND →
+POSITION → **LEFT EDGE / RIGHT EDGE** turns it into a **rail**, like a vertical
+taskbar: one icon per module, sliding out of that side at **ISLAND HEIGHT**
+(the middle by default). Point at the rail and every module's live line unfolds
+beside its icon — the song, the desktop, the tasks, the weather, CPU and RAM,
+Velly — so the whole island reads at a glance. Click an icon (or pull it out of
+the rail) and that module opens beside the rail; click it again and it folds
+back. Scrub along the rail or turn the wheel to flip between modules, even while
+one is open; hold it for Velly. Music playing and Velly awake show as a pulsing
+dot on their icons. Its hot zone is a thin strip on that edge, only as long as
+HOT ZONE LENGTH, and the desktop map slides in from the same edge.
+
+**Docked in the frame.** **DOCK TO THE EDGE** (on by default) grows the island
+out of the line where the desktop starts — the screen frame, or a taskbar on that
+edge: square where it meets it, flared into it with two soft inner curves, and
+rising from *behind* it, never across the bar. With the theme **FRAME** island,
+frame and bar are one surface, and a frame **OUTLINE** bends round the island.
+**ISLAND + FRAME AS ONE** sets all of it in one click, and the frame's own
+switches (width, rounding, colour, outline, bar joins the frame) are on the
+island's page too. Themes: INK BLACK, GLASS (now really frosted — see below),
+WALLPAPER, FRAME, TONE.
+
+**Blur was never on.** Hyprland 0.56 answers the old `hl.config({ layerrule = … })`
+with "ok" and ignores it, so no Velvet layer was ever blurred — GLASS was plain
+see-through. Velvet now sends named `hl.layer_rule` rules (bar, popouts,
+notifications, OSD, notification centre, island).
+
+The other floating parts have a SIDE choice as well: the volume pop-up (OSD), the
+desktop lyrics and the launcher, and notifications can rise from the middle of
+the top or bottom edge as well as from a corner.
 
 ## Velly — the assistant in the island
 
@@ -684,6 +706,13 @@ ago (`history.search`), thinks harder for questions than for commands (and
 hardest when you say "denk genau nach"), looks things up and *answers* instead
 of opening a search page, and a phrase she gets stuck on is cut the moment it
 starts repeating.
+
+**She puts looks on.** "Mach alles wie Windows 11", "ich will so einen
+Glas-Look", "nimm das wieder raus" — `look.apply` / `look.undo`; "was für Looks
+gibt es" is read off the shell, never from memory. One-click rows of the settings
+(ISLAND + FRAME AS ONE, BACK TO DEFAULTS …) she can press too — none that delete,
+uninstall or power anything off. A question *how* ("wie kann ich die Island
+andocken?") is answered with where it is, and nothing changes until you say so.
 
 **Asking before she acts.** A command or a reboot gets one question — with
 **JA, MACH / NEIN** buttons in the island. Saying "ja" runs exactly the action
@@ -756,7 +785,7 @@ the session itself. Three rules make that safe enough to live with:
 | **Ears** | **On the graphics card** when it can: whisper.cpp publishes no Linux build with Vulkan, so `bin/velvet-local ears-gpu` builds one (sources only, ~13 MB, no sudo — cmake, a compiler and `glslc` are enough) into `engines/whisper-gpu`. Measured on the RX 9070 XT with the 20B brain loaded beside it: **0.4 s** per utterance, process start included, instead of 2.6 s on the 8-core CPU — and the whole 30-second window, so nothing is trimmed. A fullscreen game keeps the card; the CPU build listens then, and whenever the GPU run fails. **HEY VELLY** (MODULES → VELLY, off by default): the ears keep listening while she sleeps, every utterance goes through the small whisper model on this machine, and only one that STARTS with her name ("Hey Velly, …", heard as "High Valley" too) wakes her — the rest of the sentence is the question. `bin/velvet-ears` listens — voice activity detection, a live level for the orb, one WAV per utterance, with a sensitivity dial in **MODULES → VELLY** — and whisper.cpp transcribes it here: `large-v3-turbo` by default (`bin/velvet-local ears small|turbo|genau` changes that), German, with a name pass so “Welly”, “Velli” and “Velley” all arrive as Velly. On the CPU whisper's window is sized to the recording (a 9-second sentence: 7.6 s → 2.3 s), a sentence heard twice becomes one, and **MUSIK LEISER** turns playing music down to a quarter while she is awake (sung lines had arrived as questions) and puts it back afterwards. A cloud `/audio/transcriptions` provider is used only when no local one exists. |
 | **Voice** | **Natural first:** Kartoffel-Orpheus (a German Orpheus-3B trained on real speakers — Sophie, Marie, Mia, Lina, Lea, Julian …) on its own llama-server (`127.0.0.1:8139`, Vulkan) plus the SNAC codec on onnxruntime, 24 kHz. The server comes up when she wakes (`velvet-voice --warm`) and stands down after seven quiet minutes; she speaks sentence by sentence (the first plays while the next is made) and **while she is still writing** — the voice reads the answer along as it streams (`velvet-voice --follow`) and starts with the first finished sentence, short phrases come from a cache, and while she thinks longer than a beat she says so ("Hm, Moment."). While a fullscreen game runs, or when the VRAM is not there, Piper speaks instead — the game keeps the graphics card. Then `bin/velvet-voice` — piper (the binary or the python module) with ten German voices to pick from, **loaded once** by a small keeper that starts when she wakes and leaves after 15 quiet minutes: a sentence takes 0.03–0.2 s instead of the 1.3 s a fresh piper process cost for every sentence (measured). A voice is picked with two arrows and a SAG button in SETUP, or in **MODULES → VELLY**. A voice that is not downloaded yet fetches itself on the next sentence, and `bin/velvet-voice --fetch-voice <name>` does it from the terminal. Tempo and loudness are dials. espeak-ng, a cloud voice and labelled blips stay as the fallbacks. |
 | **Memory** | `~/.config/velvet/ai-memory.json`: facts she was told, a note per session, the transcript, and counters. At the end of a session only what is NEW is distilled — facts about the person (name, likes, setup), never about a session, an error or a test; duplicates in other words are merged (`bin/velvet-ai --tidy-memory`). A new wake starts a fresh conversation instead of continuing last week's. |
-| **Tools** | 66 of them, in `bin/velvet-ai --tools`, each argument described in the schema (with the allowed words where there are only a few) — including `weather.forecast` (now and seven days, here or any place — Open-Meteo, no key), `sys.time` with a place ("wie spät ist es in Tokio"), `date.lookup` ("nächsten Freitag", "Weihnachten" — counted, not guessed), `clipboard.read` / `clipboard.write`, `notifs.list` ("was hab ich verpasst"), `web.read` (a page's readable text), `media.play` (finds a song, album, artist or playlist on Spotify and really starts it; if it finds nothing it opens Spotify's search and says so), `web.lookup` (reads DuckDuckGo — and when that asks "are you a robot", Wikipedia's own search — so she can answer), `file.write` (lists, notes and texts into ~/Dokumente/Velly), `web.search` / `web.open` (a search opens in the browser: YouTube, Google, Wikipedia, Maps, GitHub, AUR, Arch Wiki …; `web.download` refuses search pages), `timer.set` / `timer.list` / `timer.cancel` (reminders and alarms that outlive the session, then notify and speak) and `calc.eval` (exact arithmetic instead of a guess). Besides apps, windows, workspaces, media and the system: `pkg.search` and `pkg.install` (repositories and AUR — an install opens a terminal window, so the password prompt and the progress stay yours), `term.run` for anything that needs a tty, `web.download`, and `cmd.run` for the rest, which asks for a spoken confirmation first. Models that can call tools natively (the local engine, OpenAI, DeepSeek) get them as a real schema and hand their calls and results back as real tool messages; for the others she writes one line — `[[tool:name {"arg": "value"}]]`. Either way, what she says is cleaned of reasoning, markdown and emoji before you see or hear it. |
+| **Tools** | 69 of them, in `bin/velvet-ai --tools`, each argument described in the schema (with the allowed words where there are only a few) — including `weather.forecast` (now and seven days, here or any place — Open-Meteo, no key), `sys.time` with a place ("wie spät ist es in Tokio"), `date.lookup` ("nächsten Freitag", "Weihnachten" — counted, not guessed), `clipboard.read` / `clipboard.write`, `notifs.list` ("was hab ich verpasst"), `web.read` (a page's readable text), `media.play` (finds a song, album, artist or playlist on Spotify and really starts it; if it finds nothing it opens Spotify's search and says so), `web.lookup` (reads DuckDuckGo — and when that asks "are you a robot", Wikipedia's own search — so she can answer), `file.write` (lists, notes and texts into ~/Dokumente/Velly), `web.search` / `web.open` (a search opens in the browser: YouTube, Google, Wikipedia, Maps, GitHub, AUR, Arch Wiki …; `web.download` refuses search pages), `timer.set` / `timer.list` / `timer.cancel` (reminders and alarms that outlive the session, then notify and speak) and `calc.eval` (exact arithmetic instead of a guess), `look.list` / `look.apply` / `look.undo` (whole-desktop looks). Besides apps, windows, workspaces, media and the system: `pkg.search` and `pkg.install` (repositories and AUR — an install opens a terminal window, so the password prompt and the progress stay yours), `term.run` for anything that needs a tty, `web.download`, and `cmd.run` for the rest, which asks for a spoken confirmation first. Models that can call tools natively (the local engine, OpenAI, DeepSeek) get them as a real schema and hand their calls and results back as real tool messages; for the others she writes one line — `[[tool:name {"arg": "value"}]]`. Either way, what she says is cleaned of reasoning, markdown and emoji before you see or hear it. |
 
 The quick answers need no model at all and answer in a blink: the time here
 or in another city, which day "morgen" or "der 24.12." is, the weather now and

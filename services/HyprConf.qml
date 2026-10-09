@@ -158,16 +158,24 @@ Singleton {
         return out;
     }
 
+    // Hyprland 0.56 (Lua) answers `hl.config({ layerrule = … })` with "ok"
+    // and then ignores it: for months no Velvet layer was ever blurred, and
+    // the island's GLASS was plain see-through. Real rules are
+    // `hl.layer_rule` with a name — named, so a second send replaces the
+    // first, and BLUR off is `enabled = false` instead of a rule to unset.
+    readonly property var blurCandidates: ["velvet-bar", "velvet-popout", "velvet-notifs", "velvet-osd", "velvet-notifcentre", "velvet-island"]
+
     readonly property string luaLayerRules: {
         const blurred = root.blurred;
-        let out = "hl.config({ layerrule = {";
-        for (let i = 0; i < blurred.length; i++) {
-            out += ` { rule = "blur,${blurred[i]}" }, { rule = "ignorealpha 0.1,${blurred[i]}" },`;
-        }
-        if (!Config.bar.blur)
-            out += ` { rule = "ignorealpha 0.1,velvet-bar" },`;
-        out += ` { rule = "animation slide,velvet-bar" }, { rule = "animation popin 90%,velvet-popout" }, { rule = "animation slide,velvet-notifs" }, { rule = "animation fade,velvet-settings" }, { rule = "animation fade,velvet-launcher" }, { rule = "animation fade,velvet-session" } } })`;
-        return out;
+        const out = [];
+        const all = root.blurCandidates;
+        for (let i = 0; i < all.length; i++)
+            out.push(`hl.layer_rule({ name = "velvet-blur-${all[i]}", enabled = ${blurred.indexOf(all[i]) >= 0}, match = { namespace = "^${all[i]}$" }, blur = true, ignore_alpha = 0.1 })`);
+        out.push(`hl.layer_rule({ name = "velvet-alpha-velvet-bar", enabled = ${!Config.bar.blur}, match = { namespace = "^velvet-bar$" }, ignore_alpha = 0.1 })`);
+        const anims = [["velvet-bar", "slide"], ["velvet-popout", "popin 90%"], ["velvet-notifs", "slide"], ["velvet-settings", "fade"], ["velvet-launcher", "fade"], ["velvet-session", "fade"]];
+        for (let i = 0; i < anims.length; i++)
+            out.push(`hl.layer_rule({ name = "velvet-anim-${anims[i][0]}", match = { namespace = "^${anims[i][0]}$" }, animation = "${anims[i][1]}" })`);
+        return out.join("; ");
     }
 
     // ------------------------------------------------------------ hyprlang out

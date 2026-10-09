@@ -830,7 +830,7 @@ PanelWindow {
         // (MODULES → DYNAMIC ISLAND → POSITION) — down from the top, or out
         // of the left or right side at ISLAND HEIGHT
         readonly property string edge: Appearance.islandEdge
-        x: plate.edge === "left" ? 16 + Appearance.barRoom("left") : (plate.edge === "right" ? root.width - width - 16 - Appearance.barRoom("right") : Math.round((root.width - width) / 2))
+        x: plate.edge === "left" ? 14 + Appearance.edgeInset("left") : (plate.edge === "right" ? root.width - width - 14 - Appearance.edgeInset("right") : Math.round((root.width - width) / 2))
         y: plate.edge === "top" ? 14 : Math.round(Math.max(14, Math.min(root.height - height - 14, root.height * Math.max(0.05, Math.min(0.95, Config.map.islandEdgeY)) + Config.map.islandShift - height / 2)))
 
         opacity: root.shown ? 1 : 0

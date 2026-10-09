@@ -504,7 +504,7 @@ Singleton {
                 // the capsule is, which ground it sits on, and whether the
                 // accent glows along its ring.
                 property real islandOpacity: 1.0      // 0.35..1
-                property string islandTheme: "dark"   // dark | glass | wallpaper
+                property string islandTheme: "dark"   // dark | glass | wallpaper | frame (the screen frame's own colour) | tone (the accent's deep shade)
                 property bool islandAccent: true
                 // Where the pill stands: BELOW a bar on the top edge (it used
                 // to land on top of it), or OVER it. Plus a free nudge.
@@ -515,6 +515,11 @@ Singleton {
                 // left or right edge, where it slides out of the side. The map it
                 // hands off to and the hot zone that raises it follow it.
                 property string islandSide: "centre"    // centre (top) | left | right
+                // DOCKED: the island grows out of its edge — flush with the
+                // screen frame or the taskbar there, square where it meets
+                // them and flared into them with soft inner curves, so frame,
+                // bar and island read as one surface. Off: a free pill.
+                property bool islandDock: true
                 property real islandEdgeY: 0.5          // on a side edge: how far down, 0 top … 1 bottom
                 // The TASKS module in the island's swipe cycle, between the
                 // map and the weather — configure it in WORKFLOW.

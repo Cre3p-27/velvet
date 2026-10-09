@@ -727,7 +727,14 @@ Singleton {
     //  locks that could shut the user out.
     readonly property var settingsDenied: ["velly.confirmDanger", "velly.enabled", "velly.provider", "velly.model", "lock.useBuiltin", "lock.lockOnStart", "lock.listenToLogind", "lock.pamConfig"]
 
+    // The settings' one-click rows she may press herself: they show, tidy or
+    // reset a look — nothing here deletes, uninstalls, powers off or touches
+    // her own setup (those have their own tools with a yes, or stay yours).
+    readonly property var actionsAllowed: ["islandJoinFrame", "resetLauncherLook", "resetThisLook", "resetSoftArrangement", "randomWallpaper", "rescanWallpapers", "refetchLyrics", "saveLook", "openMap", "openWheel", "openLauncher", "openQuick", "openHome", "openWorkflow", "openDesktopTab", "openWallpaperTab", "openBluetooth", "openWelcome"]
+
     function settingId(item: var): string {
+        if (item.kind === "action")
+            return item.fn && !item.exec && root.actionsAllowed.indexOf(`${item.fn}`) >= 0 ? `action:${item.fn}` : "";
         return item.key ? `${item.key}` : (item.live ? `live:${item.live}` : "");
     }
 
@@ -737,9 +744,12 @@ Singleton {
             key: root.settingId(it),
             name: `${it.name ?? ""}`,
             where: `${entry.path ?? ""}`,
-            kind: `${it.kind}`,
-            value: Bridge.get(it)
+            kind: `${it.kind}`
         };
+        if (it.kind === "action")
+            out.does = "one click — settings.set runs it (no value)";
+        else
+            out.value = Bridge.get(it);
         const help = `${it.help ?? it.sub ?? ""}`;
         if (help.length > 0)
             out.help = help.length > 240 ? help.slice(0, 237) + "…" : help;
@@ -764,17 +774,27 @@ Singleton {
         const hits = [];
         for (let i = 0; i < flat.length; i++) {
             const it = flat[i].item;
-            if (["toggle", "slider", "choice", "colour"].indexOf(it.kind) < 0 || root.settingId(it) === "")
+            if (["toggle", "slider", "choice", "colour", "action"].indexOf(it.kind) < 0 || root.settingId(it) === "")
                 continue;
-            const name = `${it.name ?? ""}`.toLowerCase();
+            // `aka`: what people call a row besides its name ("island colour"
+            // for ISLAND THEME)
+            const name = `${it.name ?? ""} ${it.aka ?? ""}`.toLowerCase();
             const hay = `${name} ${it.sub ?? ""} ${it.help ?? ""} ${flat[i].path ?? ""} ${it.key ?? ""} ${(it.options ?? []).map(o => o.label).join(" ")}`.toLowerCase();
             let score = 0;
+            // the key's own last word ("frame" in bar.frame) is the row's
+            // name for that thing: "frame" must find SCREEN FRAME before
+            // FRAME COLOUR and FRAME SHADOW
+            const tail = `${it.key ?? it.fn ?? ""}`.split(".").pop().toLowerCase();
             for (let w = 0; w < words.length; w++) {
                 if (name.indexOf(words[w]) >= 0)
                     score += 3;
                 else if (hay.indexOf(words[w]) >= 0)
                     score += 1;
+                if (tail === words[w])
+                    score += 2;
             }
+            if (name === words.join(" "))
+                score += 4;
             if (score > 0)
                 hits.push({ s: score, e: flat[i] });
         }
@@ -797,6 +817,17 @@ Singleton {
     function applySetting(key: string, jsonValue: string): string {
         const flat = Schema.flat;
         let entry = null;
+        if (`${key}`.startsWith("action:")) {
+            for (let i = 0; i < flat.length; i++)
+                if (flat[i].item.kind === "action" && root.settingId(flat[i].item) === key) {
+                    entry = flat[i];
+                    break;
+                }
+            if (entry === null)
+                return JSON.stringify({ ok: false, error: `no action "${key}" she may press — look it up with settings.find` });
+            Bridge.act(entry.item);
+            return JSON.stringify({ ok: true, key: key, name: `${entry.item.name ?? ""}`, where: `${entry.path ?? ""}`, done: true });
+        }
         for (let i = 0; i < flat.length; i++)
             if (root.settingId(flat[i].item) === key && ["toggle", "slider", "choice", "colour"].indexOf(flat[i].item.kind) >= 0) {
                 entry = flat[i];

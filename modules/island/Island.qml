@@ -30,6 +30,17 @@
 //  is created here at runtime (the Lyrics pattern), so a Quickshell build
 //  without the service loses one module, never the shell.
 //
+//  ON A SIDE EDGE (POSITION → LEFT EDGE / RIGHT EDGE) it is built for the
+//  edge, like a vertical taskbar: a rail of the modules' icons that slides
+//  out of the side. Point at it and every module's live line unfolds
+//  beside its icon; click an icon (or pull it out of the rail) and that
+//  module opens beside the rail; scrub along the rail or turn the wheel to
+//  flip between them; hold it for Velly.
+//
+//  DOCKED (the default) it grows out of the line where the desktop starts —
+//  the screen frame, or a taskbar on that edge — square where it meets that
+//  line and flared into it, so frame, bar and island read as one surface.
+//
 //  Like the map, this window eats nothing while closed: the input mask is
 //  dead until the island is active on this screen. Hearing the hover is the
 //  EdgeSensor strip's job, exactly as before.
@@ -39,6 +50,7 @@ import qs.components
 import Quickshell
 import Quickshell.Wayland
 import QtQuick
+import QtQuick.Shapes
 
 PanelWindow {
     id: root
@@ -49,11 +61,6 @@ PanelWindow {
     // evaluated once before the Variants model hands over the screen.
     readonly property bool active: Panels.islandScreen === (root.modelData?.name ?? "") && !Panels.windowMap && Config.map.island
     readonly property bool mine: root.modelData === Hypr.focusedScreen
-
-    // A bar on the top edge is in the island's way: the pill stands under it
-    // (the bar may slide away, but it comes back the moment the pointer
-    // touches the edge — the same touch that raises the pill).
-    readonly property real barClear: Config.map.islandPlace === "below" && Config.bar.enabled && Config.bar.position === "top" ? Config.bar.thickness + Config.bar.margin * 2 : 0
 
     // Which screen edge it lives on — MODULES → DYNAMIC ISLAND → POSITION.
     // TOP: the middle of the top edge, it drops down and grows both ways.
@@ -72,13 +79,69 @@ PanelWindow {
         }
     }
 
+    // ── where it meets its edge ─────────────────────────────────────────────
+    //  DOCKED (MODULES → DYNAMIC ISLAND → DOCK TO THE EDGE): flush with the
+    //  line where the desktop starts on its edge (inside the screen frame,
+    //  inside a pinned taskbar there), square on that side, flared into it.
+    //  Free: a pill a few pixels off that line. Either way it rises from
+    //  BEHIND the line (edgeClip), never across the bar or the frame.
+    readonly property bool docked: Config.map.islandDock
+    // OVER THE BAR lets a top island cover a top taskbar: then only the
+    // frame counts.
+    readonly property real topInset: Config.bar.enabled && Config.bar.position === "top" && Config.map.islandPlace === "over" ? (Config.bar.frame ? Math.max(0, Config.bar.frameWidth) : 0) : Appearance.edgeInset("top")
+    readonly property real inset: root.edge === "top" ? (root.docked ? root.topInset : 0) : Appearance.edgeInset(root.edge)
+    // A docked island also paints a few pixels over the frame, so the
+    // frame's outline does not run across its foot.
+    readonly property int lip: root.docked ? 3 : 0
+    // the soft inner curves where it flares into its edge
+    // (an angular look has none: its corners are all square)
+    readonly property real fillet: root.docked ? Appearance.r(Math.max(10, Math.min(26, Math.round(Config.bar.frameRounding * 0.45 + 4)))) : 0
+
     function capsuleX(w: real): real {
+        const free = root.docked ? 0 : 12 + Config.map.islandGap;
         if (root.edge === "left")
-            return Math.round(16 + Config.map.islandGap + Appearance.barRoom("left") - (1 - root.slide) * (w + 40));
+            return Math.round(root.lip + free - (1 - root.slide) * (w + 40));
         if (root.edge === "right")
-            return Math.round(root.width - w - 16 - Config.map.islandGap - Appearance.barRoom("right") + (1 - root.slide) * (w + 40));
+            return Math.round(root.width - root.inset - w - free + (1 - root.slide) * (w + 40));
         const x = (root.width - w) / 2 + Config.map.islandShift;
-        return Math.round(Math.max(4, Math.min(root.width - w - 4, x)));
+        return Math.round(Math.max(4 + root.fillet, Math.min(root.width - w - 4 - root.fillet, x)));
+    }
+
+    // y inside edgeClip
+    function capsuleY(h: real): real {
+        if (root.onSide)
+            return Appearance.edgeY(root.height, h, h);
+        if (root.docked)
+            return root.active ? root.lip : -h - 14 - root.fillet;
+        return root.active ? root.topInset + 10 + Config.map.islandGap : -h - 14;
+    }
+
+    // The docked outline as an SVG path in the capsule's own coordinates:
+    // drawn once for the top edge (u along the edge, v away from it) and
+    // turned onto the side edges — a mirror for the left (its arcs turn
+    // the other way), a rotation for the right. `open` leaves out the foot
+    // on the frame, for the ring.
+    function dockPath(w: real, h: real, open: bool): string {
+        const side = root.onSide;
+        const W = side ? h : w;
+        const H = side ? w : h;
+        const R = Math.max(0, Math.min(Appearance.r(24), W / 2, H / 2));
+        const f = Math.max(0, Math.min(root.fillet, H - R));
+        const lip = root.lip;
+        const P = (u, v) => {
+            if (root.edge === "left")
+                return `${v.toFixed(2)},${u.toFixed(2)}`;
+            if (root.edge === "right")
+                return `${(w - v).toFixed(2)},${u.toFixed(2)}`;
+            return `${u.toFixed(2)},${v.toFixed(2)}`;
+        };
+        const s1 = root.edge === "left" ? 0 : 1;
+        const s0 = 1 - s1;
+        let d = open ? `M ${P(-f, 0)}` : `M ${P(-f, -lip)} L ${P(-f, 0)}`;
+        d += ` A ${f} ${f} 0 0 ${s1} ${P(0, f)} L ${P(0, H - R)} A ${R} ${R} 0 0 ${s0} ${P(R, H)} L ${P(W - R, H)} A ${R} ${R} 0 0 ${s0} ${P(W, H - R)} L ${P(W, f)} A ${f} ${f} 0 0 ${s1} ${P(W + f, 0)}`;
+        if (!open)
+            d += ` L ${P(W + f, -lip)} Z`;
+        return d;
     }
 
     // ──────────────────────────────────────────────────────────── the modules
@@ -297,6 +360,24 @@ PanelWindow {
     readonly property int restW: Math.max(220, Config.map.islandWidth)
     readonly property real travel: 300
 
+    // ── the rail (side edges) ───────────────────────────────────────────────
+    //  One cell per module, the order of the swipe cycle, top to bottom.
+    readonly property int railW: 48
+    readonly property int cellH: 44
+    readonly property int railPad: 8
+    readonly property real railH: root.meta.length * root.cellH + root.railPad * 2
+    // the rail's y on screen: centred on ISLAND HEIGHT (+ the nudge)
+    readonly property real railTop: Appearance.edgeY(root.height, root.railH, root.railH)
+    // the live lines that unfold beside the rail
+    readonly property int labelW: 300
+    property int railHot: -1
+    property int pressIdx: -1
+    readonly property int shownIdx: root.pressed && root.axis === "h" ? root.previewIdx : root.moduleIdx
+    readonly property bool sideLabels: root.onSide && !root.expanded && !(root.pressed && root.axis === "v") && (root.hoverPeek || (root.pressed && root.axis === "h"))
+    readonly property real sideFullW: root.railW + root.meta[root.moduleIdx].w
+    readonly property real sideFullH: Math.max(root.railH, root.meta[root.moduleIdx].h)
+    readonly property bool sideOpen: root.onSide && (root.expanded || (root.pressed && root.axis === "v"))
+
     readonly property bool showText: root.touched || root.pressed || root.expanded || root.hoverPeek
 
     // Hover-peek: resting the mouse on the untouched pill grows it into the
@@ -308,7 +389,9 @@ PanelWindow {
         id: peekDelay
 
         interval: 180
-        onTriggered: root.hoverPeek = !root.touched && !root.pressed
+        // On a side edge the rail's lines unfold on every visit: the icons
+        // alone do not say what is playing or how warm it is.
+        onTriggered: root.hoverPeek = (root.onSide || !root.touched) && !root.pressed
     }
 
     function ease(t: real): real {
@@ -320,6 +403,14 @@ PanelWindow {
 
     readonly property real shellW: {
         const m = root.meta[root.moduleIdx];
+        if (root.onSide) {
+            const rest = root.railW + (root.sideLabels ? root.labelW : 0);
+            if (root.expanded)
+                return root.sideFullW;
+            if (root.pressed && root.axis === "v")
+                return rest + (root.sideFullW - rest) * root.ease(root.progress);
+            return rest;
+        }
         if (root.expanded)
             return m.w;
         if (root.pressed && root.axis === "v") {
@@ -330,6 +421,13 @@ PanelWindow {
     }
 
     readonly property real shellH: {
+        if (root.onSide) {
+            if (root.expanded)
+                return root.sideFullH;
+            if (root.pressed && root.axis === "v")
+                return root.railH + (root.sideFullH - root.railH) * root.ease(root.progress);
+            return root.railH;
+        }
         if (root.expanded)
             return root.meta[root.moduleIdx].h;
         if (root.pressed && root.axis === "v")
@@ -337,34 +435,52 @@ PanelWindow {
         return root.pillH;
     }
 
-    // ── the island's face — MODULES → DYNAMIC ISLAND. INK BLACK is the
-    // classic solid pill. GLASS is a dark-tinted frost: Hyprland blurs the
-    // desktop behind it (layerrule), the tint keeps the ink legible, and
-    // the specular does the rest — light catching the top edge, a soft
-    // grounding at the bottom. WALLPAPER wears a prominence-weighted mix of
-    // the picture's own colours, so the pill IS the picture. All three
-    // honour the ISLAND OPACITY dial.
+    // ── the island's face — MODULES → DYNAMIC ISLAND → ISLAND THEME.
+    //  INK BLACK: the classic solid pill. GLASS: a dark frost — Hyprland
+    //  blurs the desktop behind it (HyprConf's layer rule), the tint keeps
+    //  ink legible and a soft sheen from above does the rest. WALLPAPER: a
+    //  prominence-weighted mix of the picture's own colours. FRAME: the
+    //  screen frame's (and a connected bar's) own colour — docked, island,
+    //  frame and bar are one surface. TONE: the accent's deep shade. All of
+    //  them honour ISLAND OPACITY.
+    readonly property string theme: Config.map.islandTheme
+    readonly property bool glassy: root.theme === "glass"
     readonly property color shellCol: {
-        switch (Config.map.islandTheme) {
+        const op = Config.map.islandOpacity;
+        switch (root.theme) {
         case "glass":
-            // Near-black frost — the blur glows through the tint, and the
-            // tint keeps ink text readable over bright wallpapers too.
-            return Colours.light ? Colours.alpha(Colours.surface, Math.max(0.4, 0.7 * Config.map.islandOpacity)) : Qt.rgba(0.014, 0.016, 0.020, Math.max(0.4, 0.62 * Config.map.islandOpacity));
+            return Colours.light ? Colours.alpha(Colours.surface, Math.max(0.42, 0.66 * op)) : Qt.rgba(0.016, 0.018, 0.024, Math.max(0.36, 0.56 * op));
         case "wallpaper":
-            return Colours.alpha(Colours.wallpaperTint, 0.97 * Config.map.islandOpacity);
+            return Colours.alpha(Colours.wallpaperTint, 0.97 * op);
+        case "frame":
+            return Colours.alpha(Colours.frameBase, Math.max(0.2, Math.min(1, Config.bar.frameOpacity)) * op);
+        case "tone":
+            return Colours.alpha(Colours.tone, op);
         default:
             // A light ground gives the island a light face, so its ink stays ink.
-            return Colours.light ? Colours.alpha(Colours.surfaceHigh, Config.map.islandOpacity) : Qt.rgba(0.019, 0.019, 0.021, Config.map.islandOpacity);
+            return Colours.light ? Colours.alpha(Colours.surfaceHigh, op) : Qt.rgba(0.019, 0.019, 0.021, op);
         }
     }
+    // glass catches light at the top: the sheen's first stop
+    readonly property color sheenCol: Qt.rgba(Math.min(1, root.shellCol.r + 0.10), Math.min(1, root.shellCol.g + 0.10), Math.min(1, root.shellCol.b + 0.11), Math.min(1, root.shellCol.a + 0.08))
+
+    // Docked into a frame that has an OUTLINE, the island carries that very
+    // line round itself — the frame's edge bends round the island.
+    readonly property bool frameLine: root.docked && Config.bar.frame && Config.bar.frameOutline
+    readonly property real ringW: root.frameLine ? 1.5 : 1
 
     // The capsule's ring: a quiet ink line on black, a brighter rim on glass
-    // (glass catches light at its edge), the accent glowing on wallpaper.
+    // (glass catches light at its edge), the accent glowing on wallpaper;
+    // none where a docked FRAME island is the frame.
     readonly property color shellRing: {
-        if (Config.map.islandTheme === "dark")
+        if (root.frameLine)
+            return Colours.alpha(Colours.accent, 0.5);
+        if (root.theme === "frame" && root.docked)
+            return "transparent";
+        if (root.theme === "dark" || root.theme === "frame" || root.theme === "tone")
             return Colours.alpha(Config.map.islandAccent ? Colours.accent : Colours.ink, Config.map.islandAccent ? 0.26 : 0.18);
-        if (Config.map.islandTheme === "glass")
-            return Colours.alpha(Config.map.islandAccent ? Colours.accent : Colours.ink, Config.map.islandAccent ? 0.55 : 0.34);
+        if (root.theme === "glass")
+            return Colours.alpha(Config.map.islandAccent ? Colours.accent : Colours.ink, Config.map.islandAccent ? 0.5 : 0.3);
         return Colours.alpha(Config.map.islandAccent ? Colours.accent : Colours.ink, 0.5);
     }
 
@@ -412,6 +528,93 @@ PanelWindow {
         }
     }
 
+    // ── the gesture, for the pill row (top) and the rail (sides) alike ──────
+    //  Positions come in the window's own coordinates: the capsule moves and
+    //  grows under the pointer while you drag, its children's do not hold.
+    //  "out" is away from the island's edge (down from the top, into the
+    //  screen from a side), "along" runs with the edge.
+    property real gStartX: 0
+    property real gStartY: 0
+    property real lastWheel: 0
+
+    function railIdxAt(py: real): int {
+        const i = Math.floor((py - root.railTop - root.railPad) / root.cellH);
+        return i >= 0 && i < root.meta.length ? i : -1;
+    }
+
+    function gesturePress(px: real, py: real, idx: int): void {
+        root.poke();
+        root.gStartX = px;
+        root.gStartY = py;
+        root.pressed = true;
+        root.axis = "";
+        root.dragDX = 0;
+        root.dragDY = 0;
+        root.pressIdx = idx;
+        root.awaitIntent();
+    }
+
+    function gestureMove(px: real, py: real): void {
+        if (!root.pressed)
+            return;
+        const dx = px - root.gStartX;
+        const dy = py - root.gStartY;
+        const out = root.edge === "left" ? dx : (root.edge === "right" ? -dx : dy);
+        const along = root.onSide ? dy : dx;
+        root.dragDX = along;
+        root.dragDY = out;
+        if (root.axis === "") {
+            if (Math.abs(along) > 14) {
+                root.axis = "h";
+                Sfx.cursor();
+            } else if (out > 12) {
+                root.axis = "v";
+                // pulled out of the rail: the module you took hold of
+                if (root.onSide && root.pressIdx >= 0 && root.pressIdx !== root.moduleIdx) {
+                    root.moduleIdx = root.pressIdx;
+                    root.previewIdx = root.pressIdx;
+                }
+            }
+            if (root.axis !== "")
+                root.disarm();
+        }
+        if (root.axis === "v") {
+            root.progress = root.ease((out - 12) / root.travel);
+        } else if (root.axis === "h") {
+            const n = root.meta.length;
+            if (root.onSide && root.pressIdx >= 0) {
+                const i = root.railIdxAt(py);
+                root.previewIdx = i >= 0 ? i : (py < root.railTop ? 0 : n - 1);
+            } else {
+                root.previewIdx = (root.moduleIdx + (along > 0 ? 1 : -1) + n) % n;
+            }
+        }
+    }
+
+    // The wheel is the third way to browse: the modules cycle like a
+    // carousel. On the top pill only while it rests (open, the wheel is the
+    // module's); on the rail always — open, it flips the open module (past
+    // the map, which never opens here). Trackpads emit a burst per flick: a
+    // short gate keeps one flick from spinning through every module.
+    function gestureWheel(dy: real): void {
+        if (root.pressed || (root.expanded && !root.onSide) || dy === 0)
+            return;
+        const t = Date.now();
+        if (t - root.lastWheel < 140)
+            return;
+        root.lastWheel = t;
+        root.poke();
+        const n = root.meta.length;
+        const step = dy < 0 ? 1 : -1;
+        let next = (root.moduleIdx + step + n) % n;
+        if (root.expanded && next === root.deskIdx)
+            next = (next + step + n) % n;
+        root.moduleIdx = next;
+        root.previewIdx = next;
+        root.touched = true;
+        Sfx.cursor();
+    }
+
     function commit(): void {
         // A hold that already fired Velly owns this release.
         if (root.consumed) {
@@ -423,9 +626,12 @@ PanelWindow {
         }
         const ax = root.axis;
         const dx = root.dragDX;
+        const at = root.pressIdx;
         root.pressed = false;
+        root.pressIdx = -1;
         if (ax === "h") {
-            if (Math.abs(dx) >= 70) {
+            // the rail scrubs: where you let go is the module
+            if (root.onSide ? root.previewIdx !== root.moduleIdx : Math.abs(dx) >= 70) {
                 root.moduleIdx = root.previewIdx;
                 root.touched = true;
                 Sfx.cursor();
@@ -438,6 +644,22 @@ PanelWindow {
         } else if (ax === "v") {
             if (root.progress >= 0.5)
                 root.openModule();
+        } else if (at >= 0) {
+            // A click on one of the rail's icons: that module, open — or,
+            // when it is the one already open, closed again.
+            if (root.expanded && root.moduleIdx === at) {
+                root.expanded = false;
+                Sfx.back();
+            } else if (root.expanded && at !== root.deskIdx) {
+                root.moduleIdx = at;
+                root.previewIdx = at;
+                root.touched = true;
+                Sfx.cursor();
+            } else {
+                root.moduleIdx = at;
+                root.previewIdx = at;
+                root.openModule();
+            }
         } else {
             // A plain click: the module opens or closes.
             if (root.expanded) {
@@ -453,6 +675,7 @@ PanelWindow {
 
     function abort(): void {
         root.pressed = false;
+        root.pressIdx = -1;
         root.axis = "";
         root.progress = 0;
         root.previewIdx = root.moduleIdx;
@@ -601,13 +824,16 @@ PanelWindow {
         // at least the whole hot zone that raised it (the pointer may still
         // be up there when the pill slides out)
         readonly property real zone: Math.max(80, Config.map.edgeWidth) + 44
-        readonly property real sideTop: Math.min(capsule.y - 44, capsule.y + root.pillH / 2 - zone / 2)
-        readonly property real sideBottom: Math.max(capsule.y + capsule.height + 44, capsule.y + root.pillH / 2 + zone / 2)
+        readonly property real cx: edgeClip.x + capsule.x
+        readonly property real cy: edgeClip.y + capsule.y
+        readonly property real mid: root.railTop + root.railH / 2
+        readonly property real sideTop: Math.min(cy - 44, mid - zone / 2)
+        readonly property real sideBottom: Math.max(cy + capsule.height + 44, mid + zone / 2)
 
-        x: root.edge === "left" ? 0 : (root.edge === "right" ? capsule.x - 44 : Math.round(capsule.x + capsule.width / 2 - shield.span / 2))
+        x: root.edge === "left" ? 0 : (root.edge === "right" ? shield.cx - 44 : Math.round(shield.cx + capsule.width / 2 - shield.span / 2))
         y: root.onSide ? shield.sideTop : 0
-        width: root.edge === "left" ? capsule.x + capsule.width + 44 : (root.edge === "right" ? root.width - capsule.x + 44 : shield.span)
-        height: root.onSide ? shield.sideBottom - shield.sideTop : capsule.y + capsule.height + 44
+        width: root.edge === "left" ? shield.cx + capsule.width + 44 : (root.edge === "right" ? root.width - shield.cx + 44 : shield.span)
+        height: root.onSide ? shield.sideBottom - shield.sideTop : shield.cy + capsule.height + 44
 
         z: 50
 
@@ -667,221 +893,398 @@ PanelWindow {
     }
 
     // ═════════════════════════════════════════════════════════════ the capsule
+    //  Everything lives inside the line where the desktop starts on the
+    //  island's edge (plus the docked lip): rising or sliding out, the island
+    //  comes from behind the frame or the taskbar there, never across them.
     Item {
-        id: capsule
+        id: edgeClip
 
-        x: root.capsuleX(capsule.width) + (root.axis === "h" ? Math.max(-30, Math.min(30, root.dragDX * 0.12)) : 0)
-        y: root.onSide ? Appearance.edgeY(root.height, capsule.height, root.pillH) : (root.active ? 10 + root.barClear + Config.map.islandGap : -capsule.height - 14)
-        width: root.shellW
-        height: root.shellH
-        scale: root.expanded ? 1 : (root.pressed && root.axis === "v" ? 0.985 : 1)
+        x: root.edge === "left" ? root.inset - root.lip : 0
+        y: root.edge === "top" ? root.inset - root.lip : 0
+        width: root.edge === "left" ? root.width - x : (root.edge === "right" ? root.width - root.inset + root.lip : root.width)
+        height: root.height - y
         clip: true
         z: 10
 
-        HoverHandler {
-            id: peekHover
+        // DOCKED: one shape for the island AND its flared foot, so the curves
+        // into the frame have no seam. The ring leaves the foot out.
+        Shape {
+            id: dockShape
 
-            onHoveredChanged: {
-                if (hovered)
-                    peekDelay.restart();
-                else {
-                    peekDelay.stop();
-                    root.hoverPeek = false;
+            x: capsule.x
+            y: capsule.y
+            width: capsule.width
+            height: capsule.height
+            scale: capsule.scale
+            visible: root.docked
+            preferredRendererType: Shape.CurveRenderer
+
+            LinearGradient {
+                id: sheen
+
+                x1: 0
+                y1: 0
+                x2: 0
+                y2: Math.max(60, dockShape.height * 0.5)
+
+                GradientStop {
+                    position: 0
+                    color: root.sheenCol
+                }
+                GradientStop {
+                    position: 1
+                    color: root.shellCol
+                }
+            }
+
+            ShapePath {
+                fillColor: root.shellCol
+                fillGradient: root.glassy ? sheen : null
+                strokeColor: "transparent"
+                strokeWidth: 0
+
+                PathSvg {
+                    path: root.dockPath(capsule.width, capsule.height, false)
+                }
+            }
+
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: root.shellRing
+                strokeWidth: root.ringW
+
+                PathSvg {
+                    path: root.dockPath(capsule.width, capsule.height, true)
                 }
             }
         }
 
-        // On a side edge x and y follow the width/height spring and the slide
-        // exactly (the edge it keeps to must not wobble); on top it settles
-        // with its own ease.
-        Behavior on x {
-            enabled: !root.pressed && !root.onSide
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutExpo
-            }
-        }
-        Behavior on y {
-            enabled: !root.pressed && !root.onSide
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutExpo
-            }
-        }
-        Behavior on width {
-            enabled: !root.pressed
-            // A spring, like the height: the two edges of the capsule settle
-            // together instead of one snapping and the other sagging behind.
-            SpringAnimation {
-                spring: 2.6
-                damping: 0.74
-                epsilon: 0.01
-            }
-        }
-        Behavior on height {
-            enabled: !root.pressed
-            SpringAnimation {
-                spring: 2.4
-                damping: 0.72
-                epsilon: 0.01
-            }
-        }
-        // Opening is a small pop, closing a small settle — the same spring
-        // language as every button in the shell.
-        Behavior on scale {
-            enabled: !root.pressed
-            SpringAnimation {
-                spring: 2.2
-                damping: 0.7
-                epsilon: 0.01
-            }
-        }
+        Item {
+            id: capsule
 
-        // One surface: a pill when closed, a sheet when open. The radius
-        // follows the height, so the capsule never shows a corner seam.
-        Plate {
-            id: shell
+            // the top pill leans into a sideways swipe; the rail stays put
+            // (it scrubs — it must not move under the pointer)
+            readonly property real wobble: !root.onSide && root.axis === "h" ? Math.max(-30, Math.min(30, root.dragDX * 0.12)) : 0
+            // the rail's y inside the capsule: fixed on screen while the
+            // capsule grows round it
+            readonly property real railY: root.railTop - edgeClip.y - capsule.y
 
-            anchors.fill: parent
-            radius: Appearance.r(Math.min(24, capsule.height / 2))
-            color: root.shellCol
+            x: root.capsuleX(capsule.width) + capsule.wobble
+            y: root.capsuleY(capsule.height)
+            width: root.shellW
+            height: root.shellH
+            scale: root.expanded ? 1 : (root.pressed && root.axis === "v" && !root.onSide ? 0.985 : 1)
             clip: true
-            border.width: shell.decorated ? 1 : 0
-            border.color: root.shellRing
 
-            Behavior on color {
-                ColorAnimation {
-                    duration: Appearance.anim.normal
+            HoverHandler {
+                id: peekHover
+
+                onHoveredChanged: {
+                    if (hovered)
+                        peekDelay.restart();
+                    else {
+                        peekDelay.stop();
+                        root.hoverPeek = false;
+                    }
                 }
             }
 
-            Halftone {
-                anchors.fill: parent
-                strength: Config.map.islandTheme === "glass" ? 0.03 : 0.045
-                density: 1.6
+            // On a side edge x and y follow the width/height spring and the
+            // slide exactly (the edge it keeps to must not wobble); on top it
+            // settles with its own ease.
+            Behavior on x {
+                enabled: !root.pressed && !root.onSide
+                NumberAnimation {
+                    duration: Appearance.anim.normal
+                    easing.type: Easing.OutExpo
+                }
+            }
+            Behavior on y {
+                enabled: !root.pressed && !root.onSide
+                NumberAnimation {
+                    duration: Appearance.anim.normal
+                    easing.type: Easing.OutExpo
+                }
+            }
+            Behavior on width {
+                enabled: !root.pressed
+                // A spring, like the height: the two edges of the capsule
+                // settle together instead of one snapping and the other
+                // sagging behind.
+                SpringAnimation {
+                    spring: 2.6
+                    damping: 0.74
+                    epsilon: 0.01
+                }
+            }
+            Behavior on height {
+                enabled: !root.pressed
+                SpringAnimation {
+                    spring: 2.4
+                    damping: 0.72
+                    epsilon: 0.01
+                }
+            }
+            // Opening is a small pop, closing a small settle — the same
+            // spring language as every button in the shell.
+            Behavior on scale {
+                enabled: !root.pressed
+                SpringAnimation {
+                    spring: 2.2
+                    damping: 0.7
+                    epsilon: 0.01
+                }
             }
 
-            Rectangle {
-                anchors.fill: parent
-                visible: !shell.decorated
-                radius: parent.radius
-                color: "transparent"
-                border.width: 1
-                border.color: root.shellRing
-                antialiasing: true
+            // FREE: one surface, a pill when closed, a sheet when open. The
+            // radius follows the height, so the capsule never shows a corner
+            // seam. (Docked, dockShape above draws the surface.)
+            Plate {
+                id: shell
 
-                Behavior on border.color {
+                anchors.fill: parent
+                visible: !root.docked
+                radius: Appearance.r(Math.min(24, Math.min(capsule.width, capsule.height) / 2))
+                color: root.shellCol
+                clip: true
+                border.width: shell.decorated ? 1 : 0
+                border.color: root.shellRing
+
+                Behavior on color {
                     ColorAnimation {
                         duration: Appearance.anim.normal
                     }
                 }
-            }
 
-            // GLASS: the specular — light catching the top edge and falling
-            // away down the pane. This plus the frost is what reads as glass.
-            Rectangle {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: Math.max(60, parent.height * 0.42)
-                visible: Config.map.islandTheme === "glass"
-                gradient: Gradient {
-                    GradientStop {
-                        position: 0.0
-                        color: Colours.alpha(Colours.ink, 0.22)
-                    }
-                    GradientStop {
-                        position: 1.0
-                        color: "transparent"
+                Halftone {
+                    anchors.fill: parent
+                    visible: !root.glassy
+                    strength: 0.045
+                    density: 1.6
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    visible: !shell.decorated
+                    radius: parent.radius
+                    color: "transparent"
+                    border.width: 1
+                    border.color: root.shellRing
+                    antialiasing: true
+
+                    Behavior on border.color {
+                        ColorAnimation {
+                            duration: Appearance.anim.normal
+                        }
                     }
                 }
-                antialiasing: true
-            }
 
-            // GLASS: a soft grounding at the bottom — the glass resting on
-            // the desk instead of floating.
-            Rectangle {
-                anchors.bottom: parent.bottom
-                anchors.left: parent.left
-                anchors.right: parent.right
-                height: parent.height * 0.3
-                visible: Config.map.islandTheme === "glass"
-                gradient: Gradient {
-                    GradientStop {
-                        position: 0.0
-                        color: "transparent"
+                // GLASS: the sheen — light catching the top edge and falling
+                // away down the pane. This plus the frost is what reads as
+                // glass.
+                Rectangle {
+                    anchors.fill: parent
+                    visible: root.glassy
+                    radius: parent.radius
+                    gradient: Gradient {
+                        GradientStop {
+                            position: 0.0
+                            color: Colours.alpha(Colours.ink, 0.10)
+                        }
+                        GradientStop {
+                            position: Math.min(1, 60 / Math.max(60, shell.height))
+                            color: Colours.alpha(Colours.ink, 0.03)
+                        }
+                        GradientStop {
+                            position: 1.0
+                            color: "transparent"
+                        }
                     }
-                    GradientStop {
-                        position: 1.0
-                        color: Qt.rgba(0, 0, 0, 0.26)
-                    }
+                    antialiasing: true
                 }
-                antialiasing: true
-            }
 
-            // GLASS: the crisp rim of light along the top edge.
-            Rectangle {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.leftMargin: 1
-                anchors.right: parent.right
-                anchors.rightMargin: 1
-                height: 1
-                color: Colours.alpha(Colours.ink, 0.3)
-                visible: Config.map.islandTheme === "glass"
-                antialiasing: true
-            }
-        }
-
-        // The pill row — the drag surface and the text view.
-        Item {
-            id: pillRow
-
-            width: parent.width
-            height: pillH
-            z: 2
-
-            Icon {
-                id: pillIcon
-
-                anchors.verticalCenter: parent.verticalCenter
-                x: 20
-                width: 20
-                visible: root.showText
-                name: root.arming ? "auto_awesome" : root.pillGlyph(root.pressed && root.axis === "h" ? root.previewIdx : root.moduleIdx)
-                color: root.arming ? Colours.accentHot : Colours.accent
-                font.pixelSize: 18
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: Appearance.anim.fast
-                    }
+                // GLASS: the crisp rim of light along the top edge.
+                Rectangle {
+                    anchors.top: parent.top
+                    anchors.left: parent.left
+                    anchors.leftMargin: parent.radius * 0.7
+                    anchors.right: parent.right
+                    anchors.rightMargin: parent.radius * 0.7
+                    height: 1
+                    color: Colours.alpha(Colours.ink, 0.28)
+                    visible: root.glassy
+                    antialiasing: true
                 }
             }
 
-            P5Text {
-                id: pillLabel
+            // ───────────────────────────────────────────────────── the rail
+            //  Rows behind the rail's cells (and their lines): the open or
+            //  chosen module wears the accent, the one under the pointer a
+            //  quiet ink. Open, a row is only as wide as the rail.
+            Rectangle {
+                id: litRow
 
-                anchors.verticalCenter: parent.verticalCenter
-                x: 48
-                width: Math.max(10, parent.width - 48 - 10 - 41 - 20)
-                visible: root.showText
-                text: root.arming ? "VELLY  ·  HALTEN…" : root.pillText(root.pressed && root.axis === "h" ? root.previewIdx : root.moduleIdx)
-                color: root.arming ? Colours.accentInk : Colours.alpha(Colours.ink, 0.92)
-                font.pixelSize: Appearance.font.size.small
-                elide: Text.ElideRight
+                readonly property bool wide: root.sideLabels
+                visible: root.onSide && root.shownIdx >= 0
+                x: (root.edge === "left" || wide ? 0 : capsule.width - root.railW) + 6
+                y: capsule.railY + root.railPad + root.shownIdx * root.cellH + 4
+                width: (wide ? capsule.width : root.railW) - 12
+                height: root.cellH - 8
+                radius: Appearance.r(12)
+                color: Colours.alpha(Colours.accent, root.expanded || root.touched ? 0.2 : 0.12)
+
+                Behavior on y {
+                    SpringAnimation {
+                        spring: 3.2
+                        damping: 0.62
+                        epsilon: 0.01
+                    }
+                }
             }
 
-            // One dot per module; the accent marks the active one. The dots
-            // are the swipe hint — they move with the preview while you drag.
-            Row {
-                id: dots
+            Rectangle {
+                visible: root.onSide && root.railHot >= 0 && root.railHot !== root.shownIdx && !root.pressed
+                x: litRow.x
+                y: capsule.railY + root.railPad + root.railHot * root.cellH + 4
+                width: litRow.width
+                height: root.cellH - 8
+                radius: Appearance.r(12)
+                color: Colours.alpha(Colours.ink, 0.08)
+            }
 
-                anchors.right: parent.right
-                anchors.rightMargin: 20
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: 7
-                opacity: root.arming ? 0 : 1
+            Item {
+                id: rail
+
+                visible: root.onSide
+                x: root.edge === "left" ? 0 : capsule.width - root.railW
+                y: capsule.railY
+                width: root.railW
+                height: root.railH
+                z: 3
+
+                Repeater {
+                    model: root.meta.length
+
+                    Item {
+                        id: cell
+
+                        required property int index
+                        readonly property bool lit: cell.index === root.shownIdx
+                        readonly property bool hot: cell.index === root.railHot
+                        // Her cell never goes dark while she is awake: a session
+                        // that keeps the microphone open is visible from every
+                        // module, not only from her own.
+                        readonly property bool awake: Velly.active && cell.index === root.vellyIdx
+                        readonly property bool playing: cell.index === 0 && (root.bridge?.playing ?? false)
+
+                        y: root.railPad + cell.index * root.cellH
+                        width: root.railW
+                        height: root.cellH
+
+                        // the taskbar's language: a bar of accent on the edge side
+                        Rectangle {
+                            x: root.edge === "left" ? 2 : cell.width - 5
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 3
+                            height: cell.lit ? 20 : (cell.hot ? 8 : 0)
+                            radius: 1.5
+                            color: Colours.accent
+                            opacity: cell.lit || cell.hot ? 1 : 0
+
+                            Behavior on height {
+                                SpringAnimation {
+                                    spring: 3.4
+                                    damping: 0.6
+                                    epsilon: 0.01
+                                }
+                            }
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: Appearance.anim.fast
+                                }
+                            }
+                        }
+
+                        Icon {
+                            anchors.centerIn: parent
+                            name: root.arming && cell.index === root.vellyIdx ? "auto_awesome" : (cell.playing ? "graphic_eq" : root.pillGlyph(cell.index))
+                            color: cell.awake || (root.arming && cell.index === root.vellyIdx) ? Colours.accentHot : (cell.lit ? Colours.accent : Colours.alpha(Colours.ink, cell.hot ? 1 : 0.7))
+                            font.pixelSize: 20
+                            scale: cell.hot && !root.pressed ? 1.16 : 1
+
+                            Behavior on scale {
+                                SpringAnimation {
+                                    spring: 3.6
+                                    damping: 0.55
+                                    epsilon: 0.01
+                                }
+                            }
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: Appearance.anim.fast
+                                }
+                            }
+                        }
+
+                        // live: music playing, Velly awake
+                        Rectangle {
+                            visible: cell.playing || cell.awake
+                            x: cell.width / 2 + 8
+                            y: cell.height / 2 - 13
+                            width: 6
+                            height: 6
+                            radius: 3
+                            color: cell.awake ? Colours.accentHot : Colours.accent
+
+                            SequentialAnimation on scale {
+                                running: cell.awake || cell.playing
+                                loops: Animation.Infinite
+                                NumberAnimation {
+                                    to: 1.5
+                                    duration: 700
+                                    easing.type: Easing.InOutSine
+                                }
+                                NumberAnimation {
+                                    to: 1.0
+                                    duration: 700
+                                    easing.type: Easing.InOutSine
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // The hold for Velly: a hairline down the rail's open side
+                // that fills over exactly the hold time.
+                Rectangle {
+                    x: root.edge === "left" ? rail.width - 2 : 0
+                    width: 2
+                    height: rail.height * (root.arming ? 1 : 0)
+                    visible: root.arming
+                    color: Colours.accent
+                    antialiasing: true
+
+                    Behavior on height {
+                        NumberAnimation {
+                            duration: root.armMs
+                            easing.type: Easing.Linear
+                        }
+                    }
+                }
+            }
+
+            // Every module's live line, beside its icon — what the top pill
+            // says one at a time, the rail says all at once.
+            Item {
+                id: labels
+
+                visible: opacity > 0
+                opacity: root.sideLabels ? 1 : 0
+                x: root.edge === "left" ? root.railW : capsule.width - root.railW - root.labelW
+                y: capsule.railY
+                width: root.labelW
+                height: root.railH
+                z: 3
 
                 Behavior on opacity {
                     NumberAnimation {
@@ -892,133 +1295,65 @@ PanelWindow {
                 Repeater {
                     model: root.meta.length
 
-                    Rectangle {
-                        id: dot
-
+                    P5Text {
                         required property int index
-                        readonly property bool lit: dot.index === (root.pressed && root.axis === "h" ? root.previewIdx : root.moduleIdx)
-                        // Her dot never goes dark while she is awake: a session
-                        // that keeps the microphone open has to be visible
-                        // from every module, not only from her own.
-                        readonly property bool awake: Velly.active && dot.index === root.vellyIdx
 
-                        width: awake ? 6 : 5
-                        height: awake ? 6 : 5
-                        radius: 3
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: awake ? Colours.accentHot : (lit ? Colours.accent : Colours.alpha(Colours.ink, 0.28))
-
-                        SequentialAnimation on scale {
-                            running: dot.awake
-                            loops: Animation.Infinite
-                            NumberAnimation {
-                                to: 1.7
-                                duration: 700
-                                easing.type: Easing.InOutSine
-                            }
-                            NumberAnimation {
-                                to: 1.0
-                                duration: 700
-                                easing.type: Easing.InOutSine
-                            }
-                        }
-
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: Appearance.anim.fast
-                            }
-                        }
+                        x: root.edge === "left" ? 4 : 18
+                        y: root.railPad + index * root.cellH
+                        width: root.labelW - 26
+                        height: root.cellH
+                        verticalAlignment: Text.AlignVCenter
+                        horizontalAlignment: root.edge === "left" ? Text.AlignLeft : Text.AlignRight
+                        text: root.pillText(index)
+                        color: index === root.shownIdx ? Colours.ink : Colours.alpha(Colours.ink, index === root.railHot ? 0.95 : 0.62)
+                        font.pixelSize: Appearance.font.size.small
+                        elide: Text.ElideRight
                     }
                 }
             }
 
-            // The charge: a hairline along the bottom of the pill that fills
-            // over exactly the hold time. Nothing counts down anywhere — the
-            // line IS the timer, and it reads from the corner of your eye.
-            Rectangle {
-                anchors.left: parent.left
-                anchors.bottom: parent.bottom
-                height: 2
-                width: parent.width * (root.arming ? 1 : 0)
-                visible: root.arming
-                color: Colours.accent
-                antialiasing: true
-
-                Behavior on width {
-                    NumberAnimation {
-                        duration: root.armMs
-                        easing.type: Easing.Linear
-                    }
-                }
-            }
-
-            // The whole gesture lives here: pull down to expand, swipe
-            // sideways to switch modules, click to toggle, hold to wake Velly.
+            // The rail's hands: point (the lines unfold, the row lights), click
+            // (that module opens — or closes), pull an icon out (it opens,
+            // following your hand), scrub along (the modules flip), wheel,
+            // hold (Velly). While the lines are out, they answer too.
             MouseArea {
-                id: gesture
+                id: railArea
 
-                anchors.fill: parent
+                visible: root.onSide
+                x: root.sideOpen ? rail.x : 0
+                y: capsule.railY
+                width: root.sideOpen ? root.railW : capsule.width
+                height: root.railH
+                z: 4
                 acceptedButtons: Qt.LeftButton
                 cursorShape: Qt.PointingHandCursor
 
-                property real startX: 0
-                property real startY: 0
-
-                onPressed: event => {
-                    root.poke();
-                    startX = event.x;
-                    startY = event.y;
-                    root.pressed = true;
-                    root.axis = "";
-                    root.dragDX = 0;
-                    root.dragDY = 0;
-                    root.awaitIntent();
+                function at(e): var {
+                    return railArea.mapToItem(root, e.x, e.y);
                 }
 
-                onPositionChanged: event => {
-                    if (!pressed)
-                        return;
-                    root.dragDX = event.x - startX;
-                    root.dragDY = event.y - startY;
-                    if (root.axis === "") {
-                        if (Math.abs(root.dragDX) > 14) {
-                            root.axis = "h";
-                            Sfx.cursor();
-                        } else if (root.dragDY > 12) {
-                            root.axis = "v";
-                        }
-                        if (root.axis !== "")
-                            root.disarm();
-                    }
-                    if (root.axis === "v") {
-                        root.progress = root.ease((root.dragDY - 12) / root.travel);
-                    } else if (root.axis === "h") {
-                        root.previewIdx = (root.moduleIdx + (root.dragDX > 0 ? 1 : -1) + root.meta.length) % root.meta.length;
+                // Pointing is a passive handler, not hoverEnabled: a MouseArea
+                // that takes the hover took it from the island's own keep-alive
+                // (keepHover) too, and the island shut under the pointer.
+                HoverHandler {
+                    id: railHover
+
+                    cursorShape: Qt.PointingHandCursor
+                    onPointChanged: root.railHot = railHover.hovered ? root.railIdxAt(railArea.mapToItem(root, railHover.point.position.x, railHover.point.position.y).y) : -1
+                    onHoveredChanged: {
+                        if (!railHover.hovered)
+                            root.railHot = -1;
                     }
                 }
 
-                // The wheel is the third way to browse: scroll over the
-                // resting pill and the modules cycle like a carousel. While
-                // expanded the wheel belongs to the module's own content.
-                // Trackpads emit a burst of wheel events per gesture — a
-                // short gate keeps one flick from spinning through every
-                // module.
-                property real lastWheel: 0
-
-                onWheel: event => {
-                    if (root.expanded || root.pressed)
-                        return;
-                    const t = Date.now();
-                    if (t - lastWheel < 140)
-                        return;
-                    lastWheel = t;
-                    root.poke();
-                    root.moduleIdx = (root.moduleIdx + (event.angleDelta.y < 0 ? 1 : -1) + root.meta.length) % root.meta.length;
-                    root.previewIdx = root.moduleIdx;
-                    root.touched = true;
-                    Sfx.cursor();
+                onPositionChanged: e => {
+                    const p = railArea.at(e);
+                    root.gestureMove(p.x, p.y);
                 }
-
+                onPressed: e => {
+                    const p = railArea.at(e);
+                    root.gesturePress(p.x, p.y, root.railIdxAt(p.y));
+                }
                 onReleased: {
                     root.disarm();
                     root.commit();
@@ -1027,79 +1362,246 @@ PanelWindow {
                     root.disarm();
                     root.abort();
                 }
-            }
-        }
-
-        // The module body. The capsule's clip reveals it as the capsule
-        // grows, so the content never reflows while you pull.
-        Loader {
-            id: body
-
-            y: pillH
-            width: parent.width
-            height: Math.max(0, parent.height - pillH)
-            clip: true
-
-            source: {
-                if (root.moduleIdx === 0)
-                    return Qt.resolvedUrl("IslandMusic.qml");
-                if (root.moduleIdx === root.deskIdx)
-                    return "";
-                if (root.moduleIdx === root.tasksIdx)
-                    return Qt.resolvedUrl("IslandTasks.qml");
-                if (root.moduleIdx === root.weatherIdx)
-                    return Qt.resolvedUrl("IslandWeather.qml");
-                if (root.moduleIdx === root.systemIdx)
-                    return Qt.resolvedUrl("IslandSystem.qml");
-                if (root.moduleIdx === root.vellyIdx)
-                    return Qt.resolvedUrl("IslandVelly.qml");
-                return "";
+                onWheel: e => root.gestureWheel(e.angleDelta.y)
             }
 
-            onLoaded: {
-                if (root.moduleIdx === 0)
-                    body.item.bridge = Qt.binding(() => root.bridge);
-            }
-        }
+            // ──────────────────────────────────────────────────── the sheet
+            //  Top: the whole capsule — the pill row, and the module growing
+            //  out under it. Side: the module's own size beside the rail,
+            //  fixed on screen, revealed as the capsule grows round it, so it
+            //  never reflows while you pull.
+            Item {
+                id: sheet
 
-        // Desk's own teaser: the map itself is not drawn here, so the pull
-        // shows a quiet promise instead. Only while the pull is actually
-        // happening — released, it disappears with the capsule, never
-        // during the hide animation.
-        Item {
-            id: deskTeaser
+                x: !root.onSide ? 0 : (root.edge === "left" ? root.railW : capsule.width - root.railW - sheet.width)
+                y: root.onSide ? Math.round((capsule.height - root.sideFullH) / 2) : 0
+                width: root.onSide ? root.meta[root.moduleIdx].w : capsule.width
+                height: root.onSide ? root.sideFullH : capsule.height
+                visible: !root.onSide || root.sideOpen || capsule.width > root.railW + root.labelW + 1
+                z: 2
 
-            y: pillH
-            width: parent.width
-            height: Math.max(0, parent.height - pillH)
-            visible: root.moduleIdx === root.deskIdx && root.pressed
+                // The pill row — the drag surface and the text view. On a side
+                // edge it is the open module's title: click it to fold it back.
+                Item {
+                    id: pillRow
 
-            Icon {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 16
-                width: 30
-                name: "apps"
-                color: Colours.alpha(Colours.ink, 0.5)
-                font.pixelSize: 28
-            }
+                    width: parent.width
+                    height: pillH
+                    z: 2
 
-            P5Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 56
-                display: true
-                text: "DESKTOP MAP"
-                color: Colours.ink
-                font.pixelSize: Appearance.font.size.large
-                tracking: 1.4
-            }
+                    Icon {
+                        id: pillIcon
 
-            P5Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: 86
-                text: "RELEASE TO OPEN  ·  PULL DOWN ANYTIME"
-                color: Colours.inkDim
-                font.pixelSize: Appearance.font.size.tiny
-                tracking: 1.2
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 20
+                        width: 20
+                        visible: root.showText
+                        name: root.arming ? "auto_awesome" : root.pillGlyph(root.shownIdx)
+                        color: root.arming ? Colours.accentHot : Colours.accent
+                        font.pixelSize: 18
+
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: Appearance.anim.fast
+                            }
+                        }
+                    }
+
+                    P5Text {
+                        id: pillLabel
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: 48
+                        width: Math.max(10, parent.width - 48 - 10 - (root.onSide ? 0 : 41) - 20)
+                        visible: root.showText
+                        text: root.arming ? "VELLY  ·  HALTEN…" : root.pillText(root.shownIdx)
+                        color: root.arming ? Colours.accentInk : Colours.alpha(Colours.ink, 0.92)
+                        font.pixelSize: Appearance.font.size.small
+                        elide: Text.ElideRight
+                    }
+
+                    // One dot per module; the accent marks the active one. The
+                    // dots are the swipe hint — they move with the preview while
+                    // you drag. (On a side edge the rail says all this.)
+                    Row {
+                        id: dots
+
+                        visible: !root.onSide
+                        anchors.right: parent.right
+                        anchors.rightMargin: 20
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 7
+                        opacity: root.arming ? 0 : 1
+
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: Appearance.anim.fast
+                            }
+                        }
+
+                        Repeater {
+                            model: root.meta.length
+
+                            Rectangle {
+                                id: dot
+
+                                required property int index
+                                readonly property bool lit: dot.index === root.shownIdx
+                                // Her dot never goes dark while she is awake.
+                                readonly property bool awake: Velly.active && dot.index === root.vellyIdx
+
+                                width: awake ? 6 : 5
+                                height: awake ? 6 : 5
+                                radius: 3
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: awake ? Colours.accentHot : (lit ? Colours.accent : Colours.alpha(Colours.ink, 0.28))
+
+                                SequentialAnimation on scale {
+                                    running: dot.awake
+                                    loops: Animation.Infinite
+                                    NumberAnimation {
+                                        to: 1.7
+                                        duration: 700
+                                        easing.type: Easing.InOutSine
+                                    }
+                                    NumberAnimation {
+                                        to: 1.0
+                                        duration: 700
+                                        easing.type: Easing.InOutSine
+                                    }
+                                }
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: Appearance.anim.fast
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // The charge: a hairline along the bottom of the pill that
+                    // fills over exactly the hold time. Nothing counts down
+                    // anywhere — the line IS the timer.
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.bottom: parent.bottom
+                        height: 2
+                        width: parent.width * (root.arming ? 1 : 0)
+                        visible: root.arming && !root.onSide
+                        color: Colours.accent
+                        antialiasing: true
+
+                        Behavior on width {
+                            NumberAnimation {
+                                duration: root.armMs
+                                easing.type: Easing.Linear
+                            }
+                        }
+                    }
+
+                    // Top: the whole gesture lives here — pull down to expand,
+                    // swipe sideways to switch modules, click to toggle, hold
+                    // to wake Velly. Side: a click folds the module back.
+                    MouseArea {
+                        id: gesture
+
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton
+                        cursorShape: Qt.PointingHandCursor
+
+                        onPressed: e => {
+                            const p = gesture.mapToItem(root, e.x, e.y);
+                            root.gesturePress(p.x, p.y, -1);
+                        }
+                        onPositionChanged: e => {
+                            const p = gesture.mapToItem(root, e.x, e.y);
+                            root.gestureMove(p.x, p.y);
+                        }
+                        onWheel: e => root.gestureWheel(e.angleDelta.y)
+                        onReleased: {
+                            root.disarm();
+                            root.commit();
+                        }
+                        onCanceled: {
+                            root.disarm();
+                            root.abort();
+                        }
+                    }
+                }
+
+                // The module body. The capsule's clip reveals it as the capsule
+                // grows, so the content never reflows while you pull.
+                Loader {
+                    id: body
+
+                    y: pillH
+                    width: parent.width
+                    height: Math.max(0, parent.height - pillH)
+                    clip: true
+
+                    source: {
+                        if (root.moduleIdx === 0)
+                            return Qt.resolvedUrl("IslandMusic.qml");
+                        if (root.moduleIdx === root.deskIdx)
+                            return "";
+                        if (root.moduleIdx === root.tasksIdx)
+                            return Qt.resolvedUrl("IslandTasks.qml");
+                        if (root.moduleIdx === root.weatherIdx)
+                            return Qt.resolvedUrl("IslandWeather.qml");
+                        if (root.moduleIdx === root.systemIdx)
+                            return Qt.resolvedUrl("IslandSystem.qml");
+                        if (root.moduleIdx === root.vellyIdx)
+                            return Qt.resolvedUrl("IslandVelly.qml");
+                        return "";
+                    }
+
+                    onLoaded: {
+                        if (root.moduleIdx === 0)
+                            body.item.bridge = Qt.binding(() => root.bridge);
+                    }
+                }
+
+                // Desk's own teaser: the map itself is not drawn here, so the
+                // pull shows a quiet promise instead. Only while the pull is
+                // actually happening — released, it disappears with the
+                // capsule, never during the hide animation.
+                Item {
+                    id: deskTeaser
+
+                    y: pillH
+                    width: parent.width
+                    height: Math.max(0, parent.height - pillH)
+                    visible: root.moduleIdx === root.deskIdx && root.pressed
+
+                    Icon {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: 16
+                        width: 30
+                        name: "apps"
+                        color: Colours.alpha(Colours.ink, 0.5)
+                        font.pixelSize: 28
+                    }
+
+                    P5Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: 56
+                        display: true
+                        text: "DESKTOP MAP"
+                        color: Colours.ink
+                        font.pixelSize: Appearance.font.size.large
+                        tracking: 1.4
+                    }
+
+                    P5Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: 86
+                        text: root.onSide ? "RELEASE TO OPEN  ·  PULL OUT ANYTIME" : "RELEASE TO OPEN  ·  PULL DOWN ANYTIME"
+                        color: Colours.inkDim
+                        font.pixelSize: Appearance.font.size.tiny
+                        tracking: 1.2
+                    }
+                }
             }
         }
     }

@@ -340,6 +340,15 @@ Singleton {
             return 0;
         return Config.bar.thickness + Config.bar.margin * 2;
     }
+    // Where the desktop starts on a screen edge: inside the SCREEN FRAME and
+    // inside a pinned taskbar on that edge. A docked island grows out of
+    // exactly this line, so it reads as part of the frame (or the bar).
+    function edgeInset(side: string): real {
+        const bar = Config.bar.enabled && Config.bar.position === side && Config.bar.style !== "floating" && (Config.bar.persistent || !Config.bar.showOnHover);
+        if (bar)
+            return Config.bar.thickness + Config.bar.margin;
+        return Config.bar.frame ? Math.max(0, Config.bar.frameWidth) : 0;
+    }
 
     function r(px: real): real {
         if (px < 6)

@@ -2056,6 +2056,15 @@ Singleton {
         function remove(id: string): string {
             return root.removeCustom(id) ? `removed ${id}` : `no custom look ${id}`;
         }
+        // for Velly: every look with its name, one line about it and whether it is on
+        function describe(): string {
+            const out = [{ id: "velvet", name: "VELVET", about: "the original: slanted cards, print dots, the house look", on: root.wearing("velvet") }];
+            for (let i = 0; i < root.looks.length; i++) {
+                const l = root.looks[i];
+                out.push({ id: l.id, name: root.nameOf(l), about: `${l.by ?? ""}`, on: root.wearing(l.id) });
+            }
+            return JSON.stringify(out);
+        }
         function list(): string {
             return ["velvet (the original)" + (root.wearing("velvet") ? " (on)" : "")].concat(root.looks.map(l => `${l.id}${root.wearing(l.id) ? " (on)" : ""}`)).join("\n");
         }
