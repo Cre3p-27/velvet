@@ -1390,7 +1390,7 @@ ARG_DOCS = {
     "settings.open": {"key": "optional: a setting key like velly.voice", "zone": "optional: a room of the settings",
                       "tab": "optional: a tab of the settings"},
     "toast.show": {"text": "the message", "kind": ("how it looks", ["ok", "info", "warn", "error"])},
-    "island.module": {"module": ("0 music, 1 map, 2 tasks, 3 weather, 4 system, 5 velly", [0, 1, 2, 3, 4, 5])},
+    "island.module": {"module": ("which module of the Dynamic Island to open", ["music", "map", "tasks", "weather", "system", "velly"])},
     "term.run": {"command": "the shell command to run in a visible terminal", "title": "a short window title"},
     "cmd.run": {"command": "the shell command; its output comes back to you"},
     "pkg.search": {"query": "what to search the repositories and the AUR for"},
@@ -2549,15 +2549,39 @@ def t_toast_show(text="", kind="info"):
     return {"ok": True}
 
 
-@tool("island.module", '{"module": 0}', "write", "Jump the Dynamic Island to a module (0 music, 1 map, 2 tasks, 3 weather, 4 system, 5 velly).")
-def t_island_module(module=0):
-    try:
-        idx = int(module)
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "module must be a number"}
+# The island's modules by name: the numbers move (TASKS can be switched off,
+# Velly too), and "zeig mir das Wetter in der Island" is a name, not a 3.
+ISLAND_WORDS = {
+    "music": ("music", "musik", "song", "lied", "player", "now playing"),
+    "map": ("map", "karte", "desktop", "übersicht", "uebersicht", "minimap"),
+    "tasks": ("tasks", "task", "aufgaben", "aufgabe", "todo", "liste", "checklist"),
+    "weather": ("weather", "wetter"),
+    "system": ("system", "cpu", "ram", "speicher", "leistung", "auslastung"),
+    "velly": ("velly", "assistant", "assistentin"),
+}
+
+
+def island_order() -> list:
+    cfg = read_json(CFG_PATH, {})
+    cfg = cfg if isinstance(cfg, dict) else {}
+    tasks = (cfg.get("map") or {}).get("islandTasks", True) is not False
+    velly = (cfg.get("velly") or {}).get("enabled", True) is not False
+    return ["music", "map"] + (["tasks"] if tasks else []) + ["weather", "system"] + (["velly"] if velly else [])
+
+
+@tool("island.module", '{"module": "weather"}', "write",
+      "Open a module of the Dynamic Island: music, map, tasks, weather, system or velly (the map opens the mini desktop).")
+def t_island_module(module="weather"):
+    order = island_order()
+    want = str(module if module is not None else "").strip().lower()
+    name = next((k for k, words in ISLAND_WORDS.items() if want == k or any(w in want for w in words)), "")
+    if not name and want.lstrip("-").isdigit() and 0 <= int(want) < len(order):
+        name = order[int(want)]
+    if name not in order:
+        return {"ok": False, "error": f"the island has: {', '.join(order)}" + (" (TASKS is switched off)" if name == "tasks" else "")}
     shell_ipc("island", "pop", "")
-    shell_ipc("island", "expand", idx)
-    return {"ok": True, "module": idx}
+    shell_ipc("island", "expand", order.index(name))
+    return {"ok": True, "module": name}
 
 
 def missing_programs(command: str) -> list:
@@ -3932,6 +3956,41 @@ STATE_TOPICS = {
 }
 
 
+VELVET_TOPIC = re.compile(r"island|insel|look|theme|thema|design|aussehen|aussieht|rahmen|frame|taskleiste|leiste|"
+                          r"\bbar\b|velvet|stil|style|glas|blur|unscharf|matt", re.I)
+
+ISLAND_SIDES = {"left": "the LEFT screen edge (a rail of module icons, like a vertical taskbar)",
+                "right": "the RIGHT screen edge (a rail of module icons)", "centre": "the TOP edge (a pill in the middle)"}
+
+
+def velvet_now() -> str:
+    """Velvet as the user sees it right now: the look, where the island is
+    and how it is dressed, the taskbar and the frame — so "wo ist die Island"
+    or "welcher Look ist an" is answered from the truth, not a guess."""
+    cfg = read_json(CFG_PATH, {})
+    cfg = cfg if isinstance(cfg, dict) else {}
+    m = cfg.get("map") or {}
+    bar = cfg.get("bar") or {}
+    look = next((r for r in look_rows() if r.get("on")), None)
+    parts = [f"look: {look.get('name')}" if look else "look: Velvet's own (tuned by the user)"]
+    if m.get("island", True) is False:
+        parts.append("island: switched off")
+    else:
+        side = ISLAND_SIDES.get(str(m.get("islandSide") or "centre"), ISLAND_SIDES["centre"])
+        dock = "docked into the frame/taskbar" if m.get("islandDock", True) is not False else "floating free"
+        parts.append(f"island: on {side}, {dock}, theme {str(m.get('islandTheme') or 'dark').upper()}")
+    if bar.get("enabled", True) is not False:
+        parts.append(f"taskbar: {bar.get('position', 'left')} edge")
+    parts.append("screen frame: " + ("on" if bar.get("frame") else "off"))
+    return "; ".join(parts)
+
+
+# Her own offer, answered: "Soll ich …?" — "Ja". The model saw the history and
+# still guessed what to do (measured: offered left OR right, did right).
+OFFER_RE = re.compile(r"(?:soll ich|möchtest du,? dass ich|willst du,? dass ich|darf ich|soll ich dir|"
+                      r"shall i|should i|want me to)[^?]{0,200}\?\s*\S{0,40}$", re.I)
+
+
 def context_block(text: str = "", actions=None, last_answer: str = "") -> str:
     """What she knows about this moment — rides on the user's message.
     `text` picks the remembered facts that matter for it; `actions` are what
@@ -3980,6 +4039,12 @@ def context_block(text: str = "", actions=None, last_answer: str = "") -> str:
         bits.append("earlier today: " + " | ".join(notes))
     if actions:
         bits.append("your last actions: " + " | ".join(actions[-4:]))
+    if VELVET_TOPIC.search(text or ""):
+        bits.append("velvet now: " + velvet_now())
+    if last_answer and OFFER_RE.search(last_answer.strip()) and is_yes(text):
+        bits.append("the user said YES to what you offered at the end of your last answer: do exactly that now, with "
+                    "your tools. If the offer left a choice open (left or right, which one), ask which in one short "
+                    "question instead of guessing.")
     # The rest of the context is German, and so was every English question's
     # answer (measured: "What's the weather like tomorrow?" → "Morgen wird's
     # …"). Said outright, she switches.

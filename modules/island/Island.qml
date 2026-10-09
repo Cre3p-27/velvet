@@ -784,6 +784,9 @@ PanelWindow {
         item: root.active ? inputArea : deadZone
     }
 
+    // Also the island's own coordinate frame for the gestures: `root` is the
+    // WINDOW here, not an Item, and mapToItem(root, …) threw on every press
+    // (v8.49 live: no hold, no click, no Velly — the harness had an Item root).
     Item {
         id: inputArea
 
@@ -1329,7 +1332,7 @@ PanelWindow {
                 cursorShape: Qt.PointingHandCursor
 
                 function at(e): var {
-                    return railArea.mapToItem(root, e.x, e.y);
+                    return railArea.mapToItem(inputArea, e.x, e.y);
                 }
 
                 // Pointing is a passive handler, not hoverEnabled: a MouseArea
@@ -1339,7 +1342,7 @@ PanelWindow {
                     id: railHover
 
                     cursorShape: Qt.PointingHandCursor
-                    onPointChanged: root.railHot = railHover.hovered ? root.railIdxAt(railArea.mapToItem(root, railHover.point.position.x, railHover.point.position.y).y) : -1
+                    onPointChanged: root.railHot = railHover.hovered ? root.railIdxAt(railArea.mapToItem(inputArea, railHover.point.position.x, railHover.point.position.y).y) : -1
                     onHoveredChanged: {
                         if (!railHover.hovered)
                             root.railHot = -1;
@@ -1511,11 +1514,11 @@ PanelWindow {
                         cursorShape: Qt.PointingHandCursor
 
                         onPressed: e => {
-                            const p = gesture.mapToItem(root, e.x, e.y);
+                            const p = gesture.mapToItem(inputArea, e.x, e.y);
                             root.gesturePress(p.x, p.y, -1);
                         }
                         onPositionChanged: e => {
-                            const p = gesture.mapToItem(root, e.x, e.y);
+                            const p = gesture.mapToItem(inputArea, e.x, e.y);
                             root.gestureMove(p.x, p.y);
                         }
                         onWheel: e => root.gestureWheel(e.angleDelta.y)

@@ -713,6 +713,11 @@ gibt es" is read off the shell, never from memory. One-click rows of the setting
 (ISLAND + FRAME AS ONE, BACK TO DEFAULTS …) she can press too — none that delete,
 uninstall or power anything off. A question *how* ("wie kann ich die Island
 andocken?") is answered with where it is, and nothing changes until you say so.
+She knows how Velvet looks right now (the look, where the island sits and how it
+is dressed, the taskbar, the frame) whenever you talk about it, opens the
+island's modules by name ("zeig mir das Wetter in der Island"), and a "ja" to
+something she offered does exactly that — or she asks which, when the offer left
+a choice open.
 
 **Asking before she acts.** A command or a reboot gets one question — with
 **JA, MACH / NEIN** buttons in the island. Saying "ja" runs exactly the action
