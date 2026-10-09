@@ -307,6 +307,9 @@ Singleton {
         if (root.active)
             return;
         root.active = true;
+        root.wokeAt = Date.now();
+        root.liveText = "";
+        root.liveOff = false;
         root.errorTextSeen = "";
         root.earsFloor = Date.now();
         root.writeSession(true);
@@ -381,6 +384,7 @@ Singleton {
             return;
         root.stopVoice();
         root.heardHead = "";
+        root.liveText = "";
         holdTimer.stop();
         // With "Hey Velly" the ears stay: they only forget what they heard.
         earsCtl(Config.velly.wakeWord ? "reset" : "stop");
@@ -401,6 +405,41 @@ Singleton {
             root.sleep();
         else
             root.wake();
+    }
+
+    // SUPER+A (Binds "velly"): wake her AND show her — the island comes down
+    // on the screen you are looking at, already listening. Pressed again
+    // while she is up: she goes back to sleep and the island folds away.
+    function summon(): void {
+        if (!Config.velly.enabled || Locker.locked)
+            return;
+        if (root.active && Panels.islandScreen !== "") {
+            root.sleep();
+            Panels.islandScreen = "";
+            Sfx.close();
+            return;
+        }
+        root.wake();
+        root.wantIsland = true;
+        const scr = Hypr.focusedScreen ?? (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null);
+        if (scr)
+            Panels.islandScreen = scr.name;
+        // the island may already be up on that screen: then nothing changes
+        // there, so say it once more
+        root.wantIslandChanged();
+    }
+
+    // The question she asked before a dangerous action (lock, reboot, a
+    // command): what it is, and two ways to answer — the buttons in the
+    // island, or simply saying "ja" / "nein".
+    readonly property var confirm: {
+        const c = root.state.confirm;
+        if (!c || !c.tool)
+            return null;
+        return Number(c.until ?? 0) > Date.now() - 1000 ? c : null;
+    }
+    function confirmAnswer(yes: bool): void {
+        root.ask(yes ? "Ja." : "Nein.");
     }
 
     function ask(text: string): void {
@@ -529,12 +568,23 @@ Singleton {
 
     property bool sttBusy: false
     property string sttError: ""
+    // ── live captions: the sentence so far, while you are still saying it
+    //  (velvet-ears writes a snapshot every ~1 s, `velvet-ai --stt-live`
+    //  reads it on the graphics card). Off for the rest of a session when the
+    //  card cannot do it (no Vulkan build, or a game holds it).
+    property string liveText: ""
+    property int liveSeq: 0
+    property bool liveOff: false
+    // When this session began: the island shows this conversation, not last
+    // week's (the brain sees the same twenty minutes).
+    property real wokeAt: 0
     // Set when you talked over her and the recording was her own voice coming
     // back: the island says so, so the silence has an explanation.
     property bool barged: false
 
     function ingestStt(raw: string): void {
         root.sttBusy = false;
+        root.liveText = "";
         let data = null;
         try {
             data = JSON.parse(`${raw ?? ""}`.trim() || "{}");
@@ -1195,6 +1245,29 @@ Singleton {
     }
 
     Process {
+        id: sttLive
+
+        command: ["true"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                let data = null;
+                try {
+                    data = JSON.parse(`${text ?? ""}`.trim() || "{}");
+                } catch (e) {
+                    return;
+                }
+                if (data.ok && `${data.text ?? ""}`.trim().length > 0) {
+                    // only while that sentence is still open or being read
+                    if (root.talking || root.sttBusy || (root.ears.speaking ?? 0) === 1)
+                        root.liveText = `${data.text}`.trim();
+                } else if (`${data.error ?? ""}`.indexOf("gpu") >= 0 || `${data.error ?? ""}`.indexOf("card") >= 0) {
+                    root.liveOff = true;
+                }
+            }
+        }
+    }
+
+    Process {
         id: voice
 
         command: ["true"]
@@ -1324,7 +1397,13 @@ Singleton {
 
     // The conversation the island shows: the last few turns, newest last.
     readonly property var history: {
-        const list = root.memory.history ?? [];
+        const all = root.memory.history ?? [];
+        // this conversation (and what came just before it), not last week's
+        const since = root.wokeAt - 20 * 60 * 1000;
+        const list = [];
+        for (let i = 0; i < all.length; i++)
+            if (Number(all[i].t ?? 0) >= since)
+                list.push(all[i]);
         const out = [];
         for (let i = Math.max(0, list.length - 8); i < list.length; i++)
             out.push({
@@ -1520,6 +1599,12 @@ Singleton {
         if (Number(data.at ?? 0) < root.earsFloor)
             return;
         root.ears = data;
+        const part = Number(data.partial ?? 0);
+        if (root.active && !root.liveOff && part > 0 && part !== root.liveSeq && !sttLive.running && !root.sttBusy && !root.speaking && `${data.partialWav ?? ""}`.length > 0) {
+            root.liveSeq = part;
+            sttLive.command = ["python3", root.brainScript, "--stt-live", `${data.partialWav}`];
+            sttLive.running = true;
+        }
         // A finished utterance: hand it to the recogniser, then tell the ears
         // to forget it. Speaking over her cuts her off — that is what a
         // person does, and it is the fastest way to stop a long answer.
@@ -1622,6 +1707,10 @@ Singleton {
     IpcHandler {
         target: "velly"
 
+        // SUPER+A: wake her and show her, or put her back to sleep
+        function summon(): void {
+            root.summon();
+        }
         function wake(): void {
             root.wake();
         }

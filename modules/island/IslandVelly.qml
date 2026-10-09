@@ -426,7 +426,7 @@ Item {
         x: root.pad
         y: 248
         width: parent.width - root.pad * 2
-        height: Math.max(40, chips.y - 12 - 248)
+        height: Math.max(40, (confirmBox.visible ? confirmBox.y : chips.y) - 12 - 248)
         clip: true
         contentHeight: convoColumn.height
         boundsBehavior: Flickable.StopAtBounds
@@ -472,6 +472,67 @@ Item {
                 font.family: Appearance.fontFamily.mono
                 wrapMode: Text.Wrap
                 lineHeight: 1.06
+            }
+
+            // What she understood — shown the moment it goes out, not only
+            // once the answer is there: one glance tells you she heard right.
+            P5Text {
+                readonly property string asked: Velly.askLine
+
+                width: convoColumn.width
+                visible: asked.length > 0 && root.phase === "thinking" && !root.log.some(e => e.role === "user" && e.text === asked)
+                text: `› ${asked}`
+                color: Colours.alpha(Colours.accentInk, 0.88)
+                font.pixelSize: Appearance.font.size.small
+                font.family: Appearance.fontFamily.mono
+                wrapMode: Text.Wrap
+                lineHeight: 1.06
+            }
+
+            // Live captions: your words while you are still saying them.
+            Item {
+                width: convoColumn.width
+                height: liveLine.implicitHeight
+                visible: Velly.liveText.length > 0
+
+                Rectangle {
+                    id: liveDot
+
+                    y: 5
+                    width: 7
+                    height: 7
+                    radius: 3.5
+                    color: Colours.accent
+
+                    SequentialAnimation on opacity {
+                        running: liveDot.visible
+                        loops: Animation.Infinite
+                        NumberAnimation {
+                            to: 0.25
+                            duration: 480
+                            easing.type: Easing.InOutSine
+                        }
+                        NumberAnimation {
+                            to: 1
+                            duration: 480
+                            easing.type: Easing.InOutSine
+                        }
+                    }
+                }
+
+                P5Text {
+                    id: liveLine
+
+                    x: 14
+                    width: parent.width - 14
+                    text: `${Velly.liveText} …`
+                    color: Colours.alpha(Colours.accentInk, 0.62)
+                    font.pixelSize: Appearance.font.size.small
+                    font.family: Appearance.fontFamily.mono
+                    font.italic: true
+                    wrapMode: Text.Wrap
+                    lineHeight: 1.06
+                }
             }
 
             // The answer as it arrives. The caret is drawn rather than typed,
@@ -544,7 +605,7 @@ Item {
             Column {
                 width: convoColumn.width
                 spacing: 4
-                visible: root.log.length === 0 && Velly.answer.length === 0
+                visible: root.log.length === 0 && Velly.answer.length === 0 && Velly.liveText.length === 0 && root.phase !== "thinking"
 
                 P5Text {
                     width: parent.width
@@ -557,12 +618,89 @@ Item {
                 P5Text {
                     width: parent.width
                     text: Velly.brainOk
-                        ? "TIPPE ODER REDE — ICH HÖRE NUR, SOLANGE DU MICH AUFGEWECKT HÄLTST."
+                        ? `TIPPE ODER REDE — ${Binds.display("velly").toUpperCase()} RUFT MICH VON ÜBERALL. ICH HÖRE NUR, SOLANGE ICH WACH BIN.`
                         : "SETUP LÄDT GEHIRN, OHREN UND STIMME LOKAL — OHNE SCHLÜSSEL UND OHNE KOSTEN. EIN KEY IST NUR FÜR WOLKEN NÖTIG."
                     color: Colours.inkDim
                     font.pixelSize: Appearance.font.size.tiny
                     tracking: 1.1
                     wrapMode: Text.Wrap
+                }
+
+                // A few things to try, one click each — what she can do,
+                // shown instead of explained.
+                Flow {
+                    width: parent.width
+                    spacing: 6
+                    topPadding: 8
+                    visible: Velly.brainOk && root.phase !== "off"
+
+                    Repeater {
+                        model: [
+                            { t: "WIE WIRD DAS WETTER?", q: "Wie wird das Wetter heute?", i: "cloud" },
+                            { t: "SPIEL MUSIK", q: "Spiel mir Musik, die gerade passt.", i: "music_note" },
+                            { t: "IN 10 MIN ERINNERN", q: "Erinnere mich in zehn Minuten an eine Pause.", i: "alarm" },
+                            { t: "SYSTEM-UPDATE", q: "Mach ein System-Update.", i: "system_update" },
+                            { t: "WAS KANNST DU?", q: "Was kannst du alles für mich tun?", i: "auto_awesome" }
+                        ]
+
+                        Plate {
+                            id: idea
+
+                            required property var modelData
+
+                            width: ideaLabel.implicitWidth + 36
+                            height: 24
+                            radius: Appearance.r(12)
+                            color: ideaMouse.containsMouse ? Colours.alpha(Colours.accent, 0.22) : Colours.alpha(Colours.ink, 0.06)
+                            border.width: 1
+                            border.color: ideaMouse.containsMouse ? Colours.accent : Colours.alpha(Colours.ink, 0.16)
+                            scale: ideaMouse.pressed ? 0.95 : (ideaMouse.containsMouse ? 1.04 : 1)
+
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: 140
+                                    easing.type: Easing.OutBack
+                                }
+                            }
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: Appearance.anim.fast
+                                }
+                            }
+
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 9
+                                width: 12
+                                name: idea.modelData.i
+                                color: Colours.accent
+                                font.pixelSize: 12
+                            }
+
+                            P5Text {
+                                id: ideaLabel
+
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 26
+                                text: idea.modelData.t
+                                color: Colours.alpha(Colours.ink, 0.88)
+                                font.pixelSize: Appearance.font.size.tiny
+                                tracking: 1
+                            }
+
+                            MouseArea {
+                                id: ideaMouse
+
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    Sfx.select();
+                                    Velly.ask(idea.modelData.q);
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -580,6 +718,121 @@ Item {
 
         SmoothScroll {
             view: convo
+        }
+    }
+
+    // ──────────────────────────────────────────────────────── the question
+    //  Before something that cannot be taken back (a command, a reboot) she
+    //  asks — and here is the question with its two answers. Saying "ja" or
+    //  "nein" does exactly the same.
+    Plate {
+        id: confirmBox
+
+        readonly property var c: Velly.confirm
+
+        anchors.left: parent.left
+        anchors.leftMargin: root.pad
+        anchors.right: parent.right
+        anchors.rightMargin: root.pad
+        anchors.bottom: chips.top
+        anchors.bottomMargin: 8
+        height: 44
+        visible: c !== null && Velly.active
+        radius: Appearance.r(12)
+        color: Colours.alpha(Colours.warning, 0.12)
+        border.width: 1
+        border.color: Colours.alpha(Colours.warning, 0.55)
+
+        Icon {
+            anchors.verticalCenter: parent.verticalCenter
+            x: 12
+            width: 16
+            name: "help"
+            color: Colours.warning
+            font.pixelSize: 16
+        }
+
+        P5Text {
+            anchors.verticalCenter: parent.verticalCenter
+            x: 36
+            width: parent.width - 36 - noBtn.width - yesBtn.width - 28
+            text: confirmBox.c ? `SOLL ICH ${`${confirmBox.c.what ?? ""}`.toUpperCase()}?` : ""
+            color: Colours.ink
+            font.pixelSize: Appearance.font.size.tiny
+            tracking: 0.8
+            elide: Text.ElideRight
+            maximumLineCount: 2
+            wrapMode: Text.Wrap
+        }
+
+        Plate {
+            id: noBtn
+
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: yesBtn.left
+            anchors.rightMargin: 6
+            width: noLabel.implicitWidth + 22
+            height: 28
+            radius: Appearance.r(9)
+            color: noMouse.containsMouse ? Colours.alpha(Colours.ink, 0.14) : "transparent"
+            border.width: 1
+            border.color: Colours.alpha(Colours.ink, 0.35)
+
+            P5Text {
+                id: noLabel
+
+                anchors.centerIn: parent
+                text: "NEIN"
+                color: Colours.ink
+                font.pixelSize: Appearance.font.size.tiny
+                tracking: 1.2
+            }
+
+            MouseArea {
+                id: noMouse
+
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    Sfx.back();
+                    Velly.confirmAnswer(false);
+                }
+            }
+        }
+
+        Plate {
+            id: yesBtn
+
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            width: yesLabel.implicitWidth + 26
+            height: 28
+            radius: Appearance.r(9)
+            color: yesMouse.containsMouse ? Colours.lighten(Colours.accent, 0.08) : Colours.accent
+
+            P5Text {
+                id: yesLabel
+
+                anchors.centerIn: parent
+                text: "JA, MACH"
+                color: Colours.on(Colours.accent)
+                font.pixelSize: Appearance.font.size.tiny
+                tracking: 1.2
+            }
+
+            MouseArea {
+                id: yesMouse
+
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    Sfx.select();
+                    Velly.confirmAnswer(true);
+                }
+            }
         }
     }
 

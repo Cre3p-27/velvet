@@ -12,6 +12,7 @@ pragma Singleton
 
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import QtQuick
 
 Singleton {
@@ -54,8 +55,65 @@ Singleton {
         { id: "windowMap",     label: "The mini desktop",      def: ["SUPER", "M"],              ipc: "qs -c velvet ipc call map toggle",          globalName: "windowMap" },
         { id: "scene",         label: "Desktop you arranged",  def: ["SUPER", "SHIFT", "S"],     ipc: "qs -c velvet ipc call scene start",         globalName: "scene" },
         { id: "lyrics",        label: "Lyrics",                def: ["SUPER", "SHIFT", "L"],     ipc: "qs -c velvet ipc call lyrics toggle",       globalName: "lyrics" },
-        { id: "keys",          label: "This list",             def: ["SUPER", "SHIFT", "K"],     ipc: "qs -c velvet ipc call keys toggle",         globalName: "keys" }
+        { id: "keys",          label: "This list",             def: ["SUPER", "SHIFT", "K"],     ipc: "qs -c velvet ipc call keys toggle",         globalName: "keys" },
+        { id: "velly",         label: "Velly · talk",          def: ["SUPER", "A"],              ipc: "qs -c velvet ipc call velly summon",        globalName: "" }
     ]
+
+    // Binds added after an install: the Hyprland files in ~/.config/hypr only
+    // learn them at the next UPDATE & REPAIR, so until then the shell adds
+    // them itself (and again after every config reload, which forgets them).
+    // Only when nothing is bound to the combo yet — never over the user's own.
+    readonly property var lateDefs: ["velly"]
+
+    function ensureLate(): void {
+        let script = "";
+        for (let i = 0; i < root.lateDefs.length; i++) {
+            const d = root.defById(root.lateDefs[i]);
+            if (!d)
+                continue;
+            const c = root.comboFor(d.id);
+            const mask = root.comboMask(c);
+            const key = c[c.length - 1];
+            const add = root.lua
+                ? `hyprctl eval '${`hl.bind("${root.luaTokens(c)}", hl.dsp.exec_cmd("${root.luaStr(d.ipc)}"), { description = "velvet" })`}'`
+                : `hyprctl keyword bind "${root.hyprTokens(c)}, exec, ${d.ipc}"`;
+            // bound already (by the user's files, by us, or to something else): leave it
+            script += `hyprctl binds -j | python3 -c 'import json,sys; b=json.load(sys.stdin); sys.exit(0 if any(x.get("modmask")==${mask} and str(x.get("key","")).lower()=="${key.toLowerCase()}" for x in b) else 1)' || ${add}\n`;
+        }
+        if (script === "")
+            return;
+        lateRunner.command = ["bash", "-c", script];
+        lateRunner.running = false;
+        lateRunner.running = true;
+    }
+
+    Process {
+        id: lateRunner
+
+        command: ["true"]
+    }
+
+    Timer {
+        running: true
+        interval: 3500
+        onTriggered: root.ensureLate()
+    }
+
+    Timer {
+        id: lateAgain
+
+        interval: 1200
+        onTriggered: root.ensureLate()
+    }
+
+    Connections {
+        target: Hyprland
+
+        function onRawEvent(event: HyprlandEvent): void {
+            if (event.name === "configreloaded")
+                lateAgain.restart();
+        }
+    }
 
     function defById(id: string): var {
         for (let i = 0; i < root.defs.length; i++)

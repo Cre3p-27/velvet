@@ -188,8 +188,27 @@ def env_first(names) -> str:
 NAME_FIX = re.compile(r"\b(vell+y|well+y|vell+i|vel+i|vele?y|vally|felly|welli|verdi|verdy|werdi|veldy|feldy|feli|bell+i|belly|pell+i|pelly|velie|welly)\b", re.I)
 
 
+# The words the recogniser keeps getting wrong in what people say to her —
+# each one heard in her history or in a test clip. Fixed before the model
+# reads them: a model that is handed "K-List" plays a song called K-List.
+MISHEARD = [
+    (re.compile(r"\b(?:k|kay|key|ke|tee|t)[\s-]?lists?\b", re.I), "Playlist"),
+    (re.compile(r"\b(?:play[\s-]?list|plejlist|pleylist|plaeylist|bläylist)\b", re.I), "Playlist"),
+    (re.compile(r"\b(?:wahl|wal|wall|wol|vall|val)[\s-]?pa+p+(?:er|a|r)\b", re.I), "Wallpaper"),
+    (re.compile(r"\b(?:spotty|spoti|sputif\w*|spotifei|spotifai|spotifie|spoddify|spotefy)\b", re.I), "Spotify"),
+    (re.compile(r"\b(?:work[\s-]?space|wörk[\s-]?space|workspeis|wörkspeis)\b", re.I), "Workspace"),
+    (re.compile(r"\b(?:screen[\s-]?shot|skrienschott|skrinschott|screenschott)\b", re.I), "Screenshot"),
+    (re.compile(r"\b(?:hyper[\s-]?land|heiperland|hyperlend)\b", re.I), "Hyprland"),
+    (re.compile(r"\b(?:dis[\s-]?cord|discort|diskord)\b", re.I), "Discord"),
+    (re.compile(r"\b(?:you[\s-]?tube|jutjub|jutube|youtub)\b", re.I), "YouTube"),
+]
+
+
 def normalise_transcript(text: str) -> str:
-    return NAME_FIX.sub("Velly", text or "")
+    out = NAME_FIX.sub("Velly", text or "")
+    for pattern, word in MISHEARD:
+        out = pattern.sub(word, out)
+    return out
 
 
 # "Hey Velly" as the small recogniser hears it: "High Valley", "Hey Welly",
@@ -414,6 +433,82 @@ def local_stop(force: bool = False) -> None:
         subprocess.run([sys.executable, LOCAL_SCRIPT, "stop"], capture_output=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         pass
+
+
+# ── what the ears should expect to hear ───────────────────────────────────
+#  Whisper takes a short text as "what came before", and spells what it hears
+#  the way that text does. Fed the words people actually say to her — the
+#  commands, the user's name, the apps on this machine — it stops turning
+#  "Playlist" into "K-List" (measured in her history). Built once an hour into
+#  the cache: the recogniser must not pay for a scan of every .desktop file.
+EAR_COMMANDS = ("Velly, Velvet, Hyprland, Quickshell, Spotify, Playlist, Song, Album, nächstes Lied, Pause, "
+                "lauter, leiser, Lautstärke, Wallpaper, Hintergrundbild, Workspace, Arbeitsfläche, Fenster, "
+                "Terminal, Screenshot, Erinnerung, Timer, Wecker, Wetter, Benachrichtigungen, Fokus-Modus, "
+                "Update, installieren, YouTube, Discord, Steam, Minecraft, Firefox, Kitty")
+EAR_VOCAB_PATH = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache"), "velvet", "ear-vocab.txt")
+
+
+def ear_vocabulary() -> str:
+    try:
+        if time.time() - os.path.getmtime(EAR_VOCAB_PATH) < 3600:
+            with open(EAR_VOCAB_PATH, encoding="utf-8") as fh:
+                cached = fh.read().strip()
+            if cached:
+                return cached
+    except OSError:
+        pass
+    words = [w.strip() for w in EAR_COMMANDS.split(",")]
+    seen = {w.lower() for w in words}
+    extra = []
+    try:
+        name = user_name()
+        if name and name.lower() not in seen:
+            extra.append(name)
+            seen.add(name.lower())
+    except Exception:                                          # noqa: BLE001
+        pass
+    # The apps the user starts most (the launcher's frecency), then the rest.
+    used = {}
+    try:
+        usage = read_json(os.path.join(CONF_DIR, "usage.json"), {})
+        if isinstance(usage, dict):
+            for key, val in usage.items():
+                n = val.get("count", 0) if isinstance(val, dict) else val
+                try:
+                    used[str(key).lower()] = float(n)
+                except (TypeError, ValueError):
+                    continue
+    except Exception:                                          # noqa: BLE001
+        used = {}
+    try:
+        entries = app_entries()
+    except Exception:                                          # noqa: BLE001
+        entries = []
+
+    def rank(e):
+        key = str(e.get("key") or "").lower()
+        return -max((v for k, v in used.items() if key and (k in key or key in k)), default=0.0)
+    # Only apps the user really starts: a long list of everything installed
+    # is noise the recogniser starts to "hear" in silence.
+    for e in sorted(entries, key=rank):
+        if rank(e) >= 0:
+            break
+        label = re.sub(r"\s+", " ", str(e.get("name") or "")).strip()
+        if not label or len(label) > 24 or label.lower() in seen or not re.search(r"[A-Za-zÄÖÜäöü]", label):
+            continue
+        extra.append(label)
+        seen.add(label.lower())
+        if len(extra) >= 14:
+            break
+    # whisper reads at most ~220 tokens of it; this stays well inside
+    text = (", ".join(words + extra) + ".")[:520]
+    try:
+        os.makedirs(os.path.dirname(EAR_VOCAB_PATH), exist_ok=True)
+        with open(EAR_VOCAB_PATH, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        pass
+    return text
 
 
 # Best first. A bigger model is only used when it is really there — and
@@ -860,15 +955,14 @@ class Provider:
         cmd = [cli, "-m", model, "-f", path, "-l", lang, "-t", str(threads), "-bs", "1",
                # No context carried between segments: that is what makes whisper
                # repeat its last sentence on silence.
-               "-mc", "0",
+               "-mc", "128",
                # -ojf: every token with its probability — what tells a word
                # you said from a word whisper made up out of silence.
                "-oj", "-ojf", "-of", base] + (["-ac", str(ctx)] if ctx else []) + (["-dev", device] if device else [])
         if lang != "auto":
-            # Words it would otherwise guess wrong, and her own name.
-            cmd += ["--prompt", "Velly, Velvet Shell, Hyprland, Quickshell, Spicetify, Kitty, "
-                                "Workspace, Wallpaper, Screenshot, Terminal, Spotify, YouTube, "
-                                "Minecraft, Fabric, Mods, Discord, Steam."]
+            # Words it would otherwise guess wrong: her name, the commands
+            # people give her, the user's name and the apps on this machine.
+            cmd += ["--prompt", ear_vocabulary()]
         try:
             proc = subprocess.run(cmd, capture_output=True, timeout=25 if device else 240)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -900,6 +994,20 @@ class Provider:
             text = ""
         if text and re.fullmatch(r"(?i)\s*(\S+)(\s+\1){3,}\s*", text):
             text = ""
+        # Quotes round the whole sentence are whisper's, not yours.
+        text = re.sub(r"^[\s»«„“”\"']+|[\s»«„“”\"']+$", "", text or "")
+        # Nothing to say: punctuation only ("…", "."), a web address out of
+        # nowhere ("www.….com" from silence — measured once the prompt was
+        # really read), or the vocabulary prompt read back.
+        if not re.search(r"[A-Za-zÄÖÜäöüß]{2}", text):
+            text = ""
+        if text and re.fullmatch(r"(?i)\s*(?:https?://|www\.)?[\w.-]+\.(?:com|de|org|net|at|ch|tv|au|uk|eu|info|io)(?:/\S*)?[\s.]*", text):
+            text = ""
+        if text and text.count(",") >= 3:
+            vocab = {w.strip().lower() for w in EAR_COMMANDS.split(",")}
+            pieces = [w.strip(" .").lower() for w in text.split(",")]
+            if sum(1 for w in pieces if w in vocab) >= max(3, len(pieces) * 0.6):
+                text = ""
         # A sentence heard twice in a row is one sentence said once.
         if text:
             parts = re.split(r"(?<=[.!?])\s+", text.strip())
@@ -1264,7 +1372,8 @@ ARG_DOCS = {
     "volume.mute": {"on": "true mutes, false unmutes"},
     "mic.mute": {"on": "true mutes the microphone, false unmutes it"},
     "brightness.set": {"percent": "the NEW absolute brightness, 1-100"},
-    "media.control": {"action": ("what to do with what is playing", ["play", "pause", "next", "previous"])},
+    "media.control": {"action": ("what to do with what is playing: 'previous' goes back — also 'von vorne' / "
+                                 "'nochmal' (the song from its start); 'next' skips ahead", ["play", "pause", "next", "previous"])},
     "media.play": {"query": "only the names: title and/or artist, album or playlist, e.g. 'Numb Linkin Park'. "
                             "For a mood or genre name a well-known playlist: 'Chill Lofi Study Beats', "
                             "'Deep Focus', 'Peaceful Piano', 'Rock Classics', 'Deutschrap Brandneu'"},
@@ -1466,6 +1575,12 @@ def t_sys_info():
     if pct is not None:
         out["cpu_percent"] = pct
     out["cores"] = os.cpu_count() or 0
+    # what people ask next: how many packages, which kernel, how many updates
+    # wait — read, never guessed (she made a number up once, measured)
+    code, pkgs, _ = run(["bash", "-c", "pacman -Qq 2>/dev/null | wc -l"])
+    if code == 0 and pkgs.strip().isdigit():
+        out["packages"] = int(pkgs.strip())
+    out["kernel"] = os.uname().release
     out["summary"] = system_sentence(out)
     return out
 
@@ -2437,13 +2552,88 @@ def t_term_run(command="", title=""):
     return {"ok": True, "opened": line, "note": "läuft im Terminalfenster"}
 
 
+# A command that wants a password cannot run here: there is no one to type it.
+# It runs in a terminal window instead, where the user types it themselves —
+# that prompt IS the confirmation. Measured (v8.45 history): an update went
+# through cmd.run, failed on sudo, and she asked "sag ja" four times in a row.
+# (case matters: pacman -S installs, -Qu only lists the updates)
+NEEDS_ROOT = re.compile(r"(?:^|[;&|(]\s*|\s)(?:sudo|doas|pkexec|run0)\s"
+                        r"|(?:^|[;&|]\s*)(?:pacman\s+-[A-Za-z]*[SRU]|systemctl\s+(?:start|stop|restart|reload|enable|disable|mask|unmask)\b"
+                        r"|(?:paru|yay|pikaur|trizen)\s*$|(?:paru|yay|pikaur|trizen)\s+-[A-Za-z]*[SRU])")
+
+
+def needs_root(command: str) -> bool:
+    return bool(NEEDS_ROOT.search(str(command or "")))
+
+
+# Commands that only LOOK — they cannot change anything — need no spoken yes:
+# "wie viele Pakete hab ich" asked "sag ja" first and then "sag ja" again.
+# Every part of a pipe must be one of these, with no redirection, no command
+# substitution and none of the flags that make a looking tool act.
+SAFE_READ = {"pacman", "uname", "df", "free", "uptime", "ls", "cat", "head", "tail", "wc", "grep", "egrep", "sort",
+             "uniq", "ps", "pgrep", "ip", "lsblk", "lscpu", "lspci", "lsusb", "nproc", "whoami", "hostname", "date",
+             "cal", "du", "echo", "which", "whereis", "file", "stat", "sensors", "journalctl", "systemctl", "hyprctl",
+             "fastfetch", "neofetch", "awk", "cut", "tr", "nl", "id", "groups", "locale", "env", "printenv",
+             "lsmod", "findmnt", "mount", "swapon", "zramctl", "inxi", "glxinfo", "vulkaninfo", "pactl", "wpctl",
+             "playerctl", "nmcli", "bluetoothctl", "upower", "checkupdates", "paru", "yay", "flatpak", "pip", "node",
+             "python3", "python", "uptime", "last", "w", "who", "top"}
+SAFE_ARGS = {
+    "pacman": re.compile(r"^-(?:Q[a-zA-Z]*|Ss|Si|Sl|F[a-zA-Z]*)$"),
+    "paru": re.compile(r"^-(?:Q[a-zA-Z]*|Ss|Si|Qua|Qu)$"),
+    "yay": re.compile(r"^-(?:Q[a-zA-Z]*|Ss|Si|Qu)$"),
+    "systemctl": re.compile(r"^(?:status|is-active|is-enabled|is-failed|list-units|list-unit-files|list-timers|show|--user|--no-pager|-a|--all|--failed|--type=\S+|--state=\S+|[\w@.-]+)$"),
+    "hyprctl": re.compile(r"^(?:clients|monitors|workspaces|activewindow|activeworkspace|version|devices|layers|binds|"
+                          r"getoption|cursorpos|-j|systeminfo|splash|instances|plugin|list|\S+:\S+)$"),
+    "flatpak": re.compile(r"^(?:list|info|--app|--columns=\S+|search)$"),
+    "pip": re.compile(r"^(?:list|show|freeze|--version|-V)$"),
+    "node": re.compile(r"^(?:--version|-v)$"),
+    "python3": re.compile(r"^(?:--version|-V)$"),
+    "python": re.compile(r"^(?:--version|-V)$"),
+    "nmcli": re.compile(r"^(?:-t|-f|device|connection|general|status|show|radio|dev|con|\S*,\S*|wifi|list)$"),
+    "bluetoothctl": re.compile(r"^(?:devices|info|show|paired-devices|list|Connected|Paired|[0-9A-F:]{17})$"),
+    "playerctl": re.compile(r"^(?:metadata|status|-l|--list-all|-p|\S+|position|volume)$"),
+    "pactl": re.compile(r"^(?:list|info|short|sinks|sources|get-\S+|@\S+@|stat)$"),
+    "wpctl": re.compile(r"^(?:status|inspect|get-volume|@\S+@|\d+)$"),
+    "top": re.compile(r"^(?:-b|-n|\d+|-bn\d*|-n\d+)$"),
+}
+NEVER_IN_SAFE = re.compile(r"[<>`]|\$\(|\b(?:-delete|-exec|-execdir|--remove|-i\b|tee|xargs|dd|rm|mv|cp|chmod|chown|kill|pkill)\b")
+
+
+def safe_readonly(command: str) -> bool:
+    line = str(command or "").strip()
+    if not line or NEVER_IN_SAFE.search(line) or needs_root(line):
+        return False
+    for part in re.split(r"\|\|?|&&|;", line):
+        words = part.strip().split()
+        if not words:
+            return False
+        exe = os.path.basename(words[0])
+        if exe not in SAFE_READ:
+            return False
+        rule = SAFE_ARGS.get(exe)
+        if exe == "systemctl" and not any(w in ("status", "is-active", "is-enabled", "is-failed", "list-units",
+                                                "list-unit-files", "list-timers", "show") for w in words[1:]):
+            return False
+        if exe in ("python3", "python", "node") and len(words) == 1:
+            return False
+        if rule is not None and not all(rule.match(w) for w in words[1:]):
+            return False
+    return True
+
+
 @tool("cmd.run", '{"command": "pacman -Q | wc -l"}', "danger",
       "Run a shell command here and return its output. For anything that needs no "
-      "password; needs a spoken confirmation because it can do anything.")
+      "password; needs a spoken confirmation because it can do anything. A command "
+      "with sudo opens in a terminal by itself, where the user types the password.")
 def t_cmd_run(command=""):
     line = str(command or "").strip()
     if not line:
         return {"ok": False, "error": "kein Befehl"}
+    if needs_root(line):
+        if not open_terminal(terminal_job(line), "velly · passwort"):
+            return {"ok": False, "error": "kein Terminal gefunden"}
+        return {"ok": True, "terminal_opened": True, "running": line,
+                "note": "braucht dein Passwort — ein Terminalfenster ist offen, dort eingeben"}
     code, out, err = run(["bash", "-lc", line], timeout=90)
     text = (out or err or "").strip()
     if len(text) > 1800:
@@ -2473,6 +2663,18 @@ def t_pkg_search(query=""):
             break
     return {"ok": True, "found": hits,
             "error": "" if hits else ((err or "").strip()[:160] or "nichts gefunden")}
+
+
+@tool("sys.update", "", "write",
+      "Update the whole system: every package, the AUR too. Opens a terminal "
+      "window where the user types the password and watches the progress.")
+def t_sys_update():
+    helper = pkg_helper()
+    cmd = f"{helper} -Syu" if helper else "sudo pacman -Syu"
+    if not open_terminal(terminal_job(cmd), "system update"):
+        return {"ok": False, "error": "kein Terminal gefunden"}
+    return {"ok": True, "terminal_opened": True, "running": cmd,
+            "note": "das Update läuft im Terminalfenster — dort nur noch Passwort und Ja eingeben"}
 
 
 @tool("pkg.install", '{"name": "spicetify-cli"}', "write",
@@ -3392,6 +3594,11 @@ def local_skill(text: str, brain: bool = False) -> str:
         if kind == "app":
             if about or negated:
                 return ""
+            # "Starte meine Playlist von vorne" is about music, not an app
+            # called "meine Playlist von vorne" (measured) — the model's.
+            if re.search(r"\b(playlist|song|lied|musik|album|podcast|track|von vorne|nochmal|neu starten|"
+                         r"timer|erinnerung|update|aufnahme|suche)\b", low):
+                return ""
             name = re.sub(r".*?\b(öffne|oeffne|starte|open|launch)\b\s*", "", text, flags=re.I)
             name = re.sub(r"\b(mir|mal|bitte|doch|die|den|das|app)\b", " ", name, flags=re.I).strip(" .!?")
             name = re.sub(r"\s+", " ", name)
@@ -3569,7 +3776,7 @@ def context_block(text: str = "", actions=None, last_answer: str = "") -> str:
     # …"). Said outright, she switches.
     if speaks_english(text):
         bits.append("language: the user wrote in English — answer in English this time")
-    bits.append(f"answer length: a few sentences at most ({int(cfg.get('maxTokens') or 320)} max tokens)")
+    bits.append("answer length: short and spoken — unless the user asked for something long, then all of it")
     return "\n".join(bits)
 
 
@@ -3609,6 +3816,13 @@ HOW YOU TALK — you are HEARD, so talk like a person in a real conversation:
  · One to three sentences, easy to listen to — more only when the user wants
    something explained. No lists, no markdown, no emoji; numbers the way a
    person says them ("halb drei", "zweiundsechzig Grad").
+ · When the user explicitly asks for something LONG — count to a hundred,
+   name all of something, tell a story, walk through steps — deliver ALL of
+   it, complete and in order. Never skip, never shorten with "…".
+ · A joke is a real joke: a clever German pun or a tiny story with a
+   punchline that actually lands — never a pun that makes no sense, never a
+   joke you already told in this conversation. Jokes come from you, never
+   from a web search.
  · When you did something, say it like a person would ("Hab ich dir
    aufgemacht.", "Läuft!", "Erledigt — die Wäsche meldet sich in zwanzig
    Minuten."), not like a log.
@@ -3625,9 +3839,13 @@ UNDERSTANDING THE USER — this is what makes you good at this:
    message asked something, the user's next message is the ANSWER to it: a
    name is a name (store it with {t("memory.remember")}), "ja" is a yes, a title
    is their choice — never a new command out of context.
- · Speech recognition garbles and cuts words. A fragment, or words that make
-   no sense together, get one short question back ("Hab dich nicht ganz
-   verstanden — meintest du …?"). Never call a tool on a wild guess.
+ · You HEAR the user through speech recognition, and it mishears words as
+   similar-SOUNDING ones: "K-List" was "Playlist", "zahlt" was "Zahl",
+   "Wahlpaper" is "Wallpaper", "Spotty" is "Spotify". Read every message by
+   its sound and the conversation: when one meaning is clearly the likely
+   one, just act on it — never mention the slip. Only a real fragment, or two
+   equally likely meanings, get one short question back ("Meinst du …
+   oder …?"). Never call a tool on a wild guess.
  · "Nein, das wollte ich nicht", "falsch", "doch nicht": say sorry in a few
    words and undo what you just did when you can (pause the song you
    started, close what you opened) — "your last actions" in the context
@@ -3741,8 +3959,14 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
     · PLAY music → {t("media.play")}; pause, next, back → {t("media.control")}.
       SHOW something online (a video, a page, "such mir auf YouTube") →
       {t("web.search")} or {t("web.open")}. {t("web.download")} is ONLY for a direct link to a file.
+    · facts about THIS machine (how many packages, disk space, which kernel,
+      what is running) → {t("cmd.run")} with a command that only reads; read-only
+      commands run at once, without asking. Never answer them from memory.
     · every calculation → {t("calc.eval")}, never in your head. Reminders, timers,
       alarms ("erinnere mich …", "in 10 Minuten", "morgen um 7") → {t("timer.set")}.
+    · updating the system → {t("sys.update")}; installing a program → {t("pkg.install")};
+      anything else that needs sudo or a password → {t("term.run")}. You can never type
+      a password: the terminal window that opens is where the user types it — say so.
     · what the user copied → {t("clipboard.read")}; notifications ("was hab ich
       verpasst") → {t("notifs.list")}; writing something down for later → {t("file.write")}.
  3. Dangerous tools ({danger}) need a spoken confirmation first when the
@@ -3779,7 +4003,8 @@ THINK_RE = re.compile(
     r"\b(warum|wieso|weshalb|erklär|erklaer|erkläre|wie funktioniert|wie geht das|was ist der unterschied|"
     r"unterschied|vergleich|was bedeutet|was heißt|was heisst|was ist ein|was sind|wer war|wer ist|"
     r"was würdest du|was wuerdest du|was meinst du|was hältst du|was haeltst du|hilf mir|plan|idee|ideen|"
-    r"empfiehl|empfehlung|vorschlag|rechne|wie viel|wieviel|how|why|explain|difference|compare)\b", re.I)
+    r"empfiehl|empfehlung|vorschlag|rechne|wie viel|wieviel|how|why|explain|difference|compare|"
+    r"witz\w*|joke|lustig|gedicht|reim\w*|geschichte|erzähl|erzaehl|zähl\w*|zaehl\w*|aufzähl\w*|liste)\b", re.I)
 
 
 def effort_for(text: str) -> str:
@@ -3998,13 +4223,21 @@ class Runner:
         return False
 
     # ── tools
-    def run_tool(self, name: str, args: dict) -> dict:
+    def run_tool(self, name: str, args: dict, confirmed: bool = False) -> dict:
         spec = TOOLS.get(name)
         if spec is None:
             return {"ok": False, "error": f"there is no tool called {name}"}
         if not (self.forced or session_open()):
             return {"ok": False, "error": "session closed — Velly has no access right now"}
-        if spec.level == "danger" and (self.cfg.get("confirmDanger") is not False):
+        # A command that needs a password opens in a terminal, and the password
+        # prompt there is the user's own yes: no second "sag ja" first.
+        if name == "cmd.run" and needs_root((args or {}).get("command")):
+            confirmed = True
+        # …and a command that only looks (counts packages, shows the disk)
+        # needs no yes at all
+        if name == "cmd.run" and safe_readonly((args or {}).get("command")):
+            confirmed = True
+        if spec.level == "danger" and not confirmed and (self.cfg.get("confirmDanger") is not False):
             slot = self.pending_danger
             turn = int(self.state.get("turn") or 0)
             # The confirmation is worth nothing if the same turn can arm it and
@@ -4024,6 +4257,10 @@ class Runner:
                 slot["args"] = sig
                 slot["until"] = time.time() + CONFIRM_WINDOW
                 slot["turn"] = turn
+                # The island shows the question with two buttons; a spoken
+                # "ja" works the same way (turn() runs exactly this action).
+                self.state["confirm"] = {"tool": name, "what": describe_action(name, args or {}),
+                                         "until": int(slot["until"] * 1000)}
                 return {"ok": False, "needs_confirmation": True,
                         "error": "ask the user to confirm; it runs when they say yes in their next message"}
         try:
@@ -4075,6 +4312,14 @@ class Runner:
         self.state.update({"brain": self.prov.name, "provider": self.prov.name, "model": self.prov.model})
         history = self.tail_history()
         last_answer = next((m["content"] for m in reversed(history) if m["role"] == "assistant"), "")
+
+        # ── the answer to her own question: "ja" runs exactly the action she
+        # asked about, "nein" drops it. It used to depend on the model calling
+        # the same tool with the same arguments again — it often did not, and
+        # every "ja" got another "sag ja" (measured, four times in a row).
+        settled = self.settle_confirmation(text, history, last_answer, began)
+        if settled is not None:
+            return settled
         # The answer to her own question is an answer, not a command: the
         # name she asked for is stored and greeted, here, without a model
         # that might hear a song title in it (it did: "Creep").
@@ -4239,6 +4484,75 @@ class Runner:
         save_memory(mem)
         return answer
 
+    def settle_confirmation(self, text: str, history: list, last_answer: str, began: float):
+        """None when there is nothing waiting (or the user moved on); else the
+        finished answer of this turn."""
+        slot = self.pending_danger
+        turn_no = int(self.state.get("turn") or 0)
+        waiting = slot.get("name") and time.time() < float(slot.get("until") or 0) \
+            and int(slot.get("turn") or 0) != turn_no
+        if not waiting:
+            if slot.get("name"):
+                slot.update(name="", args="", until=0.0)
+            self.state["confirm"] = None
+            return None
+        yes, no = is_yes(text), is_no(text)
+        if not (yes or no):
+            # Something else entirely: the question is off the table.
+            slot.update(name="", args="", until=0.0)
+            self.state["confirm"] = None
+            return None
+        name = slot["name"]
+        try:
+            args = json.loads(slot.get("args") or "{}")
+        except ValueError:
+            args = {}
+        slot.update(name="", args="", until=0.0)
+        self.state["confirm"] = None
+        import random                                          # noqa: PLC0415
+        if no:
+            answer = random.choice(["Okay, lass ich.", "Alles klar, dann nicht.", "Gut — abgebrochen.",
+                                    "Kein Problem, mach ich nicht."])
+            self.state["tools"] = []
+        else:
+            self.state.update({"state": "acting", "phase": "acting"})
+            self.write_state(force=True)
+            result = self.run_tool(name, args, confirmed=True)
+            self.state["tools"] = [{"name": name, "ok": bool(result.get("ok")), "note": short_note(result)}]
+            shown = json.dumps(args or {}, ensure_ascii=False)[:90]
+            self.actions = (self.actions + [(turn_no, f"{T(name, self.prov.native)} {shown} → "
+                                                      f"{'ok' if result.get('ok') else 'failed'}: {short_note(result)}")])[-8:]
+            answer = self.say_result(name, args, result, history, text)
+        self.state.update({"state": "answer", "phase": "answer", "answer": answer, "error": "", "brainError": "",
+                           "ms": int((time.monotonic() - began) * 1000)})
+        self.write_state(force=True)
+        self.append_history(text, answer)
+        return answer
+
+    def say_result(self, name: str, args: dict, result: dict, history: list, text: str) -> str:
+        """One spoken sentence about an action that just ran: the model words
+        it from the real result; a plain sentence if the model is not there."""
+        ok = bool(result.get("ok"))
+        payload = json.dumps(result, ensure_ascii=False)[:1600]
+        fallback = ("Erledigt." if ok else f"Hat nicht geklappt — {str(result.get('error') or result.get('output') or '').strip()[:140]}")
+        if name.startswith("session.") or name == "shell.restart":
+            return {"session.lock": "Mach ich — bis gleich.", "session.logout": "Okay, ich melde dich ab.",
+                    "session.suspend": "Gute Nacht — ich leg den Rechner schlafen.",
+                    "session.reboot": "Bis gleich — ich starte neu.", "session.shutdown": "Okay, ich schalte aus. Bis bald!",
+                    "shell.restart": "Bin gleich wieder da."}.get(name, fallback) if ok else fallback
+        try:
+            messages = [{"role": m["role"], "content": m["content"]} for m in history[-6:]]
+            messages.append({"role": "user", "content": f"{text}\n\n(Du hast nach meinem Ja gerade "
+                             f"{T(name, self.prov.native)} {json.dumps(args or {}, ensure_ascii=False)} ausgeführt. "
+                             f"Ergebnis: {payload}\nSag mir in ein bis zwei kurzen gesprochenen Sätzen, was dabei "
+                             f"herauskam — ohne Werkzeuge.)"})
+            out = self.prov.stream(messages, system_prompt(self.prov.native), lambda *_: None, self.cancel,
+                                   0.4, token_budget(self.prov, 200, "low"), "low")
+            said = clean_answer(strip_tool_lines(out), text).strip()
+            return said or fallback
+        except Exception:                                      # noqa: BLE001
+            return fallback
+
     # ── history
     def tail_history(self, limit=12) -> list:
         mem = memory()
@@ -4274,6 +4588,52 @@ class Runner:
             hist.append({"t": now_ms(), "role": "velly", "text": answer[:600]})
         mem["history"] = hist[-80:]
         save_memory(mem)
+
+
+# A spoken yes or no to a question she asked. Only short answers count — "ja,
+# aber spiel lieber Musik" is a new wish, not a yes.
+YES_STRONG = {"ja", "jo", "jap", "jep", "jup", "jawohl", "yes", "yeah", "yep", "yup", "ok", "okay", "okey", "oki",
+              "klar", "sicher", "mach", "machs", "mach's", "los", "go", "genau", "passt", "einverstanden", "gerne",
+              "gern", "tu", "tus", "tu's", "natürlich", "logo", "absolut", "sure", "bitte", "unbedingt", "freilich",
+              "richtig", "korrekt", "bestätigt", "bestätige", "do"}
+YES_SOFT = {"es", "das", "bitte", "mal", "leg", "na", "auf", "jeden", "fall", "ruhig", "doch", "schon", "it", "so",
+            "einfach", "jetzt", "gleich", "velly", "danke", "ja", "mach", "gerne", "klar"}
+NO_STRONG = {"nein", "nee", "ne", "nö", "noe", "no", "nope", "abbrechen", "abbruch", "stopp", "stop", "vergiss",
+             "lass", "cancel", "nicht", "lieber", "niemals", "warte"}
+NO_SOFT = {"es", "das", "bitte", "mal", "doch", "lieber", "nicht", "sein", "bleiben", "danke", "velly", "jetzt",
+           "noch", "nein", "lass", "es", "gut", "egal"}
+
+
+def answer_words(text: str) -> list:
+    return re.findall(r"[a-zäöüß']+", (text or "").lower())
+
+
+def is_yes(text: str) -> bool:
+    words = answer_words(text)
+    if not words or len(words) > 6:
+        return False
+    if any(w in NO_STRONG for w in words) and not ("doch" in words and "nicht" not in words):
+        return False
+    return any(w in YES_STRONG for w in words) and all(w in YES_STRONG or w in YES_SOFT for w in words)
+
+
+def is_no(text: str) -> bool:
+    words = answer_words(text)
+    if not words or len(words) > 6:
+        return False
+    return any(w in NO_STRONG for w in words) and all(w in NO_STRONG or w in NO_SOFT for w in words)
+
+
+ACTION_WORDS = {"session.lock": "den Bildschirm sperren", "session.logout": "dich abmelden",
+                "session.suspend": "den Rechner schlafen legen", "session.reboot": "den Rechner neu starten",
+                "session.shutdown": "den Rechner ausschalten", "shell.restart": "die Shell neu starten"}
+
+
+def describe_action(name: str, args: dict) -> str:
+    """What a waiting action does, in a few words the island can show."""
+    if name == "cmd.run":
+        return f"den Befehl „{str((args or {}).get('command') or '').strip()[:90]}“ ausführen"
+    return ACTION_WORDS.get(name, name)
 
 
 def short_note(result: dict) -> str:
@@ -4831,6 +5191,31 @@ def main() -> int:
             print(json.dumps({"ok": False, "error": "no file"}))
             return 2
         print(json.dumps(Provider().transcribe(argv[1]), ensure_ascii=False))
+        return 0
+    if argv[0] == "--stt-live":
+        # Captions while the user is still talking: a snapshot of the sentence
+        # so far, on the graphics card only. On the CPU one pass takes longer
+        # than the speaker needs for the next words, so there it says nothing.
+        if len(argv) < 2:
+            print(json.dumps({"ok": False, "error": "no file", "text": ""}))
+            return 2
+        files = local_files()
+        gpu = files.get("whisper_gpu") or ""
+        if not gpu or not files.get("ear") or os.environ.get("VELLY_EARS_CPU"):
+            print(json.dumps({"ok": False, "error": "live needs the gpu", "text": ""}))
+            return 0
+        device = "0"
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import _gpu                                        # noqa: PLC0415
+            if _gpu.game_running():
+                print(json.dumps({"ok": False, "error": "a game holds the card", "text": ""}))
+                return 0
+            device = re.sub(r"\D", "", _gpu.pick_device(files.get("server") or "") or "") or "0"
+        except Exception:                                      # noqa: BLE001
+            pass
+        result = Provider()._whisper(argv[1], gpu, files["ear"], quick=True, device=device)
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     if argv[0] == "--stt-quick":
         # "Hey Velly": every utterance while she sleeps goes through here, so

@@ -64,6 +64,7 @@ hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("qs -c velvet ipc call map toggle")) 
 hl.bind(mainMod .. " + SHIFT + S", hl.dsp.exec_cmd("qs -c velvet ipc call scene start"))  -- open the desktop you arranged
 hl.bind(mainMod .. " + SHIFT + L", hl.dsp.exec_cmd("qs -c velvet ipc call lyrics toggle"))  -- lyrics
 hl.bind(mainMod .. " + SHIFT + K", hl.dsp.exec_cmd("qs -c velvet ipc call keys toggle"))  -- every shortcut
+hl.bind(mainMod .. " + A", hl.dsp.exec_cmd("qs -c velvet ipc call velly summon"))  -- Velly: wake her and talk · again: sleep
 
 -- ══ MEDIA KEYS ══════════════════════════════════════════════════════════════
 -- In velvet-media.lua, which install.sh pulls in only when your config does

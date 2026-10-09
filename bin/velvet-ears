@@ -54,6 +54,11 @@ MIN_SPEECH_MS = 280
 HANG_MS = 1150                           # silence that ends an utterance
 MAX_SPEECH_MS = 30000
 LOUD_ENOUGH = 1.6                        # how far above the floor counts as speech
+# Live captions: while an utterance is still open, a snapshot of it so far is
+# written this often (after the first PARTIAL_AFTER_MS of speech), and the
+# shell turns it into the words you see appear while you are still talking.
+PARTIAL_EVERY_MS = 1100
+PARTIAL_AFTER_MS = 600
 
 
 def base_dir() -> str:
@@ -70,6 +75,7 @@ class Options:
         self.out = os.path.join(b, "ai-voice.json")
         self.ctl = os.path.join(b, "ai-ears.ctl")
         self.wav = os.path.join(b, "ai-hear.wav")
+        self.live = os.path.join(b, "ai-hear-live.wav")
         self.bands = BANDS
         self.hang = HANG_MS
         self.max_ms = MAX_SPEECH_MS
@@ -94,7 +100,11 @@ class Options:
                 i += 2
             elif a == "--wav" and nxt:
                 self.wav = nxt
+                self.live = os.path.join(os.path.dirname(nxt) or ".", "ai-hear-live.wav")
                 i += 2
+            elif a == "--no-live":
+                self.live = ""
+                i += 1
             elif a == "--bands" and nxt:
                 self.bands = max(4, min(32, int(nxt)))
                 i += 2
@@ -261,6 +271,12 @@ class Ear:
         self.frames = 0
         self._win = []                 # rolling raw samples for the band bank
         self._band_tick = 0
+        # the live caption snapshots of the open utterance
+        self.partial = 0
+        self.partial_path = ""
+        self._partial_at = 0             # utterance length (frames) at the last snapshot
+        self._packed = bytearray()     # the utterance so far as s16le, built as it grows
+        self._packed_n = 0
 
     @property
     def threshold(self) -> float:
@@ -310,6 +326,9 @@ class Ear:
                 self.started = self.last_loud
                 self.ut = list(self.pre[-max(1, PREROLL_MS // FRAME_MS):])
                 self.speech_ms = 0
+                self._packed = bytearray()
+                self._packed_n = 0
+                self._partial_at = 0
             self.speech = True
         else:
             self.silence_ms += FRAME_MS
@@ -332,6 +351,39 @@ class Ear:
 
         if self.speaking and (time.monotonic() - self.started) * 1000.0 > self.opt.max_ms:
             self.close()
+        elif self.speaking:
+            self.maybe_partial()
+
+    def maybe_partial(self) -> None:
+        """While the sentence is still being spoken: write what is there so
+        far, so the island can show the words as they come. Only the frames
+        added since the last snapshot are converted — the cost stays flat
+        however long you talk. Timed in audio, not wall clock."""
+        if not self.opt.live or self.speech_ms < PARTIAL_AFTER_MS:
+            return
+        n = len(self.ut)
+        if (n - self._partial_at) * FRAME_MS < PARTIAL_EVERY_MS:
+            return
+        self._partial_at = n
+        if n < self._packed_n:
+            self._packed = bytearray()
+            self._packed_n = 0
+        for f in self.ut[self._packed_n:n]:
+            self._packed += struct.pack(f"<{len(f)}h", *[int(max(-1.0, min(1.0, v)) * 32000) for v in f])
+        self._packed_n = n
+        path = self.opt.live
+        tmp = path + ".tmp"
+        try:
+            with wave.open(tmp, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(RATE)
+                w.writeframes(bytes(self._packed))
+            os.replace(tmp, path)
+            self.partial += 1
+            self.partial_path = path
+        except (OSError, struct.error) as e:
+            log(f"cannot write {path}: {e}")
 
     def close(self) -> None:
         """The utterance ends: keep it only if it was actually speech."""
@@ -427,6 +479,9 @@ def write_voice(path: str, ear: Ear, opt: Options, available: bool = True,
         "canSend": ear.can_send,
         "utterance": ear.utterance,
         "wav": ear.wav_path,
+        # the open utterance so far, for live captions (0 = none yet)
+        "partial": ear.partial if ear.speaking else 0,
+        "partialWav": ear.partial_path,
         "source": opt.source or "",
         "note": note,
     }
@@ -560,6 +615,7 @@ def selftest(opt: Options) -> int:
     opt.out = os.path.join(tmp, "ai-voice.json")
     opt.ctl = os.path.join(tmp, "ai-ears.ctl")
     opt.wav = os.path.join(tmp, "ai-hear.wav")
+    opt.live = os.path.join(tmp, "ai-hear-live.wav")
     open(opt.ctl, "w").close()
 
     ear = Ear(opt)
@@ -592,6 +648,9 @@ def selftest(opt: Options) -> int:
 
     if heard < 2:
         print(f"FAIL: expected two utterances, detected {heard}")
+        return 1
+    if ear.partial < 1 or not os.path.isfile(opt.live):
+        print("FAIL: no live caption snapshot while the voice was open")
         return 1
     with open(opt.out) as f:
         data = json.load(f)
