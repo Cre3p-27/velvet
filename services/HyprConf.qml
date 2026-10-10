@@ -46,12 +46,24 @@ Singleton {
     // everything), so the live apply now speaks hl.config through
     // `hyprctl eval` — real Lua types, no keyword strings. The old batch
     // remains as the fallback for builds without eval.
+    // The SCREEN FRAME lies over the screen's edges, above the windows: tiled
+    // windows keep its width clear on top of the gap — except on a pinned
+    // bar's side, where the bar's reserved zone already holds that band.
+    // (Without this they ran right up to the frame and its round corners
+    // cut into theirs.)
+    function gapSide(side: string): int {
+        return Math.round(Config.hypr.gapsOut + Appearance.frameRoom(side));
+    }
+    readonly property bool gapsEven: root.gapSide("top") === root.gapSide("right") && root.gapSide("right") === root.gapSide("bottom") && root.gapSide("bottom") === root.gapSide("left")
+    readonly property string gapsOutLua: root.gapsEven ? `${root.gapSide("top")}` : `{ top = ${root.gapSide("top")}, right = ${root.gapSide("right")}, bottom = ${root.gapSide("bottom")}, left = ${root.gapSide("left")} }`
+    readonly property string gapsOutConf: root.gapsEven ? `${root.gapSide("top")}` : `${root.gapSide("top")},${root.gapSide("right")},${root.gapSide("bottom")},${root.gapSide("left")}`
+
     readonly property var keywords: {
         const h = Config.hypr;
         const b = v => v ? "1" : "0";
         const out = [
             ["general:gaps_in", `${h.gapsIn}`],
-            ["general:gaps_out", `${h.gapsOut}`],
+            ["general:gaps_out", root.gapsOutConf],
             ["general:border_size", `${h.borderSize}`],
             ["general:resize_on_border", b(h.resizeOnBorder)],
             ["general:layout", h.layout],
@@ -112,7 +124,7 @@ Singleton {
         const h = Config.hypr;
         const b = v => v ? "true" : "false";
         let out = "hl.config({\n" +
-            "general = { gaps_in = " + h.gapsIn + ", gaps_out = " + h.gapsOut + ", border_size = " + h.borderSize + ", resize_on_border = " + b(h.resizeOnBorder) + ", layout = \"" + h.layout + "\"";
+            "general = { gaps_in = " + h.gapsIn + ", gaps_out = " + root.gapsOutLua + ", border_size = " + h.borderSize + ", resize_on_border = " + b(h.resizeOnBorder) + ", layout = \"" + h.layout + "\"";
         if (h.manageBorders) {
             const c = root.activeBorder.split(" ");
             out += ", col = { active_border = { colors = { \"" + c[0] + "\", \"" + c[1] + "\" }, angle = 45 }, inactive_border = \"" + root.inactiveBorder + "\" }";
@@ -188,7 +200,7 @@ Singleton {
 
 general {
     gaps_in = ${Config.hypr.gapsIn}
-    gaps_out = ${Config.hypr.gapsOut}
+    gaps_out = ${root.gapsOutConf}
     border_size = ${Config.hypr.borderSize}
     resize_on_border = ${Config.hypr.resizeOnBorder ? "true" : "false"}
     layout = ${Config.hypr.layout}
@@ -247,7 +259,7 @@ ${Binds.confBinds}
 hl.config({
     general = {
         gaps_in = ${Config.hypr.gapsIn},
-        gaps_out = ${Config.hypr.gapsOut},
+        gaps_out = ${root.gapsOutLua},
         border_size = ${Config.hypr.borderSize},
         resize_on_border = ${Config.hypr.resizeOnBorder ? "true" : "false"},
         layout = "${Config.hypr.layout}",${Config.hypr.manageBorders ? `

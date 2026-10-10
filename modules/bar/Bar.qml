@@ -31,7 +31,8 @@ Item {
     // frame decides it.
     // While the settings are open the bar is lifted above them as a live
     // preview and the frame stays below — then the bar wears its own plate.
-    readonly property bool joined: Config.bar.frame && Config.bar.frameConnect && !root.floating && (root.barWindow?.pinned ?? true)
+    // (a hover bar too: it slides out of the frame's band — BarWindow)
+    readonly property bool joined: Config.bar.frame && Config.bar.frameConnect && !root.floating
     readonly property bool plain: root.barStyle !== "velvet" || root.joined
 
     // Where the plate is drawn — the whole strip, or the floating pill.

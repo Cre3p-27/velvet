@@ -139,7 +139,7 @@ PanelWindow {
     readonly property real panelH: root.headH + root.fieldH + 10 + root.bodyH + root.footH + (root.style === "prompt" ? 0 : 18)
     // LAUNCHER → SIDE: the visible (scaled) panel keeps to that side; the
     // start menu keeps its corner, the terminal line its full width
-    readonly property real panelX: root.style === "start" ? (root.wv === "11" ? (root.sw - root.panelW) / 2 : 8) : (root.style === "prompt" ? 0 : Appearance.sideX(Config.launcher.side, root.sw, root.panelW * root.k, 40) - root.panelW * (1 - root.k) / 2)
+    readonly property real panelX: root.style === "start" ? (root.wv === "11" ? (root.sw - root.panelW) / 2 : 8) : (root.style === "prompt" ? 0 : Appearance.sideX(Config.launcher.side, root.sw, root.panelW * root.k, 40, true) - root.panelW * (1 - root.k) / 2)
     readonly property real panelY: {
         // LAUNCHER → POSITION (the terminal line and the start menu keep their edge)
         if (Config.launcher.position === "top" && root.style !== "prompt" && root.style !== "start")

@@ -34,11 +34,14 @@ PanelWindow {
         right: root.onRight
     }
 
+    // The window keeps out of a pinned bar's zone by itself (exclusiveZone
+    // 0); what is left is the screen frame and a little air. (It used to add a
+    // whole bar to the top and the left, wherever the bar actually was.)
     margins {
-        top: Config.bar.thickness + Config.bar.margin * 2 + 8
-        bottom: 16
-        left: Config.bar.thickness + Config.bar.margin * 2 + 8
-        right: 16
+        top: Appearance.frameRoom("top") + 14
+        bottom: Appearance.frameRoom("bottom") + 14
+        left: Appearance.frameRoom("left") + 14
+        right: Appearance.frameRoom("right") + 14
     }
 
     implicitWidth: Config.notifs.width + 20

@@ -254,7 +254,13 @@ The pieces the looks are made of are settings of their own:
   sits on the top layer — above every window and the desktop's cava, below a
   fullscreen app — and takes no input — **CONNECT TO THE TASKBAR** makes bar and
   frame one surface, plus FRAME WIDTH, CORNERS, COLOUR (bar · tone · black ·
-  accent), OPACITY, SHADOW and OUTLINE. **WORKSPACES → STYLE**: slash, pills, dots, numbers.
+  accent), OPACITY, SHADOW and OUTLINE. A bar that hides until you reach for it
+  comes out OF the frame: the frame's band on its edge grows with the slide and
+  the desktop's rounded corners make room — a docked island on that edge rides out
+  with it. Tiled windows keep the frame's width clear (Velvet adds it to Hyprland's
+  outer gap on every side the frame covers), and the notifications, the
+  notification centre, the volume pop-up, the launcher and the lyrics all sit
+  inside the frame instead of on it. **WORKSPACES → STYLE**: slash, pills, dots, numbers.
 - **SOFT TONE** (VISUALS): the colour of every round pill — the accent's deep
   shade (with TONE COLOUR and TONE LIGHTNESS), surface or black.
 - Lock: **CLOCK COLOURS** (two-tone · accent · ink) and **BAR DENSITY** of the

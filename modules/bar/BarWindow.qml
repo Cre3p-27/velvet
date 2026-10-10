@@ -37,6 +37,35 @@ PanelWindow {
     readonly property real hiddenOffset: footprint - Math.max(0, Math.min(footprint, Config.bar.peek))
     readonly property real slide: revealed ? 0 : hiddenOffset
 
+    // ── the SCREEN FRAME on the bar's edge ──────────────────────────────────
+    //  The frame's band on this edge is drawn HERE, under the bar, and it is
+    //  as wide as the bar is out: the frame's width while a hover bar hides,
+    //  the bar's strip once it is out — growing with the slide, so the bar
+    //  comes out OF the frame and the desktop's corners make room with it
+    //  (ScreenFrame reads `Panels.barOut` and moves its inner edge the same
+    //  way). The frame lies above the bar, so it leaves this band out.
+    readonly property bool framed: Config.bar.frame && Config.bar.style !== "floating"
+    readonly property int strip: root.thickness + root.margin
+    property real reveal: root.revealed ? 1 : 0
+
+    Behavior on reveal {
+        NumberAnimation {
+            duration: Appearance.anim.normal
+            easing.type: Easing.OutExpo
+        }
+    }
+
+    readonly property real band: root.framed ? Math.max(0, Math.min(root.footprint, Config.bar.frameWidth + (root.strip - Config.bar.frameWidth) * root.reveal)) : 0
+
+    onRevealedChanged: Panels.setBarOut(root.modelData?.name ?? "", root.revealed)
+
+    // a PanelWindow root has no Component.onCompleted (shell rule): say it once
+    Timer {
+        running: true
+        interval: 1
+        onTriggered: Panels.setBarOut(root.modelData?.name ?? "", root.revealed)
+    }
+
     screen: modelData
     color: "transparent"
     WlrLayershell.namespace: "velvet-bar"
@@ -79,17 +108,14 @@ PanelWindow {
         height: root.vertical ? (hitArea.pill ? bar.plateH : root.height) : band
     }
 
-    // CONNECTED to the SCREEN FRAME: the strip is painted here, in the
-    // frame's colour, from the screen edge to where the frame's desktop
-    // window begins (thickness + margin) — the frame leaves it out.
+    // The frame's band on this edge (see `band` above), in the frame's colour.
+    // CONNECTED, the bar wears no plate of its own: band and bar are one.
     Rectangle {
-        readonly property int strip: root.thickness + root.margin
-
-        visible: bar.joined
-        x: root.position === "right" ? root.width - strip : 0
-        y: root.position === "bottom" ? root.height - strip : 0
-        width: root.vertical ? strip : root.width
-        height: root.vertical ? root.height : strip
+        visible: root.framed && root.band > 0.5
+        x: root.position === "right" ? root.width - root.band : 0
+        y: root.position === "bottom" ? root.height - root.band : 0
+        width: root.vertical ? root.band : root.width
+        height: root.vertical ? root.height : root.band
         color: Colours.alpha(Colours.frameBase, Math.max(0.2, Math.min(1, Config.bar.frameOpacity)))
     }
 

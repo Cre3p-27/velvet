@@ -316,11 +316,16 @@ Singleton {
     // ── where a part stands along an edge (the …side settings: left | centre |
     // right). The x of an item `w` wide in an area `areaW` wide, `margin` in
     // from the edge it keeps to; a taskbar standing on that side is cleared.
-    function sideX(side: string, areaW: real, w: real, margin: real): real {
+    // `zoned`: the caller's window already keeps out of a pinned bar's
+    // exclusive zone (exclusiveZone 0), so only the screen frame is left to
+    // step round — counting the bar again pushed the OSD and the launcher
+    // a whole bar-width too far in.
+    function sideX(side: string, areaW: real, w: real, margin: real, zoned): real {
+        const room = zoned === true ? root.frameRoom(side) : Math.max(root.barRoom(side), root.edgeInset(side));
         if (side === "left")
-            return margin + root.barRoom("left");
+            return margin + room;
         if (side === "right")
-            return areaW - w - margin - root.barRoom("right");
+            return areaW - w - margin - room;
         return (areaW - w) / 2;
     }
     // The island's edge (MODULES → DYNAMIC ISLAND → POSITION): "top", or the
@@ -339,6 +344,15 @@ Singleton {
         if (!Config.bar.enabled || Config.bar.position !== side)
             return 0;
         return Config.bar.thickness + Config.bar.margin * 2;
+    }
+    // The SCREEN FRAME's band on a side that a window keeping out of the
+    // exclusive zones (exclusiveZone 0) still has to step round: the frame's
+    // width — or nothing, where a pinned bar's zone already covers it.
+    function frameRoom(side: string): real {
+        if (!Config.bar.frame)
+            return 0;
+        const pinned = Config.bar.enabled && Config.bar.position === side && Config.bar.style !== "floating" && (Config.bar.persistent || !Config.bar.showOnHover);
+        return pinned ? 0 : Math.max(0, Config.bar.frameWidth);
     }
     // Where the desktop starts on a screen edge: inside the SCREEN FRAME and
     // inside a pinned taskbar on that edge. A docked island grows out of

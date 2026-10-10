@@ -504,7 +504,7 @@ Singleton {
                 // the capsule is, which ground it sits on, and whether the
                 // accent glows along its ring.
                 property real islandOpacity: 1.0      // 0.35..1
-                property string islandTheme: "dark"   // dark | glass | wallpaper | frame (the screen frame's own colour) | tone (the accent's deep shade)
+                property string islandTheme: "auto"   // auto (follows the look and the frame) | dark | glass | wallpaper | frame (the screen frame's own colour) | tone (the accent's deep shade)
                 property bool islandAccent: true
                 // Where the pill stands: BELOW a bar on the top edge (it used
                 // to land on top of it), or OVER it. Plus a free nudge.

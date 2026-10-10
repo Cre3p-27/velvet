@@ -316,9 +316,9 @@ PanelWindow {
         // (centred in the middle of the screen, on the right otherwise)
         readonly property string at: Config.lyrics.side !== "centre" ? Config.lyrics.side : (Config.lyrics.position === "centre" ? "centre" : "right")
         anchors.right: at === "right" ? parent.right : undefined
-        anchors.rightMargin: Math.round(32 * root.unit) + Appearance.barRoom("right")
+        anchors.rightMargin: Math.round(32 * root.unit) + Math.max(Appearance.barRoom("right"), Appearance.edgeInset("right"))
         anchors.left: at === "left" ? parent.left : undefined
-        anchors.leftMargin: Math.round(32 * root.unit) + Appearance.barRoom("left")
+        anchors.leftMargin: Math.round(32 * root.unit) + Math.max(Appearance.barRoom("left"), Appearance.edgeInset("left"))
         anchors.horizontalCenter: at === "centre" ? parent.horizontalCenter : undefined
         anchors.verticalCenter: parent.verticalCenter
     }

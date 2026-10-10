@@ -493,7 +493,7 @@ PanelWindow {
         id: panel
 
         // LAUNCHER → SIDE
-        x: Math.round(Appearance.sideX(Config.launcher.side, root.width, panel.width, 24))
+        x: Math.round(Appearance.sideX(Config.launcher.side, root.width, panel.width, 24, true))
         y: Math.max(8, (root.height - panel.height) / 2)
         width: root.panelW
         height: root.boxSize * root.orbitScale + 24

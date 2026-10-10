@@ -175,15 +175,18 @@ PanelWindow {
     Item {
         id: panel
 
+        // The window already keeps out of a pinned bar's zone (exclusiveZone
+        // 0): the panel steps round the screen frame and keeps a little air.
+        // (It used to add a whole bar again on the bar's side, and its top sat
+        // inside a 12 px frame.)
         width: root.panelWidth
-        height: parent.height - Config.bar.margin * 2 - 20
-        y: Config.bar.margin + 10
+        height: parent.height - Appearance.frameRoom("top") - Appearance.frameRoom("bottom") - 24
+        y: Appearance.frameRoom("top") + 12
 
         x: {
-            const edge = Config.bar.position === "left" ? Config.bar.thickness + Config.bar.margin * 2 + 8 : 0;
             if (root.fromRight)
-                return root.entered ? root.width - width - Math.max(16, edge === 0 ? Config.bar.thickness + Config.bar.margin * 2 + 8 : 16) : root.width + 20;
-            return root.entered ? edge : -width - 20;
+                return root.entered ? root.width - width - Appearance.frameRoom("right") - 12 : root.width + 20;
+            return root.entered ? Appearance.frameRoom("left") + 12 : -width - 20;
         }
 
         Behavior on x {

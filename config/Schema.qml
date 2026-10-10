@@ -262,9 +262,13 @@ Singleton {
                     key: "map.islandTheme",
                     name: "ISLAND THEME",
                     aka: "ISLAND COLOUR",
-                    help: "The island's colour. INK BLACK is the classic solid black. GLASS is a dark frost over the blurred desktop. WALLPAPER wears the picture's own colours. FRAME takes the screen frame's colour (and the bar's, when they are connected): docked, the island, frame and bar are one surface. TONE is the accent's deep shade.",
-                    sub: "INK BLACK · GLASS · WALLPAPER · FRAME · TONE",
+                    help: "The island's colour. AUTO follows the look and the frame: the frame's colour where the island grows out of a connected frame, frosted glass on the glass look, the accent's deep tone on the soft-depth looks, ink elsewhere. INK BLACK is the classic solid black. GLASS is a dark frost over the blurred desktop. WALLPAPER wears the picture's own colours. FRAME takes the screen frame's colour (and the bar's, when they are connected): docked, the island, frame and bar are one surface. TONE is the accent's deep shade.",
+                    sub: "AUTO FOLLOWS THE LOOK · INK BLACK · GLASS · WALLPAPER · FRAME · TONE",
                     options: [
+                        {
+                            value: "auto",
+                            label: "AUTO"
+                        },
                         {
                             value: "dark",
                             label: "INK BLACK"
@@ -350,7 +354,7 @@ Singleton {
                     kind: "toggle",
                     key: "bar.frameConnect",
                     name: "BAR JOINS THE FRAME",
-                    help: "Bar and frame become one surface (no seam). With the island docked and themed FRAME, all three are one.",
+                    help: "Bar and frame become one surface (no seam), also for a bar that hides: it grows out of the frame. With the island docked and themed FRAME (or AUTO), all three are one.",
                     sub: "BAR AND FRAME, ONE SURFACE",
                     when: { key: "bar.frame", is: true }
                 },
@@ -2337,7 +2341,7 @@ Singleton {
             kind: "toggle",
             key: "bar.frameConnect",
             name: "CONNECT TO THE TASKBAR",
-            help: "Bar and frame become one surface: the frame also paints the bar's strip (the bar then draws no plate and no Velvet trim), so there is no seam and the desktop rounds off exactly where the bar ends. Only while the bar is pinned and not FLOATING.",
+            help: "Bar and frame become one surface: the bar draws no plate and no Velvet trim of its own, it sits right on the frame's band, so there is no seam and the desktop rounds off exactly where the bar ends. With a bar that hides, the band grows out of the frame as the bar slides in. Not for a FLOATING bar.",
             sub: "BAR AND FRAME BECOME ONE SURFACE — NO SEAM, THE DESKTOP ROUNDS OFF WHERE THE BAR ENDS"
         },
         {
@@ -2495,14 +2499,14 @@ Singleton {
                     kind: "toggle",
                     key: "bar.persistent",
                     name: "ALWAYS VISIBLE",
-                    help: "Keeps the bar on screen and reserves its space so windows never cover it. Off lets it hide (together with REVEAL ON HOVER).",
+                    help: "Keeps the bar on screen and reserves its space so windows never cover it. Off lets it hide (together with REVEAL ON HOVER). With the SCREEN FRAME on, a hidden bar leaves the frame's normal edge, and when it slides out the frame's band on that edge grows with it — the bar comes out of the frame.",
                     sub: "PIN THE BAR AND RESERVE ITS SPACE"
                 },
                 {
                     kind: "toggle",
                     key: "bar.showOnHover",
                     name: "REVEAL ON HOVER",
-                    help: "When the bar is not pinned, touching its screen edge slides it out. With both this and ALWAYS VISIBLE off the bar still stays — otherwise there would be no way to reach it.",
+                    help: "When the bar is not pinned, touching its screen edge slides it out — with the SCREEN FRAME on, out of the frame, whose band widens to make room. With both this and ALWAYS VISIBLE off the bar still stays — otherwise there would be no way to reach it.",
                     sub: "SLIDE OUT WHEN THE POINTER TOUCHES THE EDGE"
                 },
                 {

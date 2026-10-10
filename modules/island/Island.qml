@@ -89,7 +89,23 @@ PanelWindow {
     // OVER THE BAR lets a top island cover a top taskbar: then only the
     // frame counts.
     readonly property real topInset: Config.bar.enabled && Config.bar.position === "top" && Config.map.islandPlace === "over" ? (Config.bar.frame ? Math.max(0, Config.bar.frameWidth) : 0) : Appearance.edgeInset("top")
-    readonly property real inset: root.edge === "top" ? (root.docked ? root.topInset : 0) : Appearance.edgeInset(root.edge)
+    // A taskbar that hides on the island's own edge comes out of the frame's
+    // band (BarWindow / ScreenFrame): the island rides out on that band
+    // instead of disappearing under the bar.
+    readonly property bool barHoverHere: Config.bar.enabled && Config.bar.style !== "floating" && Config.bar.position === root.edge && !((Config.bar.persistent || !Config.bar.showOnHover) && !Focus.hidesBar) && !(root.edge === "top" && Config.map.islandPlace === "over")
+    property real barReveal: root.barHoverHere && Panels.barOut[root.modelData?.name ?? ""] === true ? 1 : 0
+
+    Behavior on barReveal {
+        NumberAnimation {
+            duration: Appearance.anim.normal
+            easing.type: Easing.OutExpo
+        }
+    }
+
+    readonly property real barStrip: Config.bar.thickness + Config.bar.margin
+    readonly property real edgeBase: root.edge === "top" ? root.topInset : Appearance.edgeInset(root.edge)
+    readonly property real ride: root.barHoverHere ? (Math.max(root.edgeBase, root.barStrip) - root.edgeBase) * root.barReveal : 0
+    readonly property real inset: root.edge === "top" ? (root.docked ? root.topInset + root.ride : 0) : root.edgeBase + root.ride
     // A docked island also paints a few pixels over the frame, so the
     // frame's outline does not run across its foot.
     readonly property int lip: root.docked ? 3 : 0
@@ -113,7 +129,7 @@ PanelWindow {
             return Appearance.edgeY(root.height, h, h);
         if (root.docked)
             return root.active ? root.lip : -h - 14 - root.fillet;
-        return root.active ? root.topInset + 10 + Config.map.islandGap : -h - 14;
+        return root.active ? root.topInset + root.ride + 10 + Config.map.islandGap : -h - 14;
     }
 
     // The docked outline as an SVG path in the capsule's own coordinates:
@@ -463,7 +479,19 @@ PanelWindow {
     //  screen frame's (and a connected bar's) own colour — docked, island,
     //  frame and bar are one surface. TONE: the accent's deep shade. All of
     //  them honour ISLAND OPACITY.
-    readonly property string theme: Config.map.islandTheme
+    // AUTO follows the look and the frame: the frame's colour where the island
+    // grows out of a connected frame, frosted glass on the glass look, the
+    // accent's deep tone on the soft-depth looks, ink everywhere else.
+    readonly property string themeAuto: {
+        if (Config.bar.frame && (Config.bar.frameConnect || root.docked))
+            return "frame";
+        if (Config.appearance.skin === "glass")
+            return "glass";
+        if (Appearance.flavour === "neu" || Appearance.flavour === "clay")
+            return "tone";
+        return "dark";
+    }
+    readonly property string theme: Config.map.islandTheme === "auto" ? root.themeAuto : Config.map.islandTheme
     readonly property bool glassy: root.theme === "glass"
     readonly property color shellCol: {
         const op = Config.map.islandOpacity;

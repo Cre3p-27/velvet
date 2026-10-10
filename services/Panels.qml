@@ -46,6 +46,18 @@ Singleton {
     // The map reached for with the pointer (screen name). Separate from
     // `windowMap` on purpose: hovering must never take the keyboard.
     property string mapHover: ""
+    // Which screens' taskbars are out right now (pinned, or slid out on a
+    // hover): { "HDMI-A-1": true }. The screen frame widens its band on the
+    // bar's edge with it, and a docked island rides out on that band.
+    property var barOut: ({})
+
+    function setBarOut(name: string, out: bool): void {
+        if (!name || (root.barOut[name] === true) === out)
+            return;
+        const next = Object.assign({}, root.barOut);
+        next[name] = out;
+        root.barOut = next;
+    }
 
     // The Dynamic Island: which screen's pill is up ("" = none). It shares
     // the map's layer — the island hands its DESKTOP MAP module off to it.

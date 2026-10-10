@@ -38,14 +38,25 @@ PanelWindow {
 
     mask: Region {}
 
-    // The bar holds its edge only while it is pinned; a floating pill or a
-    // hidden bar leave that edge to the frame.
-    readonly property bool barHolds: Config.bar.enabled && Config.bar.style !== "floating" && (Config.bar.persistent || !Config.bar.showOnHover) && !Focus.hidesBar
+    // A bar on an edge (pinned, or hiding until you reach for it) owns that
+    // edge's band: BarWindow draws it, as wide as the bar is out, and the
+    // frame's inner edge moves with it — a hover bar comes out OF the frame
+    // instead of sliding over it. A floating pill leaves the edge to the frame.
+    readonly property bool barOnEdge: Config.bar.enabled && Config.bar.style !== "floating"
+    readonly property bool barHolds: root.barOnEdge && (Config.bar.persistent || !Config.bar.showOnHover) && !Focus.hidesBar
+    property real reveal: root.barHolds || Panels.barOut[root.modelData?.name ?? ""] === true ? 1 : 0
+
+    Behavior on reveal {
+        NumberAnimation {
+            duration: Appearance.anim.normal
+            easing.type: Easing.OutExpo
+        }
+    }
 
     FrameShape {
         anchors.fill: parent
         edge: Config.bar.position
-        strip: root.barHolds ? Config.bar.thickness + Config.bar.margin : 0
-        joined: root.barHolds && Config.bar.frameConnect
+        strip: root.barOnEdge ? Config.bar.thickness + Config.bar.margin : 0
+        reveal: root.reveal
     }
 }
