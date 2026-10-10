@@ -3,3 +3,4 @@ Preview 1.0 Preview.qml
 WindowMap 1.0 WindowMap.qml
 EdgeSensor 1.0 EdgeSensor.qml
 EdgeSensorSide 1.0 EdgeSensorSide.qml
+MapCanvas 1.0 MapCanvas.qml

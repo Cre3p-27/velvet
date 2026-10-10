@@ -876,8 +876,8 @@ Singleton {
         {
             kind: "page",
             name: "MINI DESKTOP",
-            help: "A live picture of all your workspaces that drops from the top edge: click a desktop to go there, drag a window to move it, scroll to zoom out.",
-            sub: "THE MAP THAT DROPS FROM THE TOP EDGE",
+            help: "The infinite canvas of your desktop: the monitor with your wallpaper, every window on it and far out around it, and a chip per desktop. With the Dynamic Island on it is the island's DESKTOP module — it opens right inside the island (Super+Shift+M or the bar's button open it there); with the island off it drops as a plate of its own. Click a window to go to it, drag it anywhere or onto a desktop chip, FIT / − / + / HOME or the wheel for the camera.",
+            sub: "THE ISLAND'S DESKTOP MODULE  ·  THE INFINITE CANVAS",
             icon: "space_dashboard",
             items: [
                 {
@@ -928,15 +928,15 @@ Singleton {
                     kind: "toggle",
                     key: "map.previews",
                     name: "DESKTOP SNAPSHOT",
-                    help: "Shows a live photograph of each workspace. Off shows cards with app icons instead, which costs nothing.",
-                    sub: "THE MAP PHOTOGRAPHS THE SCREEN  ·  OFF SHOWS ICON CARDS"
+                    help: "Your wallpaper on the monitor in the map, so the canvas reads as your own desktop. Off: a plain monitor.",
+                    sub: "THE WALLPAPER ON THE MONITOR"
                 },
                 {
                     kind: "toggle",
                     key: "map.showTitles",
                     name: "NAME ON HOVER",
-                    help: "Shows the window's title when you point at it in the map.",
-                    sub: "TITLE STRIPS OVER THE PREVIEWS"
+                    help: "Shows the window's full title under the window you point at in the map.",
+                    sub: "THE TITLE UNDER THE WINDOW YOU POINT AT"
                 },
                 {
                     kind: "toggle",
@@ -949,8 +949,8 @@ Singleton {
                     kind: "toggle",
                     key: "map.clickFocuses",
                     name: "CLICK FOCUSES",
-                    help: "Clicking a desktop in the map switches to it.",
-                    sub: "A CLICK ON A DESKTOP BRINGS IT UP"
+                    help: "A click on a window in the map takes you to it: the desktop pans until it sits centred, and the map stays open. Off: a click only closes the map.",
+                    sub: "A CLICK ON A WINDOW TAKES YOU THERE"
                 },
                 {
                     kind: "toggle",

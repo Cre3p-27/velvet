@@ -8,9 +8,9 @@ BarButton {
     id: root
 
     padding: 4
-    active: Panels.windowMap
+    active: Panels.windowMap || Panels.islandMapOpen
     visible: Config.map.enabled
-    tip: `WINDOW MAP  ·  ${Desk.windows.length} WINDOWS  ·  OR JUST REACH FOR THE TOP EDGE`
+    tip: `DESKTOP MAP  ·  ${Desk.windows.length} WINDOWS${Config.map.island ? "  ·  OPENS IN THE ISLAND" : ""}`
 
     onClicked: {
         Sfx.open();

@@ -36,8 +36,8 @@ Singleton {
         },
         {
             name: "THE MINI DESKTOP",
-            sub: "TOP EDGE, OR SUPER + SHIFT + M",
-            keys: [root.k("click a window", "Go to it"), root.k("drag a window", "Move it · drop it on another desktop to send it there"), root.k("click bare desktop", "Switch to that desktop"), root.k("scroll", "Zoom out to the other desktops, and back"), root.k("drag bare desktop", "Move around"), root.k("middle-click", "Close that window"), root.k("← → ↑ ↓", "Pick, by where it is"), root.k("Enter", "Go there"), root.k("B", "Bring it to you instead"), root.k("1…9", "Send it to that desktop"), root.k("F", "Float · tile"), root.k("Del", "Close"), root.k("Home", "Back to your own desktop"), root.k("Esc", "Done")]
+            sub: "THE ISLAND'S DESKTOP MODULE, OR SUPER + SHIFT + M",
+            keys: [root.k("click a window", "Go to it"), root.k("drag a window", "Move it anywhere on the canvas · drop it on a desktop chip to send it there"), root.k("× / middle-click", "Close that window"), root.k("the second button on a window", "Float · tile it"), root.k("a desktop chip", "Go there · scroll over the chips to flip"), root.k("scroll", "Zoom at the pointer"), root.k("Shift + scroll · touchpad", "Look around"), root.k("drag bare canvas", "Look around"), root.k("double-click bare canvas", "Fit: the whole canvas in view"), root.k("an arrow on the edge", "Fly to the window out there"), root.k("FIT · − · + · HOME", "The camera"), root.k("← → ↑ ↓", "Pick, by where it is"), root.k("Enter", "Go there"), root.k("B", "Bring it to you instead"), root.k("1…9", "Send it to that desktop"), root.k("F", "Float · tile"), root.k("Del", "Close"), root.k("+ − 0", "Zoom in · out · fit"), root.k("Home", "Back onto the monitor"), root.k("Tab · Page Up / Down", "Next / previous desktop"), root.k("Esc", "Done")]
         },
         {
             name: "THE DESKTOP TAB",

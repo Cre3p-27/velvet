@@ -110,11 +110,11 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
 
-                    IconImage {
+                    AppIcon {
                         anchors.verticalCenter: parent.verticalCenter
-                        implicitSize: 16
-                        source: entry.w?.appId ? Quickshell.iconPath(entry.w.appId, "application-x-executable") : ""
-                        asynchronous: true
+                        width: 16
+                        height: 16
+                        cls: entry.w?.appId ?? ""
                     }
 
                     P5Text {

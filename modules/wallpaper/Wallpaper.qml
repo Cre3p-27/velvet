@@ -183,7 +183,7 @@ PanelWindow {
         Timer {
             interval: 250
             repeat: true
-            running: aurora.visible && !(Panels.wheel || Panels.windowMap)
+            running: aurora.visible && !(Panels.wheel || Panels.windowMap || Panels.islandMapOpen)
             onTriggered: aurora.t = (aurora.t + 0.25) % 44928   // common period of all four curves: no jump on wrap
         }
 
@@ -1056,7 +1056,7 @@ PanelWindow {
 
         interval: 250
         repeat: true
-        running: Config.wallpaper.kenBurns && root.builtin && !Locker.locked && !(Panels.wheel || Panels.windowMap)
+        running: Config.wallpaper.kenBurns && root.builtin && !Locker.locked && !(Panels.wheel || Panels.windowMap || Panels.islandMapOpen)
         onTriggered: root.kbT = (root.kbT + 0.25) % 180
     }
 

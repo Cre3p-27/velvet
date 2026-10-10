@@ -167,7 +167,7 @@ PanelWindow {
     readonly property var meta: {
         const out = [
             { w: 380, h: 396, glyph: "music_note" },
-            { w: 340, h: 170, glyph: "apps" }
+            { w: root.mapW, h: root.mapH, glyph: "apps" }
         ];
         if (Config.map.islandTasks)
             out.push({ w: 380, h: 372, glyph: "checklist" });
@@ -179,6 +179,23 @@ PanelWindow {
             out.push({ w: 462, h: 560, glyph: "auto_awesome" });
         return out;
     }
+
+    // ── the DESKTOP module's size: the canvas keeps the monitor's shape and
+    // takes MAP SIZE (MODULES → DESKTOP MAP) of the screen's width, never so
+    // much that the island leaves no room round it.
+    readonly property real mapAspect: {
+        const m = Desk.focusedMonitor;
+        return m && m.h > 0 ? m.w / m.h : Math.max(1, root.width) / Math.max(1, root.height);
+    }
+    readonly property int mapFieldW: {
+        let w = Math.round(Math.max(520, Math.min(root.width - 240, root.width * Math.max(0.24, Config.map.plateWidth))));
+        const roomH = Math.max(240, root.height - 330);
+        if (w / root.mapAspect > roomH)
+            w = Math.round(roomH * root.mapAspect);
+        return Math.max(420, w);
+    }
+    readonly property int mapW: root.mapFieldW + 28
+    readonly property int mapH: root.pillH + 4 + 34 + 8 + Math.round(root.mapFieldW / root.mapAspect) + 8 + 34 + 10
 
     // The island starts on the map, in the middle of the swipe cycle:
     // music lies left of it, tasks/weather/system right.
@@ -205,8 +222,11 @@ PanelWindow {
             const a = root.bridge.artist;
             return a.length > 0 ? `${t}  ·  ${a}` : t;
         }
-        if (i === root.deskIdx)
-            return `MAP  ·  DESKTOP ${Desk.homeCell?.ws ?? 1}`;
+        if (i === root.deskIdx) {
+            const ws = Desk.homeCell?.ws ?? 1;
+            const n = Desk.windows.filter(w => w.ws === ws).length;
+            return `MAP  ·  DESKTOP ${ws}  ·  ${n} WINDOW${n === 1 ? "" : "S"}`;
+        }
         if (i === root.tasksIdx)
             return `TASKS  ·  ${Tasks.pill}`;
         if (i === root.weatherIdx) {
@@ -490,13 +510,8 @@ PanelWindow {
 
     function openModule(): void {
         root.touched = true;
-        if (root.moduleIdx === root.deskIdx) {
-            // The desk module hands off to the real map: it slides in where
-            // the pill was, and this island gets out of the way.
-            Panels.islandScreen = "";
-            Panels.windowMap = true;
-            return;
-        }
+        // The map opens right here now, like every other module — it used to
+        // hand off to a second window that slid in somewhere else.
         if (!root.expanded) {
             root.expanded = true;
             Sfx.open();
@@ -518,6 +533,56 @@ PanelWindow {
         }
         root.poke();
     }
+
+    // A tab of the open island (or Ctrl+Tab): straight to that module.
+    function switchTo(i: int): void {
+        root.poke();
+        if (i < 0 || i >= root.meta.length || i === root.moduleIdx)
+            return;
+        root.moduleIdx = i;
+        root.previewIdx = i;
+        root.touched = true;
+        if (!root.expanded) {
+            root.expanded = true;
+            Sfx.open();
+        } else {
+            Sfx.cursor();
+        }
+    }
+
+    // Asked for by the map shortcut, the bar's map button or a menu.
+    function openMap(): void {
+        Panels.islandWantMap = false;
+        root.moduleIdx = root.deskIdx;
+        root.previewIdx = root.deskIdx;
+        root.touched = true;
+        if (!root.expanded) {
+            root.expanded = true;
+            Sfx.open();
+        }
+        root.poke();
+    }
+
+    readonly property bool mapOpen: root.active && root.expanded && root.moduleIdx === root.deskIdx
+    onMapOpenChanged: {
+        if (root.mapOpen)
+            Panels.islandMapOpen = true;
+        else if (root.mine || !Panels.islandMapOpen)
+            Panels.islandMapOpen = false;
+    }
+
+    Connections {
+        target: Panels
+
+        function onIslandWantMapChanged(): void {
+            if (Panels.islandWantMap && root.active)
+                root.openMap();
+        }
+    }
+
+    // what the open module is busy with (a window dragged on the map): the
+    // island must not close under that hand
+    readonly property bool bodyBusy: body.item !== null && body.item.busy === true
 
     Connections {
         target: Velly
@@ -606,9 +671,7 @@ PanelWindow {
         root.poke();
         const n = root.meta.length;
         const step = dy < 0 ? 1 : -1;
-        let next = (root.moduleIdx + step + n) % n;
-        if (root.expanded && next === root.deskIdx)
-            next = (next + step + n) % n;
+        const next = (root.moduleIdx + step + n) % n;
         root.moduleIdx = next;
         root.previewIdx = next;
         root.touched = true;
@@ -637,10 +700,6 @@ PanelWindow {
                 Sfx.cursor();
             }
             root.previewIdx = root.moduleIdx;
-            // The map never has an expanded state: swiping onto it from an
-            // open module folds the capsule back into the pill.
-            if (root.moduleIdx === root.deskIdx)
-                root.expanded = false;
         } else if (ax === "v") {
             if (root.progress >= 0.5)
                 root.openModule();
@@ -650,7 +709,7 @@ PanelWindow {
             if (root.expanded && root.moduleIdx === at) {
                 root.expanded = false;
                 Sfx.back();
-            } else if (root.expanded && at !== root.deskIdx) {
+            } else if (root.expanded) {
                 root.moduleIdx = at;
                 root.previewIdx = at;
                 root.touched = true;
@@ -706,7 +765,9 @@ PanelWindow {
     onActiveChanged: {
         if (root.active) {
             openWatchdog.restart();
-            if (Velly.wantIsland)
+            if (Panels.islandWantMap)
+                root.openMap();
+            else if (Velly.wantIsland)
                 root.openVelly();
         } else {
             root.disarm();
@@ -739,8 +800,6 @@ PanelWindow {
             if (root.active && Panels.islandSetModule >= 0) {
                 root.moduleIdx = Panels.islandSetModule;
                 root.touched = true;
-                if (root.moduleIdx === 1)
-                    root.expanded = false;
                 Panels.islandSetModule = -1;
             }
         }
@@ -814,7 +873,26 @@ PanelWindow {
 
         anchors.fill: parent
         focus: root.expanded && root.mine
-        Keys.onEscapePressed: root.dismiss()
+        // the open module may want the keys (the map: arrows, Enter, Del …)
+        Keys.onPressed: event => {
+            if (event.key === Qt.Key_Escape) {
+                root.dismiss();
+                event.accepted = true;
+                return;
+            }
+            // Ctrl+Tab / Ctrl+Shift+Tab: the next / previous module
+            if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && (event.modifiers & Qt.ControlModifier)) {
+                const n = root.meta.length;
+                const back = event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier);
+                root.switchTo((root.moduleIdx + (back ? -1 : 1) + n) % n);
+                event.accepted = true;
+                return;
+            }
+            if (body.item && typeof body.item.handleKey === "function" && body.item.handleKey(event)) {
+                root.poke();
+                event.accepted = true;
+            }
+        }
     }
 
     // Everything that counts as "still using the island" — the capsule and a
@@ -859,7 +937,7 @@ PanelWindow {
         onTriggered: {
             if (keepHover.hovered)
                 return;
-            if (root.pressed) {
+            if (root.pressed || root.bodyBusy) {
                 closeTimer.restart();
                 return;
             }
@@ -881,7 +959,7 @@ PanelWindow {
             // talk, and the sentence being recorded was never answered.
             const busy = Velly.active && (Velly.hearing || Velly.talking
                 || Velly.phase === "thinking" || Velly.phase === "speaking");
-            if (keepHover.hovered || root.pressed || busy) {
+            if (keepHover.hovered || root.pressed || root.bodyBusy || busy) {
                 openWatchdog.restart();
                 return;
             }
@@ -1415,7 +1493,7 @@ PanelWindow {
 
                         anchors.verticalCenter: parent.verticalCenter
                         x: 48
-                        width: Math.max(10, parent.width - 48 - 10 - (root.onSide ? 0 : 41) - 20)
+                        width: Math.max(10, parent.width - 48 - 10 - (root.onSide ? 0 : dots.width + dots.anchors.rightMargin))
                         visible: root.showText
                         text: root.arming ? "VELLY  ·  HALTEN…" : root.pillText(root.shownIdx)
                         color: root.arming ? Colours.accentInk : Colours.alpha(Colours.ink, 0.92)
@@ -1425,16 +1503,19 @@ PanelWindow {
 
                     // One dot per module; the accent marks the active one. The
                     // dots are the swipe hint — they move with the preview while
-                    // you drag. (On a side edge the rail says all this.)
+                    // you drag. Open, they grow into TABS: each module's icon,
+                    // one click away (the map, the music, Velly …). On a side
+                    // edge the rail says all this.
                     Row {
                         id: dots
 
                         visible: !root.onSide
                         anchors.right: parent.right
-                        anchors.rightMargin: 20
+                        anchors.rightMargin: root.expanded ? 10 : 20
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 7
+                        spacing: root.expanded ? 1 : 7
                         opacity: root.arming ? 0 : 1
+                        z: 3
 
                         Behavior on opacity {
                             NumberAnimation {
@@ -1445,22 +1526,75 @@ PanelWindow {
                         Repeater {
                             model: root.meta.length
 
-                            Rectangle {
+                            Item {
                                 id: dot
 
                                 required property int index
                                 readonly property bool lit: dot.index === root.shownIdx
                                 // Her dot never goes dark while she is awake.
                                 readonly property bool awake: Velly.active && dot.index === root.vellyIdx
+                                readonly property bool tabbed: root.expanded && !root.arming
 
-                                width: awake ? 6 : 5
-                                height: awake ? 6 : 5
-                                radius: 3
+                                objectName: `tab-${dot.index}`
+
+                                width: dot.tabbed ? 27 : (dot.awake ? 6 : 5)
+                                height: dot.tabbed ? 26 : (dot.awake ? 6 : 5)
                                 anchors.verticalCenter: parent.verticalCenter
-                                color: awake ? Colours.accentHot : (lit ? Colours.accent : Colours.alpha(Colours.ink, 0.28))
+                                onTabbedChanged: dot.scale = 1
+
+                                Behavior on width {
+                                    NumberAnimation {
+                                        duration: Appearance.anim.normal
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                                Behavior on height {
+                                    NumberAnimation {
+                                        duration: Appearance.anim.normal
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: dot.tabbed ? Appearance.r(8) : 3
+                                    color: dot.tabbed ? (dot.lit ? Colours.alpha(Colours.accent, 0.2) : (tabHover.hovered ? Colours.alpha(Colours.ink, 0.1) : "transparent")) : (dot.awake ? Colours.accentHot : (dot.lit ? Colours.accent : Colours.alpha(Colours.ink, 0.28)))
+                                    border.width: dot.tabbed && dot.lit ? 1 : 0
+                                    border.color: Colours.alpha(Colours.accent, 0.55)
+                                    antialiasing: true
+
+                                    Behavior on color {
+                                        ColorAnimation {
+                                            duration: Appearance.anim.fast
+                                        }
+                                    }
+                                }
+
+                                Icon {
+                                    anchors.centerIn: parent
+                                    name: dot.index === 0 && (root.bridge?.playing ?? false) ? "graphic_eq" : root.pillGlyph(dot.index)
+                                    color: dot.awake ? Colours.accentHot : (dot.lit ? Colours.accent : Colours.alpha(Colours.ink, tabHover.hovered ? 0.95 : 0.6))
+                                    font.pixelSize: 15
+                                    opacity: dot.tabbed ? 1 : 0
+                                    visible: opacity > 0.01
+                                    scale: tabHover.hovered && !dot.lit ? 1.12 : 1
+
+                                    Behavior on opacity {
+                                        NumberAnimation {
+                                            duration: Appearance.anim.normal
+                                        }
+                                    }
+                                    Behavior on scale {
+                                        SpringAnimation {
+                                            spring: 3.6
+                                            damping: 0.55
+                                            epsilon: 0.01
+                                        }
+                                    }
+                                }
 
                                 SequentialAnimation on scale {
-                                    running: dot.awake
+                                    running: dot.awake && !dot.tabbed
                                     loops: Animation.Infinite
                                     NumberAnimation {
                                         to: 1.7
@@ -1474,10 +1608,42 @@ PanelWindow {
                                     }
                                 }
 
-                                Behavior on color {
-                                    ColorAnimation {
-                                        duration: Appearance.anim.fast
+                                HoverHandler {
+                                    id: tabHover
+
+                                    enabled: dot.tabbed
+                                }
+
+                                // A tap picks the module; a drag that starts on a
+                                // tab is still the pill's swipe (in a narrow
+                                // module the tabs cover half the pill).
+                                MouseArea {
+                                    id: tabArea
+
+                                    anchors.fill: parent
+                                    anchors.margins: -1
+                                    enabled: dot.tabbed
+                                    cursorShape: Qt.PointingHandCursor
+
+                                    onPressed: e => {
+                                        const p = tabArea.mapToItem(inputArea, e.x, e.y);
+                                        root.gesturePress(p.x, p.y, -1);
+                                        root.disarm();
                                     }
+                                    onPositionChanged: e => {
+                                        const p = tabArea.mapToItem(inputArea, e.x, e.y);
+                                        root.gestureMove(p.x, p.y);
+                                    }
+                                    onReleased: {
+                                        root.disarm();
+                                        if (root.axis === "") {
+                                            root.abort();
+                                            root.switchTo(dot.index);
+                                        } else {
+                                            root.commit();
+                                        }
+                                    }
+                                    onCanceled: root.abort()
                                 }
                             }
                         }
@@ -1535,19 +1701,25 @@ PanelWindow {
 
                 // The module body. The capsule's clip reveals it as the capsule
                 // grows, so the content never reflows while you pull.
+                // The module's own full size from the first pixel, centred, and
+                // the growing capsule only uncovers it: nothing reflows while
+                // you pull (the map was drawn squeezed half-way out).
                 Loader {
                     id: body
 
+                    readonly property var full: root.meta[root.moduleIdx]
+
+                    x: root.onSide ? 0 : Math.round((parent.width - width) / 2)
                     y: pillH
-                    width: parent.width
-                    height: Math.max(0, parent.height - pillH)
+                    width: root.onSide ? parent.width : body.full.w
+                    height: Math.max(0, root.onSide ? parent.height - pillH : body.full.h - pillH)
                     clip: true
 
                     source: {
                         if (root.moduleIdx === 0)
                             return Qt.resolvedUrl("IslandMusic.qml");
                         if (root.moduleIdx === root.deskIdx)
-                            return "";
+                            return Qt.resolvedUrl("IslandMap.qml");
                         if (root.moduleIdx === root.tasksIdx)
                             return Qt.resolvedUrl("IslandTasks.qml");
                         if (root.moduleIdx === root.weatherIdx)
@@ -1562,47 +1734,14 @@ PanelWindow {
                     onLoaded: {
                         if (root.moduleIdx === 0)
                             body.item.bridge = Qt.binding(() => root.bridge);
-                    }
-                }
-
-                // Desk's own teaser: the map itself is not drawn here, so the
-                // pull shows a quiet promise instead. Only while the pull is
-                // actually happening — released, it disappears with the
-                // capsule, never during the hide animation.
-                Item {
-                    id: deskTeaser
-
-                    y: pillH
-                    width: parent.width
-                    height: Math.max(0, parent.height - pillH)
-                    visible: root.moduleIdx === root.deskIdx && root.pressed
-
-                    Icon {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        y: 16
-                        width: 30
-                        name: "apps"
-                        color: Colours.alpha(Colours.ink, 0.5)
-                        font.pixelSize: 28
-                    }
-
-                    P5Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        y: 56
-                        display: true
-                        text: "DESKTOP MAP"
-                        color: Colours.ink
-                        font.pixelSize: Appearance.font.size.large
-                        tracking: 1.4
-                    }
-
-                    P5Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        y: 86
-                        text: root.onSide ? "RELEASE TO OPEN  ·  PULL OUT ANYTIME" : "RELEASE TO OPEN  ·  PULL DOWN ANYTIME"
-                        color: Colours.inkDim
-                        font.pixelSize: Appearance.font.size.tiny
-                        tracking: 1.2
+                        if (root.moduleIdx === root.deskIdx) {
+                            // live while open — and already while you pull it
+                            // out, so the pull reveals the real canvas
+                            body.item.live = Qt.binding(() => root.active && root.moduleIdx === root.deskIdx && (root.expanded || root.pressed));
+                            body.item.keys = Qt.binding(() => root.expanded && root.mine);
+                            body.item.ground = Qt.binding(() => root.shellCol);
+                            body.item.poked.connect(root.poke);
+                        }
                     }
                 }
             }

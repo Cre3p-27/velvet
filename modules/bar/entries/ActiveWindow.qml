@@ -42,11 +42,14 @@ Item {
         }
     }
 
-    IconImage {
+    // AppIcon, not the icon theme alone: that showed the magenta checkerboard
+    // for Spotify, Claude and every game it could not name
+    AppIcon {
         id: icon
 
-        implicitSize: root.iconSize
-        source: root.appId ? Quickshell.iconPath(root.appId, "application-x-executable") : ""
+        width: root.iconSize
+        height: root.iconSize
+        cls: root.appId ?? ""
         visible: root.has
 
         x: root.vertical ? (root.span - width) / 2 : 0

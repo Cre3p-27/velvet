@@ -659,6 +659,27 @@ one is open; hold it for Velly. Music playing and Velly awake show as a pulsing
 dot on their icons. Its hot zone is a thin strip on that edge, only as long as
 HOT ZONE LENGTH, and the desktop map slides in from the same edge.
 
+**The infinite canvas lives in the island.** The DESKTOP module is the map
+itself: it opens right inside the island like music or the weather — same
+ground, same shape, the module tabs on top — instead of handing off to a second
+window somewhere else, and Super+Shift+M, the bar's map button and Velly open it
+there. A chip per desktop with a live miniature of its windows (click to go,
+drop a window on one to send it, scroll over them to flip), the monitor with your
+wallpaper on it, every window as a card with its app's icon, on a dot grid that
+moves with the camera; windows far out on the canvas show as arrows on the edge —
+click one and the camera flies there. Click a card to go to the window, drag it
+anywhere, × or middle-click closes it, the second button floats or tiles it.
+FIT · − · % · + · HOME drive the camera; the wheel zooms at the pointer,
+Shift+wheel and a touchpad look around, a double-click on bare canvas fits; the
+keyboard has arrows, Enter, Del, F, B, 1–9, + − 0, Home and Tab. Island off, the
+same canvas drops as a plate of its own (`modules/map/MapCanvas.qml` is both).
+
+**Tabs and keys.** Open, the island's dots grow into tabs with each module's
+icon — one click to music, the map, tasks, weather, the system or Velly (a drag
+that starts on them is still the pill's swipe); Ctrl+Tab flips modules from the
+keyboard. Pulling a module out uncovers it at its final size, so nothing
+squeezes on the way.
+
 **Docked in the frame.** **DOCK TO THE EDGE** (on by default) grows the island
 out of the line where the desktop starts — the screen frame, or a taskbar on that
 edge: square where it meets it, flared into it with two soft inner curves, and

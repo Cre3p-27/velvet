@@ -266,7 +266,27 @@ Singleton {
         root.session = next;
     }
 
+    // With the Dynamic Island on, the map IS the island's DESKTOP module:
+    // the shortcut, the bar's button and the menus open it there (and close
+    // it again), so there is one map, in one place. Island off: the plate.
+    property bool islandWantMap: false
+    // the island's map is open (the island says so) — for the bar's button
+    property bool islandMapOpen: false
+
     function toggleWindowMap(): void {
+        if (Config.map.enabled && Config.map.island) {
+            if (root.islandMapOpen) {
+                root.islandScreen = "";
+                return;
+            }
+            const scr = Hypr.focusedScreen ?? (Quickshell.screens.length > 0 ? Quickshell.screens[0] : null);
+            if (!scr)
+                return;
+            root.windowMap = false;
+            root.islandWantMap = true;
+            root.islandScreen = scr.name;
+            return;
+        }
         root.windowMap = !root.windowMap;
     }
 

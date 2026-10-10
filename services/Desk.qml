@@ -33,6 +33,9 @@ Singleton {
     property var monitors: []
     property var wsMon: ({})
     property string activeAddress: ""
+    // window class → its icon's url ("" = none, a letter is drawn): the map's
+    // cards and the bar ask components/AppIcon.qml, which fills this once per session
+    property var iconCache: ({})
     property int pollFailures: 0
     property int polls: 0
     property int pollStarted: 0
