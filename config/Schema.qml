@@ -293,6 +293,14 @@ Singleton {
                 },
                 {
                     kind: "toggle",
+                    key: "map.islandFrame",
+                    name: "PART OF THE FRAME",
+                    aka: "ISLAND IN THE FRAME",
+                    help: "With the SCREEN FRAME on, the island becomes part of it: always docked, in exactly the frame's colour and opacity (ISLAND THEME and ISLAND OPACITY step aside), the frame's outline and shadow carried round it — and at rest the frame swells softly where the island lives, so you can see where it is. It grows out of that swell when you reach for it. Off: the island is a part of its own (DOCK TO THE EDGE still attaches it).",
+                    sub: "THE FRAME SWELLS WHERE IT LIVES  ·  ITS COLOUR, OUTLINE AND SHADOW"
+                },
+                {
+                    kind: "toggle",
                     key: "map.islandDock",
                     name: "DOCK TO THE EDGE",
                     help: "The island grows out of its edge instead of floating near it: flush with the screen frame or the taskbar there, square where it meets them and flared into them with soft inner curves. With SCREEN FRAME on and the theme FRAME, island, frame and bar read as one surface, and the frame's OUTLINE runs round the island. Off: a free pill a little way off the edge.",
@@ -308,8 +316,8 @@ Singleton {
                     kind: "action",
                     fn: "islandJoinFrame",
                     name: "ISLAND + FRAME AS ONE",
-                    help: "One click for the integrated look: the screen frame on and connected to the bar, the island docked and wearing the frame's colour.",
-                    sub: "FRAME ON · DOCKED · THEME FRAME"
+                    help: "One click for the integrated look: the screen frame on and connected to the bar, the island part of the frame.",
+                    sub: "FRAME ON · BAR CONNECTED · ISLAND PART OF THE FRAME"
                 },
                 {
                     kind: "toggle",

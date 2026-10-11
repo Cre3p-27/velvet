@@ -290,8 +290,8 @@ Singleton {
             Config.setMany({
                 "bar.frame": true,
                 "bar.frameConnect": true,
-                "map.islandDock": true,
-                "map.islandTheme": "frame"
+                "map.islandFrame": true,
+                "map.islandDock": true
             });
             Toast.ok("ISLAND, FRAME AND BAR ARE ONE SURFACE NOW");
             break;

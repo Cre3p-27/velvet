@@ -686,6 +686,13 @@ that starts on them is still the pill's swipe); Ctrl+Tab flips modules from the
 keyboard. Pulling a module out uncovers it at its final size, so nothing
 squeezes on the way.
 
+**Part of the frame.** With the SCREEN FRAME on, **PART OF THE FRAME** (on by
+default) makes the island the frame itself: always docked, in exactly the
+frame's colour and opacity, the frame's outline and shadow carried round it — and
+at rest the frame swells softly where the island lives (top, left or right), so
+you see where it waits; it grows out of that swell when you reach for it, and the
+swell rides out with a hiding taskbar on the same edge.
+
 **Docked in the frame.** **DOCK TO THE EDGE** (on by default) grows the island
 out of the line where the desktop starts — the screen frame, or a taskbar on that
 edge: square where it meets it, flared into it with two soft inner curves, and

@@ -51,6 +51,7 @@ import Quickshell
 import Quickshell.Wayland
 import QtQuick
 import QtQuick.Shapes
+import QtQuick.Effects
 
 PanelWindow {
     id: root
@@ -85,7 +86,11 @@ PanelWindow {
     //  inside a pinned taskbar there), square on that side, flared into it.
     //  Free: a pill a few pixels off that line. Either way it rises from
     //  BEHIND the line (edgeClip), never across the bar or the frame.
-    readonly property bool docked: Config.map.islandDock
+    // PART OF THE FRAME: the island is the frame (its colour, its opacity, its
+    // outline and shadow) and is always docked — the frame swells where it
+    // rests (FrameShape). Without a SCREEN FRAME there is nothing to be part of.
+    readonly property bool inFrame: Config.map.islandFrame && Config.bar.frame
+    readonly property bool docked: Config.map.islandDock || root.inFrame
     // OVER THE BAR lets a top island cover a top taskbar: then only the
     // frame counts.
     readonly property real topInset: Config.bar.enabled && Config.bar.position === "top" && Config.map.islandPlace === "over" ? (Config.bar.frame ? Math.max(0, Config.bar.frameWidth) : 0) : Appearance.edgeInset("top")
@@ -491,7 +496,7 @@ PanelWindow {
             return "tone";
         return "dark";
     }
-    readonly property string theme: Config.map.islandTheme === "auto" ? root.themeAuto : Config.map.islandTheme
+    readonly property string theme: root.inFrame ? "frame" : (Config.map.islandTheme === "auto" ? root.themeAuto : Config.map.islandTheme)
     readonly property bool glassy: root.theme === "glass"
     readonly property color shellCol: {
         const op = Config.map.islandOpacity;
@@ -501,7 +506,9 @@ PanelWindow {
         case "wallpaper":
             return Colours.alpha(Colours.wallpaperTint, 0.97 * op);
         case "frame":
-            return Colours.alpha(Colours.frameBase, Math.max(0.2, Math.min(1, Config.bar.frameOpacity)) * op);
+            // part of the frame: exactly the frame's colour — ISLAND OPACITY
+            // would make it a see-through tab on a solid frame
+            return Colours.alpha(Colours.frameBase, Math.max(0.2, Math.min(1, Config.bar.frameOpacity)) * (root.inFrame ? 1 : op));
         case "tone":
             return Colours.alpha(Colours.tone, op);
         default:
@@ -1017,53 +1024,76 @@ PanelWindow {
 
         // DOCKED: one shape for the island AND its flared foot, so the curves
         // into the frame have no seam. The ring leaves the foot out.
-        Shape {
-            id: dockShape
+        // (padded, so a shadow layer holds the flared foot too)
+        Item {
+            id: dockHost
 
-            x: capsule.x
-            y: capsule.y
-            width: capsule.width
-            height: capsule.height
+            readonly property real pad: root.fillet + root.lip + 6
+
+            x: capsule.x - dockHost.pad
+            y: capsule.y - dockHost.pad
+            width: capsule.width + dockHost.pad * 2
+            height: capsule.height + dockHost.pad * 2
             scale: capsule.scale
             visible: root.docked
-            preferredRendererType: Shape.CurveRenderer
-
-            LinearGradient {
-                id: sheen
-
-                x1: 0
-                y1: 0
-                x2: 0
-                y2: Math.max(60, dockShape.height * 0.5)
-
-                GradientStop {
-                    position: 0
-                    color: root.sheenCol
-                }
-                GradientStop {
-                    position: 1
-                    color: root.shellCol
-                }
+            // PART OF THE FRAME with FRAME SHADOW: the island casts the
+            // frame's own soft shadow onto the desktop
+            layer.enabled: root.inFrame && Config.bar.frameShadow
+            layer.effect: MultiEffect {
+                shadowEnabled: true
+                shadowColor: Qt.rgba(0, 0, 0, 0.55)
+                shadowBlur: 0.7
+                blurMax: 32
+                shadowHorizontalOffset: 0
+                shadowVerticalOffset: 0
             }
 
-            ShapePath {
-                fillColor: root.shellCol
-                fillGradient: root.glassy ? sheen : null
-                strokeColor: "transparent"
-                strokeWidth: 0
+            Shape {
+                id: dockShape
 
-                PathSvg {
-                    path: root.dockPath(capsule.width, capsule.height, false)
+                x: dockHost.pad
+                y: dockHost.pad
+                width: capsule.width
+                height: capsule.height
+                preferredRendererType: Shape.CurveRenderer
+
+                LinearGradient {
+                    id: sheen
+
+                    x1: 0
+                    y1: 0
+                    x2: 0
+                    y2: Math.max(60, dockShape.height * 0.5)
+
+                    GradientStop {
+                        position: 0
+                        color: root.sheenCol
+                    }
+                    GradientStop {
+                        position: 1
+                        color: root.shellCol
+                    }
                 }
-            }
 
-            ShapePath {
-                fillColor: "transparent"
-                strokeColor: root.shellRing
-                strokeWidth: root.ringW
+                ShapePath {
+                    fillColor: root.shellCol
+                    fillGradient: root.glassy ? sheen : null
+                    strokeColor: "transparent"
+                    strokeWidth: 0
 
-                PathSvg {
-                    path: root.dockPath(capsule.width, capsule.height, true)
+                    PathSvg {
+                        path: root.dockPath(capsule.width, capsule.height, false)
+                    }
+                }
+
+                ShapePath {
+                    fillColor: "transparent"
+                    strokeColor: root.shellRing
+                    strokeWidth: root.ringW
+
+                    PathSvg {
+                        path: root.dockPath(capsule.width, capsule.height, true)
+                    }
                 }
             }
         }

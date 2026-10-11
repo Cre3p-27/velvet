@@ -520,6 +520,11 @@ Singleton {
                 // them and flared into them with soft inner curves, so frame,
                 // bar and island read as one surface. Off: a free pill.
                 property bool islandDock: true
+                // PART OF THE FRAME (with the SCREEN FRAME on): the island IS the
+                // frame — docked, in the frame's own colour and opacity, the
+                // frame's outline and shadow carried round it — and at rest the
+                // frame swells softly where it lives, so you see where it is.
+                property bool islandFrame: true
                 property real islandEdgeY: 0.5          // on a side edge: how far down, 0 top … 1 bottom
                 // The TASKS module in the island's swipe cycle, between the
                 // map and the weather — configure it in WORKFLOW.

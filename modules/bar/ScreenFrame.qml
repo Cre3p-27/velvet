@@ -53,10 +53,18 @@ PanelWindow {
         }
     }
 
+    // The island's home on the frame (PART OF THE FRAME): where the docked
+    // island rests — the middle of the top edge (plus the nudge), or ISLAND
+    // HEIGHT on a side edge.
+    readonly property bool islandHome: Config.map.enabled && Config.map.island && Config.map.islandFrame
+    readonly property real islandAt: Appearance.islandEdge === "top" ? root.width / 2 + Config.map.islandShift : root.height * Math.max(0.05, Math.min(0.95, Config.map.islandEdgeY)) + Config.map.islandShift
+
     FrameShape {
         anchors.fill: parent
         edge: Config.bar.position
         strip: root.barOnEdge ? Config.bar.thickness + Config.bar.margin : 0
         reveal: root.reveal
+        bumpEdge: root.islandHome ? Appearance.islandEdge : ""
+        bumpAt: root.islandAt
     }
 }

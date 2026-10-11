@@ -34,6 +34,47 @@ Item {
 
     readonly property real band: root.strip > 0 ? Math.max(0, root.fw + (root.strip - root.fw) * root.reveal) : 0
 
+    // ── the island's home (MODULES → DYNAMIC ISLAND → PART OF THE FRAME): a
+    //  soft swell of the frame itself where the docked island rests, on the
+    //  frame's inner edge, flaring in and out in S-curves. The island grows
+    //  out of it. `bumpEdge` "" = none; `bumpAt` = its middle along the edge.
+    property string bumpEdge: ""
+    property real bumpAt: 0
+    readonly property real bumpLen: root.bumpEdge === "top" ? 168 : 124
+    readonly property real bumpDepth: Math.max(6, Math.min(12, Math.round(root.fw * 0.75 + 2)))
+    readonly property real bumpFlare: 30
+
+    // The swell as an SVG path in screen coordinates, drawn for the top edge
+    // in (u along, v into the desktop) and turned onto the side edges. Only
+    // cubic curves, so mirroring needs no arc flags. `part`: "fill" (with a
+    // lip into the band), "line" (the outline, open), "cover" (a thin strip
+    // that hides the frame's straight outline under the swell's foot).
+    function bumpPath(part: string): string {
+        const e = root.bumpEdge;
+        if (e === "" || root.width <= 0)
+            return "";
+        const H = root.bumpDepth;
+        const L = root.bumpLen;
+        const k = Math.min(root.bumpFlare, L / 2 - 6);
+        const c = root.bumpAt;
+        const base = e === "top" ? root.iy : (e === "left" ? root.ix : root.ix + root.iw);
+        const P = (u, v) => {
+            if (e === "top")
+                return `${(c + u).toFixed(2)},${(base + v).toFixed(2)}`;
+            if (e === "left")
+                return `${(base + v).toFixed(2)},${(c + u).toFixed(2)}`;
+            return `${(base - v).toFixed(2)},${(c + u).toFixed(2)}`;
+        };
+        const a = -L / 2;
+        const b = L / 2;
+        if (part === "cover")
+            return `M ${P(a, -1.6)} L ${P(b, -1.6)} L ${P(b, 2.2)} L ${P(a, 2.2)} Z`;
+        const curve = ` C ${P(a + k * 0.55, 0)} ${P(a + k * 0.45, H)} ${P(a + k, H)} L ${P(b - k, H)} C ${P(b - k * 0.45, H)} ${P(b - k * 0.55, 0)} ${P(b, 0)}`;
+        if (part === "line")
+            return `M ${P(a, 0)}` + curve;
+        return `M ${P(a, -1.5)} L ${P(a, 0)}` + curve + ` L ${P(b, -1.5)} Z`;
+    }
+
     function inset(side: string): real {
         return side === root.edge && root.strip > 0 ? root.band : root.fw;
     }
@@ -88,6 +129,23 @@ Item {
                     shadowVerticalOffset: 0
                 }
 
+                // the island's home, inside the shadow too
+                Shape {
+                    anchors.fill: parent
+                    visible: root.bumpEdge !== ""
+                    preferredRendererType: Shape.CurveRenderer
+
+                    ShapePath {
+                        fillColor: root.colour
+                        strokeColor: "transparent"
+                        strokeWidth: 0
+
+                        PathSvg {
+                            path: root.bumpPath("fill")
+                        }
+                    }
+                }
+
                 Shape {
                     anchors.fill: parent
                     preferredRendererType: Shape.CurveRenderer
@@ -132,6 +190,34 @@ Item {
                         width: root.iw
                         height: root.ih
                         radius: root.rr
+                    }
+                }
+            }
+
+            // …and round the island's home: the straight line under the
+            // swell's foot is covered, the outline bends over the swell.
+            Shape {
+                anchors.fill: parent
+                visible: root.bumpEdge !== "" && Config.bar.frameOutline
+                preferredRendererType: Shape.CurveRenderer
+
+                ShapePath {
+                    fillColor: root.colour
+                    strokeColor: "transparent"
+                    strokeWidth: 0
+
+                    PathSvg {
+                        path: root.bumpPath("cover")
+                    }
+                }
+
+                ShapePath {
+                    fillColor: "transparent"
+                    strokeColor: Colours.alpha(Colours.accent, 0.5)
+                    strokeWidth: 1.5
+
+                    PathSvg {
+                        path: root.bumpPath("line")
                     }
                 }
             }
