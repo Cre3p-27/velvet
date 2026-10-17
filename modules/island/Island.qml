@@ -1650,7 +1650,11 @@ PanelWindow {
                         id: tabPlate
 
                         readonly property bool shown: !root.onSide && root.expanded && !root.arming && root.shownIdx >= 0
-                        x: dots.x + root.shownIdx * (27 + dots.spacing)
+                        // the spring moves the TAB it sits on, never the row:
+                        // the row itself moves with the capsule's width, and a
+                        // plate that sprang after that sat beside the tabs
+                        property real at: Math.max(0, root.shownIdx)
+                        x: dots.x + tabPlate.at * (27 + dots.spacing)
                         y: dots.y + (dots.height - 26) / 2
                         width: 27
                         height: 26
@@ -1663,12 +1667,12 @@ PanelWindow {
                         opacity: tabPlate.shown ? 1 : 0
                         visible: opacity > 0.01
 
-                        Behavior on x {
+                        Behavior on at {
                             enabled: tabPlate.shown
                             SpringAnimation {
                                 spring: 5.2
                                 damping: 0.5
-                                epsilon: 0.05
+                                epsilon: 0.002
                             }
                         }
                         Behavior on opacity {

@@ -483,7 +483,11 @@ def natural_serve() -> int:
     import _gpu                                                # noqa: PLC0415
     device = _gpu.pick_device(NATURAL_SERVER)
     cmd = [NATURAL_SERVER, "-m", NATURAL_MODEL, "--host", "127.0.0.1", "--port", str(NATURAL_PORT),
-           "-ngl", "99", "-c", "4096", "-np", "1", "-fa", "auto", "--no-webui"] + (["--device", device] if device else [])
+           # a sentence never needs more: ≤ 240 characters → ≤ ~2700 codes + a
+           # 70-token prompt; small batches keep the compute buffer small, so
+           # the voice leaves more of the card to the brain beside it
+           "-ngl", "99", "-c", "3072", "-b", "256", "-ub", "256", "-np", "1", "-fa", "auto",
+           "--no-webui"] + (["--device", device] if device else [])
     natural_touch()
     logfh = open(NATURAL_LOG, "a", encoding="utf-8")
     proc = subprocess.Popen(cmd, stdout=logfh, stderr=logfh, start_new_session=True)
