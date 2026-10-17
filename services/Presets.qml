@@ -1864,6 +1864,14 @@ Singleton {
         } else if (root.applied !== id) {
             root.stash();
         }
+        // Another look goes on: its own memory (Looks, Scenes) is told first,
+        // while the settings and the desk are still the old look's — what
+        // was set there stays there, and nothing written below is taken for
+        // an edit of the look you are leaving.
+        if ((root.applied || "velvet") !== id) {
+            Looks.lookLeaving();
+            Scenes.lookLeaving();
+        }
         // The first look remembers your own setup; later ones keep that.
         if (root.before === null) {
             const snap = {};
@@ -1902,6 +1910,10 @@ Singleton {
     function undo(): bool {
         if (root.before === null)
             return false;
+        if ((root.applied || "velvet") !== "velvet") {
+            Looks.lookLeaving();
+            Scenes.lookLeaving();
+        }
         const batch = {};
         for (const k in root.before) {
             // A key that did not exist before (older config) stays as is.

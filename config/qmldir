@@ -7,3 +7,4 @@ singleton Schema 1.0 Schema.qml
 singleton Shortcuts 1.0 Shortcuts.qml
 singleton TermApps 1.0 TermApps.qml
 singleton LockModules 1.0 LockModules.qml
+ConfigData 1.0 ConfigData.qml

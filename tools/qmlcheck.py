@@ -601,6 +601,8 @@ def main():
     for path, code in codes.items():
         if "pragma Singleton" in code:
             continue      # QtObject roots have no anchor lines to shadow
+        if re.search(r"^JsonAdapter\s*\{", code, re.M):
+            continue      # a settings tree (config/ConfigData.qml) is data, not an Item
         r = rel(path)
         for m in re.finditer(
                 r"^\s*(?:readonly\s+|required\s+|default\s+)*property\s+"
@@ -977,9 +979,12 @@ def main():
     # A typo in Schema.qml produces a row that reads and writes nothing, which
     # looks fine on screen and silently does nothing. Worth catching.
     cfg_path = os.path.join(ROOT, "config", "Config.qml")
+    data_path = os.path.join(ROOT, "config", "ConfigData.qml")
     schema_path = os.path.join(ROOT, "config", "Schema.qml")
     if cfg_path in codes and schema_path in codes:
-        cfg = codes[cfg_path]
+        # the settings themselves live in ConfigData.qml since v8.56 (Config
+        # wears one, a second is the defaults); Config.qml adds its own names
+        cfg = (codes[data_path] + "\n" if data_path in codes else "") + codes[cfg_path]
 
         def config_tree(text):
             """Walk the JsonAdapter block into a nested dict of property names."""
@@ -1136,15 +1141,17 @@ def main():
     # sections shipped that way.
     if cfg_path in codes:
         cfg_src = sources[cfg_path]
+        data_src = sources.get(data_path, "")
+        scan_src = data_src or cfg_src
         declared = set(re.findall(
             r"^\s*property\s+JsonObject\s+(\w+)\s*:\s*JsonObject\s*\{",
-            cfg_src, re.M))
+            scan_src, re.M))
         # Only the top level: nested groups are reached through their parent.
         top_level = set()
         depth = 0
-        for line in cfg_src.split("\n"):
+        for line in scan_src.split("\n"):
             m = re.match(r"^\s*property\s+JsonObject\s+(\w+)\s*:\s*JsonObject\s*\{", line)
-            if m and depth <= 3:
+            if m and depth <= (1 if data_src else 3):
                 top_level.add(m.group(1))
             depth += line.count("{") - line.count("}")
 
@@ -1153,8 +1160,8 @@ def main():
             cfg_src, re.M))
 
         for name in sorted(top_level - exposed):
-            line = cfg_src.count("\n", 0, cfg_src.index(f"property JsonObject {name}:")) + 1
-            errors.append(("config/Config.qml", line,
+            line = scan_src.count("\n", 0, scan_src.index(f"property JsonObject {name}:")) + 1
+            errors.append(("config/ConfigData.qml" if data_src else "config/Config.qml", line,
                            f"section `{name}` has no `readonly property var {name}: "
                            f"adapter.{name}` — Config.{name} is undefined everywhere"))
 

@@ -25,7 +25,19 @@ Singleton {
     readonly property bool ready: root.loaded
 
     property bool loaded: false
-    property var store: ({})           // wallpaper path -> { key: value }
+    // THE LOOK (LOOKS: Velvet, Windows 11, your own …) owns its memory. Every
+    // look has a book of its own — its setup per wallpaper, and the setup it
+    // was last left in — so nothing you set while wearing one look is ever
+    // saved onto, or restored into, another. `store` is the book of the look
+    // you wear (wallpaper path -> { key: value }), so everything that reads
+    // it per wallpaper still does; `books` holds the others.
+    property var store: ({})           // wallpaper path -> { key: value }, this look's
+    property var books: ({})           // look id -> { wallpaper path -> { key: value } }
+    property var lasts: ({})           // look id -> the setup that look was last left in
+    property var legacy: null          // a pre-look looks.json, until it has an owner
+    property string bookLook: ""       // whose book `store` is
+    property bool switchingLook: false // Presets is putting another look on
+    readonly property string look: Presets.loaded ? (Presets.applied || "velvet") : ""
     property string applying: ""       // suppresses autosave while restoring
     property string lastSnap: ""       // the tracked settings as last seen / stored
     property string previous: ""       // the wallpaper that was up before this one
@@ -274,6 +286,12 @@ Singleton {
         const look = root.store[wp];
         if (!look)
             return false;
+        return root.restoreFrom(look);
+    }
+
+    function restoreFrom(look: var): bool {
+        if (!look)
+            return false;
 
         // Only what the switched-on groups hold — a group you turned off
         // stays as it is.
@@ -292,7 +310,7 @@ Singleton {
 
         // Guard first: applying a look writes settings, and every write would
         // otherwise be seen as a change worth saving back.
-        root.applying = wp;
+        root.applying = "restore";
         // One batch, one write — key by key, every second one used to
         // snap back (see Config.setMany).
         if (n > 0)
@@ -311,7 +329,119 @@ Singleton {
     }
 
     function persist(): void {
-        file.setText(JSON.stringify(root.store, null, 1));
+        if (root.bookLook === "")
+            return;
+        const books = Object.assign({}, root.books);
+        books[root.bookLook] = root.store;
+        root.books = books;
+        file.setText(JSON.stringify({
+            "__byLook__": books,
+            "__last__": root.lasts,
+            "__v__": 2
+        }, null, 1));
+    }
+
+    // Both files are in: the books get their owner. A looks.json from before
+    // looks had books of their own belongs to the look you wear now (it was
+    // made with whatever was on — the file was backed up next to it).
+    function adopt(): void {
+        if (root.bookLook !== "" || !root.loaded || root.look === "")
+            return;
+        root.bookLook = root.look;
+        if (root.legacy !== null) {
+            const books = Object.assign({}, root.books);
+            books[root.look] = root.legacy;
+            root.books = books;
+            root.legacy = null;
+        }
+        root.store = root.books[root.look] ?? ({});
+        root.persist();
+    }
+
+    onLookChanged: {
+        if (root.bookLook === "") {
+            root.adopt();
+            return;
+        }
+        if (root.look === "" || root.look === root.bookLook)
+            return;
+        root.enterLook(root.look);
+    }
+
+    // Presets calls this BEFORE it writes another look: what is still waiting
+    // to be saved goes to the look you are leaving (the settings are still
+    // its own at this moment), the look's whole setup is kept as the one it
+    // was left in, and nothing the new look writes is taken for your edit.
+    function lookLeaving(): void {
+        if (root.bookLook === "")
+            return;
+        root.switchingLook = true;
+        root.applying = "look";
+        if (autosave.running) {
+            autosave.stop();
+            root.flush(root.wallpaper);
+        }
+        const lasts = Object.assign({}, root.lasts);
+        lasts[root.bookLook] = root.capture();
+        root.lasts = lasts;
+        root.persist();
+        // a Presets call that never gets as far as changing the look must
+        // not leave the guard up
+        lookGuard.restart();
+    }
+
+    // The look changed (Presets set `applied`): its own book comes out, and
+    // its setup for this wallpaper — or, for a wallpaper it has none for, the
+    // setup it was left in — goes on over the look's design.
+    function enterLook(id: string): void {
+        const books = Object.assign({}, root.books);
+        books[root.bookLook] = root.store;
+        root.books = books;
+        root.bookLook = id;
+        root.store = books[id] ?? ({});
+        root.switchingLook = false;
+        lookGuard.stop();
+        const wp = root.wallpaper;
+        if (wp && root.store[wp]) {
+            root.restore(wp);
+        } else if (root.lasts[id]) {
+            root.restoreFrom(root.lasts[id]);
+        } else {
+            // a look never worn before: its design over the shell's own
+            // defaults — never what the look you just left had set
+            root.restoreFrom(root.freshFor(id));
+        }
+        root.persist();
+    }
+
+    // What a look starts from the first time: every remembered setting as
+    // the shell ships it, except what the look's own design (and your
+    // tuning of it) sets — Presets has just written those.
+    function freshFor(id: string): var {
+        const look = Presets.find(id);
+        const own = look ? Presets.plan(look) : ({});
+        const tune = Presets.tunes[id] ?? ({});
+        const out = {};
+        const k = root.keys;
+        for (let i = 0; i < k.length; i++) {
+            if (own[k[i]] !== undefined || tune[k[i]] !== undefined)
+                continue;
+            const v = Config.defaultOf(k[i]);
+            if (v !== undefined && v !== null && typeof v !== "function")
+                out[k[i]] = JSON.parse(JSON.stringify(v));
+        }
+        return out;
+    }
+
+    Timer {
+        id: lookGuard
+
+        interval: 4000
+        onTriggered: {
+            root.switchingLook = false;
+            root.applying = "";
+            root.lastSnap = JSON.stringify(root.capture());
+        }
     }
 
     // ---------------------------------------------------------- the hookup
@@ -322,7 +452,7 @@ Singleton {
     onWallpaperChanged: {
         const was = root.previous;
         root.previous = root.wallpaper;
-        if (!Config.looks.enabled || !root.loaded)
+        if (!Config.looks.enabled || !root.loaded || root.switchingLook || root.bookLook === "")
             return;
         if (autosave.running) {
             autosave.stop();
@@ -389,18 +519,31 @@ Singleton {
         printErrors: false
 
         onLoaded: {
+            let parsed = null;
             try {
-                const parsed = JSON.parse(text());
-                root.store = (parsed && typeof parsed === "object") ? parsed : ({});
+                parsed = JSON.parse(text());
             } catch (e) {
-                root.store = ({});
+                parsed = null;
+            }
+            if (parsed && typeof parsed === "object" && parsed["__byLook__"]) {
+                root.books = parsed["__byLook__"];
+                root.lasts = parsed["__last__"] ?? ({});
+                root.legacy = null;
+            } else {
+                root.books = ({});
+                root.lasts = ({});
+                root.legacy = (parsed && typeof parsed === "object") ? parsed : ({});
             }
             root.loaded = true;
+            root.adopt();
         }
 
         onLoadFailed: {
-            root.store = ({});
+            root.books = ({});
+            root.lasts = ({});
+            root.legacy = ({});
             root.loaded = true;
+            root.adopt();
         }
     }
 }

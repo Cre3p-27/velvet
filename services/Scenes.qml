@@ -28,7 +28,17 @@ Singleton {
     readonly property string path: `${Quickshell.env("HOME")}/.config/velvet/scenes.json`
     readonly property string anyKey: "__default__"
 
+    // Every LOOK has a desk of its own: its scenes per wallpaper (and its own
+    // EVERYWHERE scene) live in its own book, so a desktop you built while
+    // wearing one look never shows up under another. `store` is the book of
+    // the look you wear — everything below reads it per wallpaper as before.
     property var store: ({})
+    property var books: ({})            // look id -> { wallpaper -> [items] }
+    property var legacy: null           // a pre-look scenes.json, until it has an owner
+    property string bookLook: ""
+    property bool switchingLook: false
+    property var leavingList: []        // what the old look's desk showed
+    readonly property string look: Presets.loaded ? (Presets.applied || "velvet") : ""
     property bool loaded: false
     property int nextId: 1
 
@@ -1207,6 +1217,12 @@ Singleton {
         const nextKey = root.watchedWallpaper;
         if (nextKey === "" || nextKey === root.activeKey)
             return;
+        if (root.switchingLook) {
+            // enterLook brings the new look's desk up for this wallpaper
+            root.prevKey = root.activeKey;
+            root.activeKey = nextKey;
+            return;
+        }
         const isBoot = root.activeKey === "";
         // Remember what the previous scene opened, then take the new key
         // immediately so a reload cascade cannot run this twice.
@@ -1519,7 +1535,124 @@ Singleton {
 
     // ═════════════════════════════════════════════════════════════════════ disk
     function persist(): void {
-        file.setText(JSON.stringify(root.store, null, 1));
+        if (root.bookLook === "")
+            return;
+        const books = Object.assign({}, root.books);
+        books[root.bookLook] = root.store;
+        root.books = books;
+        file.setText(JSON.stringify({
+            "__byLook__": books,
+            "__v__": 2
+        }, null, 1));
+    }
+
+    // Both files are in (scenes.json and the look you wear): the desk gets
+    // its owner, and only THEN is the scene loaded — the login autostart
+    // waits for `loaded`, and must open the right look's desk.
+    function adopt(): void {
+        if (root.bookLook !== "" || root.look === "" || !root.fileIn)
+            return;
+        root.bookLook = root.look;
+        if (root.legacy !== null) {
+            const books = Object.assign({}, root.books);
+            books[root.look] = root.legacy;
+            root.books = books;
+            root.legacy = null;
+        }
+        root.store = root.books[root.look] ?? ({});
+        root.rebase();
+        root.loaded = true;
+        root.persist();
+    }
+
+    property bool fileIn: false
+
+    onLookChanged: {
+        if (root.bookLook === "") {
+            if (root.fileIn)
+                root.adopt();
+            return;
+        }
+        if (root.look === "" || root.look === root.bookLook)
+            return;
+        root.enterLook(root.look);
+    }
+
+    function lookLeaving(): void {
+        if (root.bookLook === "")
+            return;
+        root.switchingLook = true;
+        root.leavingList = root.sceneFor(root.key).slice();
+        lookGuard.restart();
+    }
+
+    function enterLook(id: string): void {
+        const books = Object.assign({}, root.books);
+        books[root.bookLook] = root.store;
+        root.books = books;
+        root.bookLook = id;
+        root.store = books[id] ?? ({});
+        root.rebase();
+        root.editKey = "";
+        root.activeKey = Config.wallpaper.current;
+        root.switchingLook = false;
+        lookGuard.stop();
+        root.persist();
+        // off means off: nothing closes, nothing opens (SCENE → ON WALLPAPER CHANGE)
+        if (!Config.scene.onWallpaperChange)
+            return;
+        // the old look's desk goes (only ITS items — not every window on
+        // workspace 1, as a wallpaper change does), the new look's comes up
+        lookClose.list = root.leavingList;
+        root.leavingList = [];
+        Desk.watch();
+        lookClose.restart();
+        lookOpen.restart();
+    }
+
+    Timer {
+        id: lookGuard
+
+        interval: 4000
+        onTriggered: root.switchingLook = false
+    }
+
+    Timer {
+        id: lookClose
+
+        property var list: []
+
+        interval: 350
+        onTriggered: {
+            Desk.refresh();
+            const wins = Desk.windows;
+            const keep = root.items;
+            for (let i = 0; i < wins.length; i++) {
+                const w = wins[i];
+                let old = false;
+                for (let j = 0; j < lookClose.list.length && !old; j++)
+                    old = root.matches(lookClose.list[j], w);
+                if (!old)
+                    continue;
+                // the same thing on the new look's desk stays open
+                let mine = false;
+                for (let j = 0; j < keep.length && !mine; j++)
+                    mine = root.matches(keep[j], w);
+                if (!mine)
+                    Desk.killTree(w.address);
+            }
+            lookClose.list = [];
+        }
+    }
+
+    Timer {
+        id: lookOpen
+
+        interval: 3200
+        onTriggered: {
+            Desk.refresh();
+            root.launchAll(false, true);
+        }
     }
 
     FileView {
@@ -1529,19 +1662,28 @@ Singleton {
         printErrors: false
 
         onLoaded: {
+            let parsed = null;
             try {
-                const parsed = JSON.parse(text());
-                root.store = (parsed && typeof parsed === "object") ? parsed : ({});
+                parsed = JSON.parse(text());
             } catch (e) {
-                root.store = ({});
+                parsed = null;
             }
-            root.rebase();
-            root.loaded = true;
+            if (parsed && typeof parsed === "object" && parsed["__byLook__"]) {
+                root.books = parsed["__byLook__"];
+                root.legacy = null;
+            } else {
+                root.books = ({});
+                root.legacy = (parsed && typeof parsed === "object") ? parsed : ({});
+            }
+            root.fileIn = true;
+            root.adopt();
         }
 
         onLoadFailed: {
-            root.store = ({});
-            root.loaded = true;
+            root.books = ({});
+            root.legacy = ({});
+            root.fileIn = true;
+            root.adopt();
         }
     }
 
@@ -1550,17 +1692,23 @@ Singleton {
     function rebase(): void {
         let top = 0;
         try {
-            for (const k in root.store) {
-                const list = root.store[k];
-                if (!Array.isArray(list))
-                    continue;
-                for (let i = 0; i < list.length; i++) {
-                    const row = list[i];
-                    if (!row)
+            const all = [root.store];
+            for (const b in root.books)
+                if (b !== root.bookLook && root.books[b])
+                    all.push(root.books[b]);
+            for (let s = 0; s < all.length; s++) {
+                for (const k in all[s]) {
+                    const list = all[s][k];
+                    if (!Array.isArray(list))
                         continue;
-                    const n = parseInt(String(row.id ?? "").replace(/^i/, ""), 10);
-                    if (n > top)
-                        top = n;
+                    for (let i = 0; i < list.length; i++) {
+                        const row = list[i];
+                        if (!row)
+                            continue;
+                        const n = parseInt(String(row.id ?? "").replace(/^i/, ""), 10);
+                        if (n > top)
+                            top = n;
+                    }
                 }
             }
         } catch (e) {
