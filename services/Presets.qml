@@ -1989,10 +1989,19 @@ Singleton {
         if (next.length === root.custom.length)
             return false;
         root.custom = next;
-        if (root.applied === id)
+        if (root.applied === id) {
+            // you deleted the look you wear: what was pending is filed with
+            // it first, then Velvet's own setup and desk come back
+            Looks.lookLeaving();
+            Scenes.lookLeaving();
             root.applied = "";
+        }
         root.persistCustom();
         root.persist();
+        // a deleted look's memory goes with it
+        Looks.forgetLook(id);
+        Scenes.forgetLook(id);
+        LockLayout.forgetLook(id);
         return true;
     }
 

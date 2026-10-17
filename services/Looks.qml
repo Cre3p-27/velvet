@@ -381,6 +381,19 @@ Singleton {
     // to be saved goes to the look you are leaving (the settings are still
     // its own at this moment), the look's whole setup is kept as the one it
     // was left in, and nothing the new look writes is taken for your edit.
+    // A look that was deleted: its books go too (never the one worn).
+    function forgetLook(id: string): void {
+        if (!id || id === root.bookLook)
+            return;
+        const books = Object.assign({}, root.books);
+        const lasts = Object.assign({}, root.lasts);
+        delete books[id];
+        delete lasts[id];
+        root.books = books;
+        root.lasts = lasts;
+        root.persist();
+    }
+
     function lookLeaving(): void {
         if (root.bookLook === "")
             return;

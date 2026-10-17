@@ -1578,6 +1578,16 @@ Singleton {
         root.enterLook(root.look);
     }
 
+    // A look that was deleted: its book goes too (never the one worn).
+    function forgetLook(id: string): void {
+        if (!id || id === root.bookLook || root.books[id] === undefined)
+            return;
+        const books = Object.assign({}, root.books);
+        delete books[id];
+        root.books = books;
+        root.persist();
+    }
+
     function lookLeaving(): void {
         if (root.bookLook === "")
             return;
