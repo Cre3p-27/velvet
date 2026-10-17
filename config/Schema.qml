@@ -579,8 +579,8 @@ Singleton {
                     kind: "choice",
                     key: "velly.voiceEngine",
                     name: "STIMM-ENGINE",
-                    help: "Womit sie spricht. NATÜRLICH ist die menschliche Orpheus-Stimme (braucht die Grafikkarte, ~3 GB, spricht nicht während eines Vollbild-Spiels); PIPER ist schnell und läuft auf der CPU; ESPEAK-NG ist robotisch, aber immer da; CLOUD braucht einen Schlüssel; ANIMALESE sind nur Pieptöne; STILL schweigt. AUTO nimmt die beste, die gerade geht.",
-                    sub: "NATÜRLICH: ECHTE MENSCHLICHE STIMMEN (KARTOFFEL-ORPHEUS, GRAFIKKARTE) · AUTO NIMMT DIE BESTE, DIE GERADE GEHT",
+                    help: "Womit sie spricht. NATÜRLICH ist die menschliche Orpheus-Stimme, gestreamt: sie spricht schon, während der Satz noch entsteht (braucht die Grafikkarte, ~3 GB, spricht nicht während eines Vollbild-Spiels — dann übernimmt Piper); PIPER ist schnell und läuft auf der CPU; ESPEAK-NG ist robotisch, aber immer da; CLOUD braucht einen Schlüssel; ANIMALESE sind nur Pieptöne; STILL schweigt. AUTO nimmt die beste, die gerade geht.",
+                    sub: "NATÜRLICH: ECHTE MENSCHLICHE STIMMEN, GESTREAMT (KARTOFFEL-ORPHEUS, GRAFIKKARTE) · AUTO NIMMT DIE BESTE, DIE GERADE GEHT",
                     options: [
                         { value: "auto", label: "AUTO" },
                         { value: "natural", label: "NATÜRLICH" },

@@ -635,7 +635,8 @@ Singleton {
         readonly property bool watched: root.eager || Panels.windowMap
 
         running: true
-        interval: watched ? 500 : 5000
+        // under a fullscreen game nothing looks at the desk: a slower beat
+        interval: watched ? 500 : (Hypr.allCovered ? 20000 : 5000)
         repeat: true
         triggeredOnStart: true
         onTriggered: root.refresh()

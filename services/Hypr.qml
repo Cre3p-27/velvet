@@ -196,6 +196,21 @@ Singleton {
     readonly property var monitors: Hyprland.monitors?.values ?? []
     readonly property HyprlandWorkspace focusedWorkspace: Hyprland.focusedWorkspace
     readonly property HyprlandMonitor focusedMonitor: Hyprland.focusedMonitor
+
+    // Every screen shows a fullscreen window (a game, a video): the shell's
+    // own live visuals are all hidden under it, and they rest until one
+    // comes back (Spectrum, the wallpaper drift) — a game gets the CPU back.
+    readonly property bool allCovered: {
+        const mons = Hyprland.monitors?.values ?? [];
+        if (mons.length === 0)
+            return false;
+        for (let i = 0; i < mons.length; i++) {
+            const ws = mons[i].activeWorkspace;
+            if (!ws || ws.lastIpcObject?.hasfullscreen !== true)
+                return false;
+        }
+        return true;
+    }
     readonly property int activeWsId: focusedWorkspace?.id ?? 1
 
     // The ShellScreen the user is actually looking at — overlays follow this.
@@ -340,7 +355,7 @@ Singleton {
             const n = event.name;
             if (n.endsWith("v2"))
                 return;
-            if (n.includes("workspace") || n.includes("monitor") || n === "configreloaded")
+            if (n.includes("workspace") || n.includes("monitor") || n === "configreloaded" || n === "fullscreen" || n === "closewindow")
                 Hyprland.refreshWorkspaces();
             if (n.includes("window") || n.includes("mon") || n === "openwindow" || n === "closewindow")
                 Hyprland.refreshToplevels();

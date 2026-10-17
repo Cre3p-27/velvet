@@ -37,6 +37,10 @@ Singleton {
 
     property bool available: true    // false once the sidecar says cava is missing
     property bool live: false        // something was audible in the last few seconds
+    // Nobody can see it: a fullscreen window covers every screen, nothing is
+    // locked and the island is not up. The sidecar and the polling stop and
+    // start again the moment something of the shell can be seen.
+    readonly property bool resting: Hypr.allCovered && !Locker.locked && Panels.islandScreen === "" && !Velly.active && !root.lockPreview
     property real level: 0           // overall loudness 0..1, eased down the pipe
     property var bands: []           // eased bands, 0..1
 
@@ -96,7 +100,7 @@ Singleton {
     Process {
         id: sidecar
 
-        running: root.enabled
+        running: root.enabled && !root.resting
         command: ["python3", root.script]
     }
 
@@ -105,7 +109,7 @@ Singleton {
     Timer {
         id: poll
 
-        running: root.enabled
+        running: root.enabled && !root.resting
         interval: root.live ? 33 : 500
         repeat: true
         onTriggered: file.reload()

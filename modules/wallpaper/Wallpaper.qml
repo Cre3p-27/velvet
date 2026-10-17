@@ -1056,7 +1056,7 @@ PanelWindow {
 
         interval: 250
         repeat: true
-        running: Config.wallpaper.kenBurns && root.builtin && !Locker.locked && !(Panels.wheel || Panels.windowMap || Panels.islandMapOpen)
+        running: Config.wallpaper.kenBurns && root.builtin && !Locker.locked && !Hypr.allCovered && !(Panels.wheel || Panels.windowMap || Panels.islandMapOpen)
         onTriggered: root.kbT = (root.kbT + 0.25) % 180
     }
 

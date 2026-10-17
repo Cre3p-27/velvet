@@ -502,6 +502,7 @@ def natural_serve() -> int:
                 break
             if not up and natural_health(0.5):
                 up = True
+                natural_warm()
                 write_json_file(NATURAL_STATE, {"at": int(time.time() * 1000), "state": "up",
                                                 "keeper": os.getpid(), "pid": proc.pid, "port": NATURAL_PORT})
             try:
@@ -523,6 +524,22 @@ def natural_serve() -> int:
             pass
     write_json_file(NATURAL_STATE, {"at": int(time.time() * 1000), "state": "down", "keeper": 0})
     return 0
+
+
+def natural_warm() -> None:
+    """One tiny sentence right after loading: the GPU builds its kernels now,
+    so the first real sentence is as quick as every other."""
+    payload = {"prompt": [128259, 128000, "Sophie: Hallo.", 128009, 128260, 128261, 128257],
+               "n_predict": 28, "temperature": 0.6, "top_p": 0.95, "top_k": 50, "stream": False,
+               "cache_prompt": False}
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{NATURAL_PORT}/completion",
+                                     data=json.dumps(payload).encode(), method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except Exception:                                          # noqa: BLE001
+        pass
 
 
 def write_json_file(path: str, payload) -> None:
@@ -616,69 +633,199 @@ class Natural(Engine):
             cls._session = onnxruntime.InferenceSession(NATURAL_DECODER, opts, providers=["CPUExecutionProvider"])
         return cls._session
 
-    def codes(self, text: str) -> list:
-        # About 84 codes a second of speech, and German runs ~13 characters a
-        # second: twice that is room enough, and a runaway stops there.
-        n_predict = int(min(3000, 160 + len(text) * 13))
+    # ── streamed: the talker writes, the codec speaks, at the same time ──
+    #  The talker (llama-server) streams one SNAC code per event; every few
+    #  frames a small window is decoded — two frames of context each side,
+    #  which is as faithful as decoding the whole sentence (the decoder adds
+    #  its own noise: two full decodes of the same codes differ by 18 dB SNR,
+    #  a window by the same) — and handed on while the talker goes on.
+    #  The sentence ends at the talker's end-of-speech: the connection is
+    #  closed there, which stops the server (before, it generated on to
+    #  n_predict and the reply waited for all of it). Or at the first real
+    #  pause once the sentence must be over: sometimes the talker does not
+    #  stop and babbles on ("Ihr kann in Wiener Formelkirchen" after "Hallo,
+    #  ich bin Velly." — measured), and that babble used to be spoken.
+    @staticmethod
+    def expected_s(text: str) -> float:
+        """How long a sentence this long takes to say (German, Orpheus pace)."""
+        # measured: 21 characters in ~1.5 s, 86 in 5.4 s
+        return max(0.7, len(text) / 14.0)
+
+    def stream(self, text: str, emit, halt=None) -> bool:
+        if not self.ok or not self.ready():
+            return False
+        natural_touch()
+        import numpy                                           # noqa: PLC0415
+        expected = self.expected_s(text)
         payload = {
             # [start of human] BOS "Name: text" [eot] [end of human] [start of ai] [start of speech]
             "prompt": [128259, 128000, f"{self.voice}: {text}", 128009, 128260, 128261, 128257],
-            "n_predict": n_predict, "temperature": 0.6, "top_p": 0.95, "top_k": 50, "min_p": 0.0,
-            "repeat_penalty": 1.1, "return_tokens": True, "stream": False, "cache_prompt": False,
+            "n_predict": int(min(3000, NAT_CODES_S * (expected * 1.8 + 1.2))),
+            "temperature": 0.6, "top_p": 0.95, "top_k": 50, "min_p": 0.0,
+            "repeat_penalty": 1.1, "return_tokens": True, "stream": True, "cache_prompt": False,
+            # a nudge towards end-of-speech: where the sentence is over it is
+            # likely already, and the nudge makes the talker take it instead
+            # of starting a babble; mid-sentence it is far too unlikely to matter
+            "logit_bias": [[128258, 2.0]],
         }
         req = urllib.request.Request(f"http://127.0.0.1:{NATURAL_PORT}/completion",
                                      data=json.dumps(payload).encode(), method="POST",
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
-        out = []
-        for tok in data.get("tokens") or []:
-            if tok == 128258:                                  # end of speech
-                break
-            if tok >= 128266:
-                out.append(tok - 128266)
-        return out
-
-    def synth(self, text: str, out_wav: str) -> bool:
-        if not self.ok or not self.ready():
-            return False
-        natural_touch()
         try:
-            raw = self.codes(text)
-        except Exception as exc:                               # noqa: BLE001
-            self.note = f"natürliche Stimme: {exc}"[:160]
-            return False
-        frames = []
-        for f in range(len(raw) // 7):
-            chunk = [raw[f * 7 + i] - i * 4096 for i in range(7)]
-            if all(0 <= c < 4096 for c in chunk):
-                frames.append(chunk)
-        if len(frames) < 3:
-            self.note = "die natürliche Stimme blieb stumm"
-            return False
-        import numpy                                           # noqa: PLC0415
-        c0 = numpy.array([[fr[0] for fr in frames]], dtype=numpy.int64)
-        c1 = numpy.array([[v for fr in frames for v in (fr[1], fr[4])]], dtype=numpy.int64)
-        c2 = numpy.array([[v for fr in frames for v in (fr[2], fr[3], fr[5], fr[6])]], dtype=numpy.int64)
-        try:
-            audio = self.decoder().run(None, {"audio_codes.0": c0, "audio_codes.1": c1, "audio_codes.2": c2})[0]
+            dec = self.decoder()
         except Exception as exc:                               # noqa: BLE001
             self.note = f"SNAC: {exc}"[:160]
             return False
-        pcm = numpy.clip(audio.reshape(-1), -1.0, 1.0)
-        # A breath of silence each side, so sentences do not collide.
-        pad = numpy.zeros(int(24000 * 0.06), dtype=numpy.float32)
-        pcm = numpy.concatenate([pad, pcm.astype(numpy.float32), pad])
-        if abs(self.speed - 1.0) > 0.02:
-            # Tempo without pitch change is a job for the player; here only
-            # the pace between sentences follows the dial (see main).
-            pass
+        frames = []
+        raw = []
+        st = {"done": 0, "tail": None, "voiced": False, "quiet": 0, "lead": 0, "out": 0, "cut": False,
+              "sent": False, "t0": time.time()}
+
+        def decode(a: int, b: int):
+            fr = frames[a:b]
+            c0 = numpy.array([[f[0] for f in fr]], dtype=numpy.int64)
+            c1 = numpy.array([[v for f in fr for v in (f[1], f[4])]], dtype=numpy.int64)
+            c2 = numpy.array([[v for f in fr for v in (f[2], f[3], f[5], f[6])]], dtype=numpy.int64)
+            return dec.run(None, {"audio_codes.0": c0, "audio_codes.1": c1, "audio_codes.2": c2})[0].reshape(-1)
+
+        def flush(final: bool) -> None:
+            while not st["cut"]:
+                done = st["done"]
+                avail = len(frames)
+                # the first window is small (the first sound comes sooner),
+                # the rest bigger (fewer decoder calls)
+                n, right = (2, 1) if done == 0 else (4, 2)
+                if final:
+                    if done >= avail:
+                        return
+                    n, right = avail - done, 0
+                elif avail - done < n + right:
+                    return
+                a = max(0, done - 2)
+                y = decode(a, done + n + right)
+                at = (done - a) * NAT_SPF
+                seg = numpy.array(y[at:at + n * NAT_SPF], dtype=numpy.float32)
+                extra = y[at + n * NAT_SPF:at + n * NAT_SPF + NAT_XF]
+                tail = st["tail"]
+                if tail is not None and seg.size >= tail.size:
+                    ramp = numpy.linspace(0.0, 1.0, tail.size, dtype=numpy.float32)
+                    seg[:tail.size] = tail * (1.0 - ramp) + seg[:tail.size] * ramp
+                st["tail"] = numpy.array(extra, dtype=numpy.float32) if extra.size == NAT_XF else None
+                st["done"] = done + n
+                keep = []
+                for f in range(n):
+                    piece = seg[f * NAT_SPF:(f + 1) * NAT_SPF]
+                    rms = float(numpy.sqrt(numpy.mean(piece * piece))) if piece.size else 0.0
+                    if not st["voiced"]:
+                        # the silence the talker starts with is not said
+                        if rms < NAT_SILENT and st["lead"] < 8:
+                            st["lead"] += 1
+                            continue
+                        st["voiced"] = True
+                    st["quiet"] = st["quiet"] + 1 if rms < NAT_SILENT else 0
+                    keep.append(piece)
+                    said = (st["out"] + len(keep)) * NAT_SPF / NAT_RATE
+                    # a comma breathes for ~0.15 s; the pause before a babble
+                    # was ~0.25 s, and it comes once the sentence is said
+                    # and however it goes on: no sentence runs far past its length
+                    if (st["quiet"] >= 3 and said >= expected * 0.72) or (st["quiet"] >= 2 and said >= expected * 1.05) \
+                            or (st["quiet"] >= 1 and said >= expected * 1.2) or said >= expected * 1.45 + 0.6:
+                        st["cut"] = True
+                        break
+                if keep:
+                    pcm = numpy.concatenate(keep)
+                    if not st["sent"]:
+                        k = min(pcm.size, int(NAT_RATE * 0.006))
+                        pcm[:k] *= numpy.linspace(0.0, 1.0, k, dtype=numpy.float32)
+                    if st["cut"] or final:
+                        k = min(pcm.size, int(NAT_RATE * 0.012))
+                        pcm[pcm.size - k:] *= numpy.linspace(1.0, 0.0, k, dtype=numpy.float32)
+                    st["out"] += len(keep)
+                    if not st["sent"]:
+                        st["first"] = time.time() - st["t0"]
+                    st["sent"] = True
+                    emit(soft_limit(pcm))
+                if final:
+                    return
+
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                ended = False
+                for line in resp:
+                    if halt is not None and halt.is_set():
+                        return st["sent"]
+                    if not line.startswith(b"data:"):
+                        continue
+                    try:
+                        ev = json.loads(line[5:])
+                    except ValueError:
+                        continue
+                    for tok in ev.get("tokens") or []:
+                        if tok >= 128266:
+                            raw.append(tok - 128266)
+                            if len(raw) == 7:
+                                chunk = [raw[i] - i * 4096 for i in range(7)]
+                                if all(0 <= c < 4096 for c in chunk):
+                                    frames.append(chunk)
+                                raw.clear()
+                        elif tok == 128258 or frames:
+                            # end of speech (or the talker left speech for
+                            # its next turn): this sentence is complete
+                            ended = True
+                            break
+                    if ended or ev.get("stop"):
+                        break
+                    flush(False)
+                    if st["cut"]:
+                        break
+                # leaving the `with` closes the connection: the server stops
+        except Exception as exc:                               # noqa: BLE001
+            if not st["sent"]:
+                self.note = f"natürliche Stimme: {exc}"[:160]
+                return False
+        if not st["cut"]:
+            flush(True)
+        if not st["sent"]:
+            self.note = "die natürliche Stimme blieb stumm"
+        if os.environ.get("VELLY_VOICE_DEBUG") == "1":
+            log(f"natural: {len(frames)} frames, said {st['out'] * NAT_SPF / NAT_RATE:.2f}s of ~{expected:.2f}s, "
+                f"{'cut at a pause/limit' if st['cut'] else 'end of speech'}, first sound after "
+                f"{st.get('first', -1):.2f}s — {text[:40]!r}")
+        return st["sent"]
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        """The same voice into a file (the phrase cache, the selftest)."""
+        chunks = []
+        if not self.stream(text, chunks.append):
+            return False
+        import numpy                                           # noqa: PLC0415
+        pad = numpy.zeros(int(NAT_RATE * 0.06), dtype=numpy.float32)
+        pcm = numpy.concatenate([pad] + chunks + [pad])
         with wave.open(out_wav, "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
-            w.setframerate(24000)
-            w.writeframes((pcm * 32000).astype(numpy.int16).tobytes())
+            w.setframerate(NAT_RATE)
+            w.writeframes((numpy.clip(pcm, -1.0, 1.0) * 32767).astype(numpy.int16).tobytes())
         return os.path.getsize(out_wav) > 2000
+
+
+# the natural voice's audio: SNAC 24 kHz, 2048 samples (7 codes) a frame
+NAT_RATE = 24000
+NAT_SPF = 2048
+NAT_CODES_S = 84            # codes per second of speech
+NAT_XF = 256                # crossfade between two decoded windows
+NAT_SILENT = 0.012          # a frame this quiet is a pause
+
+
+def soft_limit(x):
+    """Peaks above 0.8 bend instead of clipping (Piper's raw output hit 1.0)."""
+    import numpy                                               # noqa: PLC0415
+    a = numpy.abs(x)
+    over = a > 0.8
+    if over.any():
+        x = x.copy()
+        x[over] = numpy.sign(x[over]) * (0.8 + 0.19 * numpy.tanh((a[over] - 0.8) / 0.19))
+    return x
 
 
 class Espeak(Engine):
@@ -839,6 +986,9 @@ ABBREV_DE = [
     (r"\bbzw\.", "beziehungsweise"), (r"\busw\.", "und so weiter"), (r"\bca\.", "circa"),
     (r"\bggf\.", "gegebenenfalls"), (r"\bevtl\.", "eventuell"), (r"\binkl\.", "inklusive"),
     (r"\bNr\.", "Nummer"), (r"\bMin\.", "Minuten"), (r"\bSek\.", "Sekunden"), (r"\bStd\.", "Stunden"),
+    # letters the talkers read as a word ("WLAN" came out as "Villa")
+    (r"\bWLAN\b", "W-Lan"), (r"\bWiFi\b|\bWi-Fi\b", "Wai-Fai"), (r"\bUSB\b", "U S B"), (r"\bPC\b", "P C"),
+    (r"\bGPU\b", "G P U"), (r"\bCPU\b", "C P U"), (r"\bKI\b", "K I"),
 ]
 UNITS_DE = [
     (r"(\d)\s*°\s*C\b", r"\1 Grad"), (r"(\d)\s*°", r"\1 Grad"), (r"(\d)\s*%", r"\1 Prozent"),
@@ -1148,10 +1298,13 @@ def follow_answer(turn: int, push, halt) -> None:
         time.sleep(0.04)
 
 
-def speak(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
+def speak(cfg, ai, engine, chunks=None, follow_turn=None, streamed=True) -> int:
     """Make and play the sentences in order: the first one plays while the
     next is still being made. `chunks` is the whole answer; with
-    `follow_turn` the sentences arrive while the brain is still writing."""
+    `follow_turn` the sentences arrive while the brain is still writing.
+    The natural voice is streamed (speak_stream); the others make files."""
+    if streamed and engine.name == "natural" and os.environ.get("VELLY_VOICE_FILES") != "1":
+        return speak_stream(cfg, ai, engine, chunks, follow_turn)
     workdir = tempfile.mkdtemp(prefix="velvet-voice-")
     began = time.time()
     queue = []
@@ -1320,6 +1473,321 @@ def speak(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
     return 0
 
 
+# ── the natural voice, spoken while it is made ───────────────────────────
+class RawPlayer:
+    """ONE player for the whole answer, fed raw 16-bit mono PCM on stdin, so
+    nothing waits for a file and no sentence starts a player of its own.
+    `pos()` is where the listener is: the audio handed over, minus what is
+    still queued ahead (a clock that also survives an underrun)."""
+    LATENCY = 0.12                                         # pw-play's own, roughly
+
+    def __init__(self, rate: int, volume: float):
+        self.rate = rate
+        self.total = 0
+        self.play_end = 0.0
+        self.lock = threading.Lock()
+        self.levels = []                                   # rms per LEVEL_STEP samples
+        self.q = []
+        self.cond = threading.Condition()
+        self.closed = False
+        cmd = None
+        sink = os.environ.get("VELLY_VOICE_SINK") or ""
+        if sink:
+            # tests: the stream goes into a file, never to the speakers
+            cmd = ["dd", f"of={sink}", "status=none"]
+        elif which("pw-play"):
+            cmd = ["pw-play", "--raw", "--rate", str(rate), "--channels", "1", "--format", "s16",
+                   f"--volume={volume:.2f}", "-"]
+        elif which("paplay"):
+            cmd = ["paplay", "--raw", f"--rate={rate}", "--channels=1", "--format=s16le",
+                   f"--volume={int(volume * 65536)}"]
+        elif which("aplay"):
+            cmd = ["aplay", "-q", "-t", "raw", "-f", "S16_LE", "-r", str(rate), "-c", "1"]
+        self.proc = None
+        if cmd:
+            try:
+                self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                             stderr=subprocess.DEVNULL)
+            except OSError:
+                self.proc = None
+        self.ok = self.proc is not None
+        if self.ok:
+            threading.Thread(target=self._writer, daemon=True).start()
+
+    LEVEL_STEP = 1000
+
+    def write(self, pcm) -> None:
+        import numpy                                           # noqa: PLC0415
+        n = int(pcm.size)
+        if n == 0 or not self.ok:
+            return
+        step = self.LEVEL_STEP
+        for i in range(0, n, step):
+            part = pcm[i:i + step]
+            self.levels.append(float(numpy.sqrt(numpy.mean(part * part))))
+        now = time.monotonic()
+        with self.lock:
+            if self.total == 0:
+                self.play_end = now + self.LATENCY
+            self.play_end = max(self.play_end, now) + n / self.rate
+            self.total += n
+        data = (numpy.clip(pcm, -1.0, 1.0) * 32767).astype(numpy.int16).tobytes()
+        with self.cond:
+            self.q.append(data)
+            self.cond.notify()
+
+    def _writer(self) -> None:
+        while True:
+            with self.cond:
+                while not self.q and not self.closed:
+                    self.cond.wait(0.2)
+                if not self.q and self.closed:
+                    break
+                data = self.q.pop(0)
+            try:
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+            except (OSError, ValueError):
+                break
+        try:
+            self.proc.stdin.close()
+        except (OSError, ValueError):
+            pass
+
+    def pos(self) -> int:
+        with self.lock:
+            ahead = max(0.0, self.play_end - time.monotonic())
+            return max(0, int(self.total - ahead * self.rate))
+
+    def ahead(self) -> float:
+        with self.lock:
+            return max(0.0, self.play_end - time.monotonic())
+
+    def level(self, at: int) -> float:
+        i = at // self.LEVEL_STEP
+        return self.levels[i] if 0 <= i < len(self.levels) else 0.0
+
+    def finish(self, wait: float) -> None:
+        with self.cond:
+            self.closed = True
+            self.cond.notify()
+        if self.proc is not None:
+            try:
+                self.proc.wait(timeout=wait)
+            except subprocess.TimeoutExpired:
+                self.kill()
+
+    def kill(self) -> None:
+        with self.cond:
+            self.closed = True
+            self.q.clear()
+            self.cond.notify()
+        if self.proc is not None and self.proc.poll() is None:
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
+
+
+def wav_pcm(path: str, rate: int):
+    """A mono 16-bit wav as float32 at `rate` (Piper speaks 22.05 kHz)."""
+    import numpy                                               # noqa: PLC0415
+    try:
+        with wave.open(path, "rb") as w:
+            src, chans, width = w.getframerate(), w.getnchannels(), w.getsampwidth()
+            raw = w.readframes(w.getnframes())
+    except (OSError, wave.Error):
+        return None
+    if width != 2:
+        return None
+    pcm = numpy.frombuffer(raw, dtype=numpy.int16).astype(numpy.float32) / 32768.0
+    if chans > 1:
+        pcm = pcm[::chans]
+    if src != rate and pcm.size > 1:
+        n = int(round(pcm.size * rate / src))
+        pcm = numpy.interp(numpy.linspace(0, pcm.size - 1, n), numpy.arange(pcm.size), pcm).astype(numpy.float32)
+    return pcm
+
+
+def speak_stream(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
+    """The natural voice, streamed: the first sound comes a fraction of a
+    second after the first sentence is there (it used to wait for the whole
+    sentence to be generated — and then for the babble after it). The next
+    sentence is made while this one plays; all of it goes through one player."""
+    import numpy                                               # noqa: PLC0415
+    began = time.time()
+    volume = max(0.0, min(1.5, float(cfg.get("voiceVolume") or 0.9)))
+    player = RawPlayer(NAT_RATE, volume)
+    if not player.ok:
+        return speak(cfg, ai, engine, chunks, follow_turn, streamed=False)
+    queue = []
+    cond = threading.Condition()
+    fed = {"done": False, "made": False}
+    halt = threading.Event()
+    used = {"engine": engine.name, "note": ""}
+    marks = []                                                 # (sample offset, sentence)
+    spare = {"piper": None}
+    workdir = tempfile.mkdtemp(prefix="velvet-voice-")
+
+    def push(chunk: str) -> None:
+        with cond:
+            queue.append(chunk)
+            cond.notify_all()
+
+    def feeder() -> None:
+        try:
+            if follow_turn is None:
+                for chunk in chunks or []:
+                    push(chunk)
+            else:
+                follow_answer(follow_turn, push, halt)
+        finally:
+            with cond:
+                fed["done"] = True
+                cond.notify_all()
+
+    def produce() -> None:
+        gap = numpy.zeros(int(NAT_RATE * 0.16), dtype=numpy.float32)
+        i = 0
+        try:
+            while not halt.is_set():
+                with cond:
+                    while i >= len(queue) and not fed["done"] and not halt.is_set():
+                        cond.wait(0.1)
+                    if i >= len(queue) or halt.is_set():
+                        return
+                    chunk = queue[i]
+                i += 1
+                got = []
+
+                def emit(pcm, sentence=chunk, got=got) -> None:
+                    if not got:
+                        marks.append((player.total, sentence))
+                    got.append(pcm)
+                    player.write(pcm)
+
+                ok = False
+                # only the short sayings are kept ("Erledigt!", the fillers):
+                # a whole sentence kept is a sentence frozen, slips and all
+                short = len(chunk) <= 32
+                cached = cache_path(engine, chunk) if short else ""
+                if cached and os.path.isfile(cached) and os.path.getsize(cached) > 2000:
+                    pcm = wav_pcm(cached, NAT_RATE)
+                    if pcm is not None and pcm.size:
+                        emit(pcm)
+                        ok = True
+                if not ok:
+                    ok = engine.stream(chunk, emit, halt)
+                    if ok and short and got:
+                        save_phrase(cached, numpy.concatenate(got))
+                if not ok and not got and not halt.is_set():
+                    # the natural voice could not speak this one (the server
+                    # went away, no VRAM): Piper says it, in the same stream
+                    if spare["piper"] is None:
+                        spare["piper"] = Piper(stand_in_cfg(cfg), ai)
+                    sp = spare["piper"]
+                    path = os.path.join(workdir, f"say{i}.wav")
+                    if sp.ok and cached_synth(sp, chunk, path):
+                        pcm = wav_pcm(path, NAT_RATE)
+                        if pcm is not None:
+                            emit(pcm)
+                            used["note"] = f"{engine.note or 'natürliche Stimme aus'} — Piper spricht"
+                            if not marks[:-1]:
+                                used["engine"] = "piper"
+                if got:
+                    fed["made"] = True
+                    player.write(gap)
+        finally:
+            with cond:
+                fed["producing_done"] = True
+                cond.notify_all()
+
+    threading.Thread(target=feeder, daemon=True).start()
+    threading.Thread(target=produce, daemon=True).start()
+
+    try:
+        with open(PID_PATH, "w") as fh:
+            fh.write(str(os.getpid()))
+    except OSError:
+        pass
+
+    speaking = True
+
+    def on_signal(_sig, _frm):
+        nonlocal speaking
+        speaking = False
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    said = ""
+    try:
+        while speaking:
+            with cond:
+                producing = not fed.get("producing_done")
+            pos = player.pos()
+            if not producing and pos >= player.total:
+                break
+            heard = [m for m in marks if m[0] <= pos]
+            said = " ".join(m[1] for m in heard)
+            sentence = heard[-1][1] if heard else ""
+            # the mouth: the loudness of the last 32 steps the listener heard
+            step = RawPlayer.LEVEL_STEP
+            env = [round(min(1.0, player.level(pos - k * step) * 4.2), 3) for k in range(31, -1, -1)]
+            total = max(1, player.total)
+            write_state({
+                "at": int(time.time() * 1000), "engine": used["engine"], "ok": True,
+                "speaking": 1 if heard else 0, "text": said[:400], "sentence": sentence[:300],
+                "duration": round(total / NAT_RATE, 3), "progress": round(min(1.0, pos / total), 3),
+                "elapsed": round(pos / NAT_RATE, 3), "envelope": env, "error": "", "streamed": 1,
+            })
+            time.sleep(1.0 / 24.0)
+    finally:
+        halt.set()
+        if speaking:
+            player.finish(wait=2.0)
+        else:
+            player.kill()
+        write_state({"at": int(time.time() * 1000), "engine": used["engine"], "ok": True, "speaking": 0,
+                     "text": said[:400], "duration": round(player.total / NAT_RATE, 3), "progress": 1,
+                     "envelope": [], "error": "", "note": used["note"]})
+        try:
+            with open(PID_PATH, "r") as fh:
+                mine = int((fh.read() or "0").strip() or 0) == os.getpid()
+        except (OSError, ValueError):
+            mine = False
+        if mine:
+            try:
+                os.unlink(PID_PATH)
+            except OSError:
+                pass
+        shutil.rmtree(workdir, ignore_errors=True)
+    first = marks[0][0] if marks else 0
+    log(f"natural (streamed): {player.total / NAT_RATE:.2f}s in {(time.time() - began):.2f}s, {len(marks)} sentence(s)"
+        + (" (followed)" if follow_turn is not None else "") + (f" — {used['note']}" if used["note"] else ""))
+    if not marks and follow_turn is None:
+        return 1
+    return 0 if first >= 0 else 1
+
+
+def save_phrase(path: str, pcm) -> None:
+    """A short phrase the natural voice just said, kept for next time."""
+    import numpy                                               # noqa: PLC0415
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with wave.open(tmp, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(NAT_RATE)
+            w.writeframes((numpy.clip(pcm, -1.0, 1.0) * 32767).astype(numpy.int16).tobytes())
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 # ── short phrases, made once, said instantly ────────────────────────────
 CACHE_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(HOME, ".cache"), "velvet", "voice")
 # What a person says while thinking — short, varied, never the same twice in
@@ -1330,7 +1798,7 @@ FILLERS = ("Hm, Moment.", "Einen Augenblick.", "Lass mich kurz schauen.", "Okay,
 
 def voice_key(engine) -> str:
     who = getattr(engine, "voice", "") or os.path.basename(getattr(engine, "model", "") or "")
-    return re.sub(r"[^\w.-]+", "_", f"{engine.name}-{who}-p2") or "voice"
+    return re.sub(r"[^\w.-]+", "_", f"{engine.name}-{who}-p3") or "voice"
 
 
 def cache_path(engine, text: str) -> str:
@@ -1514,6 +1982,40 @@ def selftest(cfg, ai) -> int:
         problems.append("natural voice claims ok without its files")
     if len(set(FILLERS)) != len(FILLERS):
         problems.append("duplicate fillers")
+    # the streamed path without a server: the limiter, the resampler and the
+    # one-player stream (into a file — never the speakers)
+    try:
+        import numpy                                           # noqa: PLC0415
+        lim = soft_limit(numpy.array([0.1, -0.5, 0.95, -3.0], dtype=numpy.float32))
+        if abs(float(lim[0]) - 0.1) > 1e-6 or float(numpy.max(numpy.abs(lim))) >= 1.0:
+            problems.append(f"soft_limit: {lim}")
+        with tempfile.TemporaryDirectory(prefix="velvet-voice-") as tmp:
+            src = os.path.join(tmp, "p.wav")
+            with wave.open(src, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(22050)
+                w.writeframes(bytes(22050 * 2))
+            pcm = wav_pcm(src, NAT_RATE)
+            if pcm is None or abs(pcm.size - NAT_RATE) > 2:
+                problems.append(f"wav_pcm resample: {None if pcm is None else pcm.size}")
+            sink = os.path.join(tmp, "sink.raw")
+            old_sink = os.environ.get("VELLY_VOICE_SINK")
+            os.environ["VELLY_VOICE_SINK"] = sink
+            try:
+                pl = RawPlayer(NAT_RATE, 0.0)
+                pl.write(numpy.zeros(4800, dtype=numpy.float32))
+                pl.write(numpy.zeros(2400, dtype=numpy.float32))
+                pl.finish(wait=3.0)
+            finally:
+                if old_sink is None:
+                    os.environ.pop("VELLY_VOICE_SINK", None)
+                else:
+                    os.environ["VELLY_VOICE_SINK"] = old_sink
+            if not os.path.isfile(sink) or os.path.getsize(sink) != 7200 * 2 or pl.total != 7200:
+                problems.append(f"raw player: {os.path.getsize(sink) if os.path.isfile(sink) else 'no file'} bytes")
+    except ImportError:
+        pass
     # reading along: a finished sentence goes out while the rest is still
     # being written, and the tail follows when the answer is complete
     global AI_STATE_PATH

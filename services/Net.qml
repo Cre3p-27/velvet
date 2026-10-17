@@ -209,7 +209,8 @@ Singleton {
 
     Timer {
         running: true
-        interval: 5000
+        // a fullscreen game hides the bar: four nmcli calls every 20 s, not 5
+        interval: Hypr.allCovered ? 20000 : 5000
         repeat: true
         triggeredOnStart: true
         onTriggered: {
