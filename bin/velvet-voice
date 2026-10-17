@@ -595,6 +595,8 @@ class Natural(Engine):
     writes SNAC codes, seven per 12 ms frame; the codec renders 24 kHz."""
     name = "natural"
     _session = None
+    temperature = 0.6
+    seed = -1                                                  # -1: a new one every sentence
 
     def __init__(self, cfg, ai):
         wanted = str(cfg.get("naturalVoice") or "Sophie").strip().title()
@@ -646,14 +648,37 @@ class Natural(Engine):
         self.note = "die natürliche Stimme kam nicht hoch"
         return False
 
+    _lock = threading.Lock()
+
     @classmethod
     def decoder(cls):
-        if cls._session is None:
-            import onnxruntime                                 # noqa: PLC0415
-            opts = onnxruntime.SessionOptions()
-            opts.intra_op_num_threads = max(2, (os.cpu_count() or 4) // 2)
-            cls._session = onnxruntime.InferenceSession(NATURAL_DECODER, opts, providers=["CPUExecutionProvider"])
-        return cls._session
+        # ~0.2 s to build (measured): `prewarm()` starts it at process start,
+        # and a second caller waits for that one instead of building twice
+        with cls._lock:
+            if cls._session is None:
+                import onnxruntime                             # noqa: PLC0415
+                opts = onnxruntime.SessionOptions()
+                opts.intra_op_num_threads = max(2, (os.cpu_count() or 4) // 2)
+                cls._session = onnxruntime.InferenceSession(NATURAL_DECODER, opts, providers=["CPUExecutionProvider"])
+            return cls._session
+
+    @classmethod
+    def prewarm(cls) -> None:
+        """Build the decoder in the background while everything else starts.
+        The imports happen HERE, on the calling thread: two threads importing
+        numpy at once dead-locked the import system (measured)."""
+        try:
+            import numpy                                       # noqa: F401, PLC0415
+            import onnxruntime                                 # noqa: F401, PLC0415
+        except ImportError:
+            return
+
+        def build():
+            try:
+                cls.decoder()
+            except Exception:                                  # noqa: BLE001
+                pass
+        threading.Thread(target=build, daemon=True).start()
 
     # ── streamed: the talker writes, the codec speaks, at the same time ──
     #  The talker (llama-server) streams one SNAC code per event; every few
@@ -670,8 +695,9 @@ class Natural(Engine):
     @staticmethod
     def expected_s(text: str) -> float:
         """How long a sentence this long takes to say (German, Orpheus pace)."""
-        # measured: 21 characters in ~1.5 s, 86 in 5.4 s
-        return max(0.7, len(text) / 14.0)
+        # measured takes: 21 characters 1.5–1.75 s, 49 in 2.3–2.6 s, 56 in
+        # 2.25–2.6 s, 86 in 4.4–5.4 s — longer sentences run faster
+        return max(0.7, 0.5 + len(text) / 19.0)
 
     def stream(self, text: str, emit, halt=None) -> bool:
         if not self.ok or not self.ready():
@@ -683,8 +709,9 @@ class Natural(Engine):
             # [start of human] BOS "Name: text" [eot] [end of human] [start of ai] [start of speech]
             "prompt": [128259, 128000, f"{self.voice}: {text}", 128009, 128260, 128261, 128257],
             "n_predict": int(min(3000, NAT_CODES_S * (expected * 1.8 + 1.2))),
-            "temperature": 0.6, "top_p": 0.95, "top_k": 50, "min_p": 0.0,
+            "temperature": self.temperature, "top_p": 0.95, "top_k": 50, "min_p": 0.0,
             "repeat_penalty": 1.1, "return_tokens": True, "stream": True, "cache_prompt": False,
+            "seed": self.seed,
             # a nudge towards end-of-speech: where the sentence is over it is
             # likely already, and the nudge makes the talker take it instead
             # of starting a babble; mid-sentence it is far too unlikely to matter
@@ -693,17 +720,16 @@ class Natural(Engine):
         req = urllib.request.Request(f"http://127.0.0.1:{NATURAL_PORT}/completion",
                                      data=json.dumps(payload).encode(), method="POST",
                                      headers={"Content-Type": "application/json"})
-        try:
-            dec = self.decoder()
-        except Exception as exc:                               # noqa: BLE001
-            self.note = f"SNAC: {exc}"[:160]
-            return False
+        dec = None
         frames = []
         raw = []
         st = {"done": 0, "tail": None, "voiced": False, "quiet": 0, "lead": 0, "out": 0, "cut": False,
               "sent": False, "t0": time.time()}
 
         def decode(a: int, b: int):
+            nonlocal dec
+            if dec is None:
+                dec = self.decoder()
             fr = frames[a:b]
             c0 = numpy.array([[f[0] for f in fr]], dtype=numpy.int64)
             c1 = numpy.array([[v for f in fr for v in (f[1], f[4])]], dtype=numpy.int64)
@@ -771,6 +797,8 @@ class Natural(Engine):
                     return
 
         try:
+            # the talker starts at once; the decoder (prewarmed, or built now)
+            # is needed only when the first window is complete
             with urllib.request.urlopen(req, timeout=30) as resp:
                 ended = False
                 for line in resp:
@@ -806,7 +834,12 @@ class Natural(Engine):
                 self.note = f"natürliche Stimme: {exc}"[:160]
                 return False
         if not st["cut"]:
-            flush(True)
+            try:
+                flush(True)
+            except Exception as exc:                           # noqa: BLE001
+                if not st["sent"]:
+                    self.note = f"SNAC: {exc}"[:160]
+                    return False
         if not st["sent"]:
             self.note = "die natürliche Stimme blieb stumm"
         if os.environ.get("VELLY_VOICE_DEBUG") == "1":
@@ -1275,6 +1308,8 @@ def main() -> int:
     # fetched now, or "auto" would quietly fall through to the blips.
     Piper(cfg, ai).ensure()
     engine = choose_engine(cfg, ai)
+    if engine.ok and engine.name == "natural":
+        Natural.prewarm()
     if not engine.ok:
         write_state({"at": int(time.time() * 1000), "engine": engine.name, "ok": False, "speaking": 0,
                      "text": text, "duration": 0, "progress": 0, "envelope": [],
