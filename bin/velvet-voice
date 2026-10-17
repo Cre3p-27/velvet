@@ -454,6 +454,24 @@ def brain_reserve_mb() -> int:
         return 0
 
 
+def wait_for_brain(seconds: float) -> bool:
+    """Wait until the brain's server answers (it is loading), or give up when
+    she went back to sleep meanwhile."""
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8137/health", timeout=0.5) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:                                      # noqa: BLE001
+            pass
+        session = read_json(os.path.join(CONF_DIR, "ai-session.json"), {})
+        if not (isinstance(session, dict) and session.get("active")):
+            return False
+        time.sleep(0.5)
+    return False
+
+
 def natural_fits() -> tuple:
     vram = free_vram_mb()
     need = natural_need_mb() + brain_reserve_mb()
@@ -1041,7 +1059,9 @@ def choose_engine(cfg, ai) -> Engine:
         for candidate in (Natural, Piper, Espeak, Cloud, Animalese):
             if candidate is builders[wanted]:
                 continue
-            fallback = candidate(cfg, ai)
+            # Piper standing in for the natural voice speaks with the best
+            # voice there is, not the "-low" one left in voiceName
+            fallback = candidate(stand_in_cfg(cfg) if candidate is Piper and builders[wanted] is Natural else cfg, ai)
             if fallback.ok:
                 # Keep the reason, but do not shout it once per sentence: it
                 # filled the journal with one warning per answer. `--status`
@@ -1138,7 +1158,8 @@ def main() -> int:
         # Velly woke up: bring the voices up now, not with the first sentence.
         # Piper first — it speaks whenever the natural voice cannot (a big
         # brain in the VRAM, a game), and loaded it answers in a blink.
-        spare = Piper(cfg, ai)
+        natural_first = str(cfg.get("voiceEngine") or "auto").lower() in ("natural", "orpheus")
+        spare = Piper(stand_in_cfg(cfg) if natural_first else cfg, ai)
         if spare.ok and piper_start(wait=6.0):
             try:
                 piper_request({"load": spare.model}, 20.0)
@@ -1148,9 +1169,18 @@ def main() -> int:
         eng = choose_engine(cfg, ai)
         if eng.name == "natural" and eng.ok:
             if not natural_health() and not eng.ready(wait=120):
+                # The brain is still loading and the voice keeps its place
+                # free: it comes up right BEHIND the brain now. It used to stay
+                # away until a sentence asked — and that sentence then waited
+                # for the voice to load (or Piper spoke it).
+                if brain_reserve_mb() > 0 and wait_for_brain(120):
+                    eng = Natural(cfg, ai)
+                    if eng.ok and eng.ready(wait=120):
+                        warm_phrases(eng)
+                        return 0
                 # No room for the natural voice (the 20B brain holds the
                 # card): Piper speaks today, so ITS fillers get made.
-                spare = Piper(cfg, ai)
+                spare = Piper(stand_in_cfg(cfg), ai)
                 if spare.ok:
                     warm_phrases(spare)
                 return 1
@@ -1218,8 +1248,9 @@ def main() -> int:
         # after the answer it was meant to precede.
         eng = choose_engine(cfg, ai)
         if eng.name == "natural" and not natural_health():
-            # The natural voice is not up — Piper will say it, from its cache.
-            eng = Piper(cfg, ai)
+            # The natural voice is not up — Piper will say it, from its cache
+            # (with the voice that stands in for the natural one).
+            eng = Piper(stand_in_cfg(cfg), ai)
         text = pick_filler(eng) if eng.ok else ""
         if not text:
             return 0
