@@ -31,6 +31,10 @@ Singleton {
     // lock's lyric line while it is locked (LOCK SCREEN → LYRICS) — the
     // lock needs no lyrics panel switched on.
     readonly property bool active: Config.lyrics.enabled || (Config.lock.lyrics && Locker.locked)
+    // nothing of it can be seen (a fullscreen game on every screen, nothing
+    // locked, the island down): the clock and its D-Bus reads rest; the
+    // first tick after that reads the real position again
+    readonly property bool hidden: Hypr.allCovered && !Locker.locked && Panels.islandScreen === ""
 
     onActiveChanged: {
         if (root.active)
@@ -285,7 +289,7 @@ Singleton {
     // a D-Bus call every frame, so it is read a few times a second and run
     // forward locally in between.
     Timer {
-        running: root.active && root.hasPlayer
+        running: root.active && root.hasPlayer && !root.hidden
         interval: 900
         repeat: true
         triggeredOnStart: true
@@ -298,7 +302,7 @@ Singleton {
     }
 
     Timer {
-        running: root.active && root.playing && root.hasSynced
+        running: root.active && root.playing && root.hasSynced && !root.hidden
         interval: 100
         repeat: true
         onTriggered: {
