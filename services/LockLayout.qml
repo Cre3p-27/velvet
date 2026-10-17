@@ -36,6 +36,46 @@ Singleton {
     }
 
     property var layout: root.defaults()
+    // Every LOOK arranges its own lock: one layout per look (look id ->
+    // layout); `layout` is the one of the look you wear. A layout from before
+    // looks had their own belongs to the look worn at the first start.
+    property var books: ({})
+    property string bookLook: ""
+    property bool fileIn: false
+    property var legacy: null
+    readonly property string look: Presets.loaded ? (Presets.applied || "velvet") : ""
+
+    function adopt(): void {
+        if (root.bookLook !== "" || root.look === "" || !root.fileIn)
+            return;
+        root.bookLook = root.look;
+        if (root.legacy !== null) {
+            const books = Object.assign({}, root.books);
+            books[root.look] = root.legacy;
+            root.books = books;
+            root.legacy = null;
+        }
+        const mine = root.books[root.look];
+        if (mine)
+            root.layout = root.sanitize(mine);
+        root.persist();
+    }
+
+    onLookChanged: {
+        if (root.bookLook === "") {
+            root.adopt();
+            return;
+        }
+        if (root.look === "" || root.look === root.bookLook)
+            return;
+        const books = Object.assign({}, root.books);
+        books[root.bookLook] = root.layout;
+        root.books = books;
+        root.bookLook = root.look;
+        const mine = books[root.look];
+        root.layout = mine ? root.sanitize(mine) : root.defaults();
+        root.persist();
+    }
 
     function defaults(): var {
         return {
@@ -199,7 +239,15 @@ Singleton {
     }
 
     function persist(): void {
-        file.setText(JSON.stringify(root.layout, null, 1));
+        if (root.bookLook === "")
+            return;
+        const books = Object.assign({}, root.books);
+        books[root.bookLook] = root.layout;
+        root.books = books;
+        file.setText(JSON.stringify({
+            "__byLook__": books,
+            "__v__": 2
+        }, null, 1));
     }
 
     // ═══════════════════════════════════════════════════════════ migrations
@@ -298,7 +346,15 @@ Singleton {
 
         onLoaded: {
             try {
-                const parsed = JSON.parse(text());
+                let parsed = JSON.parse(text());
+                if (parsed && typeof parsed === "object" && parsed["__byLook__"]) {
+                    root.books = parsed["__byLook__"];
+                    root.fileIn = true;
+                    root.adopt();
+                    return;
+                }
+                // the old single layout: read it as before, and give it to
+                // the look worn now (adopt)
                 if (Array.isArray(parsed)) {
                     root.layout = root.fromFreeArray(parsed);
                 } else if (parsed && typeof parsed === "object") {
@@ -311,10 +367,15 @@ Singleton {
                 // A hand-edited locklayout.json must never stop the shell —
                 // the defaults carry the lock.
             }
+            root.legacy = root.layout;
+            root.fileIn = true;
+            root.adopt();
         }
 
         onLoadFailed: {
             // No file yet: the defaults already apply.
+            root.fileIn = true;
+            root.adopt();
         }
     }
 }
