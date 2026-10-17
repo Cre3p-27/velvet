@@ -132,9 +132,18 @@ Singleton {
             "carousel": 1
         })
 
+    // Settings that are not a row of the menu but are arranged by hand —
+    // the taskbar's modules, the lock designer's places and styles, the
+    // greeting — belong to the look just the same.
+    readonly property var arranged: ({
+            "bar.layout": "bar",
+            "lock.greeting": "lock",
+            "lock.softPlace": "lock",
+            "lock.softStyle": "lock"
+        })
     // key -> group id, for every setting the menu has that a look may hold.
     readonly property var keyGroup: {
-        const out = {};
+        const out = Object.assign({}, root.arranged);
         const rows = Schema.allRows;
         for (let i = 0; i < rows.length; i++) {
             const k = rows[i].key ?? "";
