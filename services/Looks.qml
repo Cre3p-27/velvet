@@ -394,6 +394,20 @@ Singleton {
         root.persist();
     }
 
+    // A look made from the one you wear (SAVE AS A LOOK) starts with a copy
+    // of its memory and of the setup as it is right now.
+    function seedLook(id: string): void {
+        if (!id || root.bookLook === "" || id === root.bookLook)
+            return;
+        const books = Object.assign({}, root.books);
+        books[id] = JSON.parse(JSON.stringify(root.store));
+        const lasts = Object.assign({}, root.lasts);
+        lasts[id] = root.capture();
+        root.books = books;
+        root.lasts = lasts;
+        root.persist();
+    }
+
     function lookLeaving(): void {
         if (root.bookLook === "")
             return;

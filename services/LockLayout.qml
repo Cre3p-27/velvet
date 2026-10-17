@@ -71,6 +71,16 @@ Singleton {
         root.persist();
     }
 
+    // A look made from the one you wear starts with a copy of its lock layout.
+    function seedLook(id: string): void {
+        if (!id || root.bookLook === "" || id === root.bookLook)
+            return;
+        const books = Object.assign({}, root.books);
+        books[id] = JSON.parse(JSON.stringify(root.layout));
+        root.books = books;
+        root.persist();
+    }
+
     onLookChanged: {
         if (root.bookLook === "") {
             root.adopt();

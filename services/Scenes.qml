@@ -1588,6 +1588,16 @@ Singleton {
         root.persist();
     }
 
+    // A look made from the one you wear starts with a copy of its desk.
+    function seedLook(id: string): void {
+        if (!id || root.bookLook === "" || id === root.bookLook)
+            return;
+        const books = Object.assign({}, root.books);
+        books[id] = JSON.parse(JSON.stringify(root.store));
+        root.books = books;
+        root.persist();
+    }
+
     function lookLeaving(): void {
         if (root.bookLook === "")
             return;

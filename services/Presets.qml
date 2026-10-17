@@ -1981,6 +1981,12 @@ Singleton {
         };
         root.custom = root.custom.concat([look]);
         root.persistCustom();
+        // "exactly as it was when you saved it": the new look's memory starts
+        // as a copy of everything the worn one holds — its setup per
+        // wallpaper, its desk, its lock layout — not as a look never worn
+        Looks.seedLook(look.id);
+        Scenes.seedLook(look.id);
+        LockLayout.seedLook(look.id);
         return look.id;
     }
 
