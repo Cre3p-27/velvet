@@ -775,7 +775,7 @@ JsonAdapter {
         // voice when there is a key, and stays quiet when there is none.
         property string voiceEngine: "auto"  // auto | natural | piper | espeak | cloud | none
         property string voiceName: ""        // engine's own voice, empty = default
-        property string naturalVoice: "Sophie" // the natural (Orpheus) speaker
+        property string naturalVoice: "Lea"    // the natural (Orpheus) speaker — the clearest, measured
         property bool fillers: true          // "Hm, Moment …" while she thinks
         property bool wakeWord: false        // "Hey Velly" without holding the island
         property real voiceSpeed: 1.0        // 0.6 slow … 1.5 fast, 1.0 is the voice's own pace

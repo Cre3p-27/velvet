@@ -551,7 +551,7 @@ def natural_serve() -> int:
 def natural_warm() -> None:
     """One tiny sentence right after loading: the GPU builds its kernels now,
     so the first real sentence is as quick as every other."""
-    payload = {"prompt": [128259, 128000, "Sophie: Hallo.", 128009, 128260, 128261, 128257],
+    payload = {"prompt": [128259, 128000, "Lea: Hallo.", 128009, 128260, 128261, 128257],
                "n_predict": 28, "temperature": 0.6, "top_p": 0.95, "top_k": 50, "stream": False,
                "cache_prompt": False}
     try:
@@ -599,8 +599,11 @@ class Natural(Engine):
     seed = -1                                                  # -1: a new one every sentence
 
     def __init__(self, cfg, ai):
-        wanted = str(cfg.get("naturalVoice") or "Sophie").strip().title()
-        self.voice = wanted if wanted in NATURAL_VOICES else "Sophie"
+        # Lea by default: the clearest of the speakers (whisper over seven
+        # sentences: Lea 10 % words wrong, Lina 13, Marie 16, Maria 18,
+        # Sophie 19 — and Sophie the fastest, 19 characters a second)
+        wanted = str(cfg.get("naturalVoice") or "Lea").strip().title()
+        self.voice = wanted if wanted in NATURAL_VOICES else "Lea"
         self.speed = max(0.6, min(1.5, float(cfg.get("voiceSpeed") or 1.0)))
         have = os.path.isfile(NATURAL_MODEL) and os.path.isfile(NATURAL_DECODER) and os.path.isfile(NATURAL_SERVER)
         ort = importlib.util.find_spec("onnxruntime") is not None
