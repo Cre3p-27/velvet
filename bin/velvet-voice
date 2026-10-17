@@ -1799,6 +1799,11 @@ def speak_stream(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
             if not producing and pos >= player.total:
                 break
             heard = [m for m in marks if m[0] <= pos]
+            if not heard:
+                # nothing to hear yet: the state keeps what it said before
+                # (an empty caption flashed in the island otherwise)
+                time.sleep(1.0 / 24.0)
+                continue
             said = " ".join(m[1] for m in heard)
             sentence = heard[-1][1] if heard else ""
             # the mouth: the loudness of the last 32 steps the listener heard
@@ -1807,7 +1812,7 @@ def speak_stream(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
             total = max(1, player.total)
             write_state({
                 "at": int(time.time() * 1000), "engine": used["engine"], "ok": True,
-                "speaking": 1 if heard else 0, "text": said[:400], "sentence": sentence[:300],
+                "speaking": 1, "text": said[:400], "sentence": sentence[:300],
                 "duration": round(total / NAT_RATE, 3), "progress": round(min(1.0, pos / total), 3),
                 "elapsed": round(pos / NAT_RATE, 3), "envelope": env, "error": "", "streamed": 1,
             })
