@@ -1799,6 +1799,12 @@ PanelWindow {
                                     return;
                                 case Qt.Key_Return:
                                 case Qt.Key_Enter:
+                                    // the secret: "aim" opens the aim trainer
+                                    if (/^\s*(aim|aimtrainer|aim trainer|aimlab)\s*$/i.test(input.text)) {
+                                        Panels.openAim();
+                                        event.accepted = true;
+                                        return;
+                                    }
                                     if (root.selected)
                                         root.run(root.selected);
                                     else

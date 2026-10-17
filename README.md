@@ -712,6 +712,12 @@ The other floating parts have a SIDE choice as well: the volume pop-up (OSD), th
 desktop lyrics and the launcher, and notifications can rise from the middle of
 the top or bottom edge as well as from a corner.
 
+### A secret
+
+There is a hidden **aim trainer** in the shell: type `aim` in the launcher and press Enter, enter
+↑ ↑ ↓ ↓ ← → ← → B A on the open island, or ask Velly for it. Three modes (GRIDSHOT, FLICK, MICRO),
+thirty seconds a round, combos, reaction time, a rank and your best per mode. Esc leaves.
+
 ## Velly — the assistant in the island
 
 The Dynamic Island has a resident. **Press Super+A** from anywhere — or **hold

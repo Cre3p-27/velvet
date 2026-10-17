@@ -1193,8 +1193,11 @@ def speak(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
             ok = cached_synth(eng, chunk, path)
             if not ok and eng.name == "natural":
                 # The natural voice could not speak (a game holds the VRAM,
-                # the server did not come up): Piper takes over at once.
-                spare = Piper(cfg, ai)
+                # the server did not come up): Piper takes over at once —
+                # with the BEST voice there is, not a "low" one picked once
+                # as a fallback (that was what she sounded like whenever the
+                # brain left no room for the natural voice).
+                spare = Piper(stand_in_cfg(cfg), ai)
                 if spare.ok:
                     used["note"] = f"{eng.note} — Piper spricht"
                     used["engine"] = spare
@@ -1327,7 +1330,7 @@ FILLERS = ("Hm, Moment.", "Einen Augenblick.", "Lass mich kurz schauen.", "Okay,
 
 def voice_key(engine) -> str:
     who = getattr(engine, "voice", "") or os.path.basename(getattr(engine, "model", "") or "")
-    return re.sub(r"[^\w.-]+", "_", f"{engine.name}-{who}") or "voice"
+    return re.sub(r"[^\w.-]+", "_", f"{engine.name}-{who}-p2") or "voice"
 
 
 def cache_path(engine, text: str) -> str:
@@ -1336,15 +1339,81 @@ def cache_path(engine, text: str) -> str:
     return os.path.join(CACHE_DIR, voice_key(engine), digest + ".wav")
 
 
+# The voices in order of how good they sound (high > medium > low), for
+# whenever one has to stand in for the natural voice.
+STAND_INS = ("de_DE-thorsten-high", "de_DE-thorsten-medium", "de_DE-thorsten_emotional-medium",
+             "de_DE-mls-medium", "de_DE-kerstin-low", "de_DE-karlsson-low")
+
+
+def stand_in_cfg(cfg: dict) -> dict:
+    """The settings Piper speaks with when it stands in for the natural voice:
+    the chosen voice if it is a good one, else the best one installed."""
+    own = str(cfg.get("voiceName") or "")
+    if own and not re.search(r"(^|[-_])(x_)?low$", own):
+        return cfg
+    for name in STAND_INS:
+        if Piper.pick_voice_named(name):
+            out = dict(cfg)
+            out["voiceName"] = name
+            return out
+    return cfg
+
+
+def polish(path: str) -> None:
+    """Every sentence the same loudness, no click at either end, no DC: the
+    natural voice and Piper came out at different levels, and SNAC starts
+    and stops with a tick. In place; a file it cannot read is left alone."""
+    try:
+        import numpy                                           # noqa: PLC0415
+        with wave.open(path, "rb") as w:
+            rate, width, chans = w.getframerate(), w.getsampwidth(), w.getnchannels()
+            raw = w.readframes(w.getnframes())
+        if width != 2 or chans != 1 or len(raw) < 4000:
+            return
+        pcm = numpy.frombuffer(raw, dtype=numpy.int16).astype(numpy.float32) / 32768.0
+        pcm = pcm - float(pcm.mean())
+        # trim the dead air each side (keeps a breath of 40 ms)
+        loud = numpy.nonzero(numpy.abs(pcm) > 0.012)[0]
+        if loud.size:
+            keep = int(rate * 0.04)
+            pcm = pcm[max(0, loud[0] - keep):min(pcm.size, loud[-1] + keep)]
+        # speech loudness: RMS of the voiced part to ~-16.5 dBFS, peaks capped
+        voiced = pcm[numpy.abs(pcm) > 0.02]
+        if voiced.size > rate // 20:
+            rms = float(numpy.sqrt(numpy.mean(voiced ** 2)))
+            if rms > 1e-4:
+                pcm = pcm * min(4.0, 0.15 / rms)
+        peak = float(numpy.max(numpy.abs(pcm))) if pcm.size else 0.0
+        if peak > 0.89:
+            pcm = pcm * (0.89 / peak)
+        fade = min(pcm.size // 4, int(rate * 0.012))
+        if fade > 1:
+            ramp = numpy.linspace(0.0, 1.0, fade, dtype=numpy.float32)
+            pcm[:fade] *= ramp
+            pcm[-fade:] *= ramp[::-1]
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes((numpy.clip(pcm, -1, 1) * 32767).astype(numpy.int16).tobytes())
+    except Exception:                                          # noqa: BLE001
+        return
+
+
 def cached_synth(engine, text: str, out_wav: str) -> bool:
     """Short phrases (fillers, greetings, "Erledigt!") come from the cache."""
     if len(text) > 60:
-        return engine.synth(text, out_wav)
+        ok = engine.synth(text, out_wav)
+        if ok:
+            polish(out_wav)
+        return ok
     path = cache_path(engine, text)
     if os.path.isfile(path) and os.path.getsize(path) > 2000:
         shutil.copyfile(path, out_wav)
         return True
     ok = engine.synth(text, out_wav)
+    if ok:
+        polish(out_wav)
     if ok:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)

@@ -1,0 +1,3 @@
+module qs.modules.aim
+AimTrainer 1.0 AimTrainer.qml
+AimGame 1.0 AimGame.qml

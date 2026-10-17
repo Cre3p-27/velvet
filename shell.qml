@@ -24,6 +24,7 @@ import qs.modules.map
 import qs.modules.island
 import qs.modules.lyrics
 import qs.modules.lock
+import qs.modules.aim
 // Timer and friends come from QtQuick; QML imports are not transitive, so
 // `import Quickshell` alone does not make them visible here.
 import QtQuick
@@ -172,6 +173,14 @@ ShellRoot {
         keep: 30
 
         NotifCentre {}
+    }
+    // the secret aim trainer (Panels.aim: "aim" in the launcher, the Konami
+    // code on the open island, Velly, `ipc call panels aim`)
+    Parked {
+        open: Panels.aim
+        keep: 10
+
+        AimTrainer {}
     }
     Parked {
         open: Panels.session

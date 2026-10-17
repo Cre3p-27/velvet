@@ -22,6 +22,10 @@ Singleton {
     property bool wifiBusy: false
     property string lastWifiAsk: ""     // the ssid the last connect tried
     property string lastWifiError: ""   // what nmcli said when it failed
+    // The network a connect is on its way to. Everything reads as joined the
+    // moment you click (the list, the label, the bar): NetworkManager confirms
+    // in the background and only a refusal turns it back. No spinners.
+    property string joining: ""
 
     readonly property string icon: {
         if (type === "ethernet")
@@ -69,11 +73,19 @@ Singleton {
     }
 
     function toggleWifi(): void {
-        if (!root.wifiEnabled)
+        // the switch moves when you flip it, not when nmcli answers
+        const wasOn = root.wifiEnabled;
+        root.wifiEnabled = !wasOn;
+        if (wasOn) {
+            root.connected = root.type === "ethernet";
+            root.type = root.connected ? "ethernet" : "none";
+            root.networks = [];
+        }
+        if (!wasOn)
             runCmd(`nmcli radio wifi on`);
         else
             runCmd(`nmcli radio wifi off`);
-        Toast.show(root.wifiEnabled ? "WI-FI OFF" : "WI-FI ON", "info", 2000);
+        Toast.show(wasOn ? "WI-FI OFF" : "WI-FI ON", "info", 2000);
         refreshLater.restart();
         // Turning it on makes the adapter rescan by itself; a slow refresh
         // after that picks the new list up.
@@ -92,6 +104,8 @@ Singleton {
         root.wifiBusy = true;
         root.lastWifiAsk = s;
         root.lastWifiError = "";
+        root.joining = s;
+        root.markActive(s);
         const q = t => (t ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`");
         const pw = `${password ?? ""}`.length > 0 ? ` password "${q(password)}"` : "";
         wifiConnect.command = ["bash", "-c", `nmcli device wifi connect "${q(s)}"${pw} 2>&1; echo "EXIT:$?"`];
@@ -99,7 +113,40 @@ Singleton {
         wifiConnect.running = true;
     }
 
+    // the list, the label and the icon as if `ssid` were joined already
+    function markActive(ssid: string): void {
+        const nets = [];
+        let sig = 0;
+        for (let i = 0; i < root.networks.length; i++) {
+            const n = root.networks[i];
+            if (n.ssid === ssid)
+                sig = n.signal;
+            nets.push({
+                ssid: n.ssid,
+                signal: n.signal,
+                security: n.security,
+                active: ssid !== "" && n.ssid === ssid
+            });
+        }
+        // joined first, then strongest — where the eye already is
+        nets.sort((a, b) => (b.active - a.active) || (b.signal - a.signal));
+        root.networks = nets;
+        if (ssid !== "") {
+            root.type = "wifi";
+            root.ssid = ssid;
+            root.strength = sig || root.strength || 60;
+            root.connected = true;
+        }
+    }
+
     function disconnectWifi(): void {
+        if (root.type === "wifi") {
+            root.connected = false;
+            root.type = "none";
+            root.ssid = "";
+            root.strength = 0;
+            root.markActive("");
+        }
         runCmd(`nmcli device disconnect "$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}')"`);
         refreshLater.restart();
     }
@@ -121,13 +168,18 @@ Singleton {
         stdout: StdioCollector {
             onStreamFinished: {
                 root.wifiBusy = false;
+                root.joining = "";
                 const out = text.trim();
                 if (out.indexOf("EXIT:0") !== -1) {
                     Toast.ok(`CONNECTED TO ${root.lastWifiAsk}`);
                     root.lastWifiError = "";
-                    refreshLater.restart();
+                    poll.running = false;
+                    poll.running = true;
                     return;
                 }
+                // refused: back to what is really there, right away
+                poll.running = false;
+                poll.running = true;
                 const lines = out.split("\n").filter(l => l.indexOf("EXIT:") !== 0);
                 root.lastWifiError = (lines.pop() ?? "CONNECT FAILED").trim();
                 if (root.lastWifiError.length > 90)
@@ -182,6 +234,9 @@ Singleton {
         stdout: StdioCollector {
             onStreamFinished: {
                 const blocks = text.split("---");
+                // a connect on its way: what nmcli says now is the old state
+                if (root.joining !== "")
+                    return;
 
                 // --- device status
                 const dev = (blocks[0] ?? "").trim().split(":");
@@ -232,7 +287,7 @@ Singleton {
                         active: (parts[0] ?? "").trim() === "*"
                     });
                 }
-                nets.sort((a, b) => b.signal - a.signal);
+                nets.sort((a, b) => (b.active - a.active) || (b.signal - a.signal));
                 root.networks = nets;
             }
         }

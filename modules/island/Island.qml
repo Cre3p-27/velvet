@@ -617,7 +617,56 @@ PanelWindow {
 
     // what the open module is busy with (a window dragged on the map): the
     // island must not close under that hand
-    readonly property bool bodyBusy: body.item !== null && body.item.busy === true
+    readonly property bool bodyBusy: root.bodyItem !== null && root.bodyItem.busy === true
+
+    // the open module's own item (the body Loader that is current)
+    readonly property Item bodyItem: {
+        const n = bodies.count;
+        const l = root.moduleIdx >= 0 && root.moduleIdx < n ? bodies.itemAt(root.moduleIdx) : null;
+        return l && l.item ? l.item : null;
+    }
+
+    function sourceFor(i: int): string {
+        if (i === 0)
+            return Qt.resolvedUrl("IslandMusic.qml");
+        if (i === root.deskIdx)
+            return Qt.resolvedUrl("IslandMap.qml");
+        if (i === root.tasksIdx)
+            return Qt.resolvedUrl("IslandTasks.qml");
+        if (i === root.weatherIdx)
+            return Qt.resolvedUrl("IslandWeather.qml");
+        if (i === root.systemIdx)
+            return Qt.resolvedUrl("IslandSystem.qml");
+        if (i === root.vellyIdx)
+            return Qt.resolvedUrl("IslandVelly.qml");
+        return "";
+    }
+
+    // which way the last switch went along the tabs (+1 right/down, -1
+    // left/up, 0 none yet): the bodies slide that way
+    property int switchDir: 0
+    property int lastIdx: root.moduleIdx
+    onModuleIdxChanged: {
+        const n = Math.max(1, root.meta.length);
+        let d = root.moduleIdx - root.lastIdx;
+        // a swipe that wrapped round the ends still moves the short way
+        if (Math.abs(d) > n / 2)
+            d = d > 0 ? d - n : d + n;
+        root.switchDir = d > 0 ? 1 : (d < 0 ? -1 : 0);
+        root.lastIdx = root.moduleIdx;
+    }
+
+    // folded for a while: the modules kept alive for quick tabs are let go
+    property bool foldedLong: false
+    Timer {
+        interval: 6000
+        running: !root.expanded && !root.pressed
+        onTriggered: root.foldedLong = true
+    }
+    onExpandedChanged: {
+        if (root.expanded)
+            root.foldedLong = false;
+    }
 
     Connections {
         target: Velly
@@ -910,6 +959,11 @@ PanelWindow {
         focus: root.expanded && root.mine
         // the open module may want the keys (the map: arrows, Enter, Del …)
         Keys.onPressed: event => {
+            // the secret: ↑↑↓↓←→←→BA on the open island starts the aim trainer
+            if (Panels.konamiKey(event.key)) {
+                event.accepted = true;
+                return;
+            }
             if (event.key === Qt.Key_Escape) {
                 root.dismiss();
                 event.accepted = true;
@@ -923,7 +977,7 @@ PanelWindow {
                 event.accepted = true;
                 return;
             }
-            if (body.item && typeof body.item.handleKey === "function" && body.item.handleKey(event)) {
+            if (root.bodyItem && typeof root.bodyItem.handleKey === "function" && root.bodyItem.handleKey(event)) {
                 root.poke();
                 event.accepted = true;
             }
@@ -1282,9 +1336,34 @@ PanelWindow {
             }
 
             Rectangle {
-                visible: root.onSide && root.railHot >= 0 && root.railHot !== root.shownIdx && !root.pressed
+                id: hotRow
+
+                // the pointer's row glides after it like the open one does,
+                // and fades rather than blinking in and out
+                property int at: 0
+                readonly property int want: root.railHot
+                onWantChanged: {
+                    if (hotRow.want >= 0)
+                        hotRow.at = hotRow.want;
+                }
+                opacity: root.onSide && root.railHot >= 0 && root.railHot !== root.shownIdx && !root.pressed ? 1 : 0
+                visible: opacity > 0.01
                 x: litRow.x
-                y: capsule.railY + root.railPad + root.railHot * root.cellH + 4
+                y: capsule.railY + root.railPad + hotRow.at * root.cellH + 4
+
+                Behavior on y {
+                    enabled: hotRow.visible
+                    SpringAnimation {
+                        spring: 4.5
+                        damping: 0.6
+                        epsilon: 0.05
+                    }
+                }
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Appearance.anim.fast
+                    }
+                }
                 width: litRow.width
                 height: root.cellH - 8
                 radius: Appearance.r(12)
@@ -1564,6 +1643,41 @@ PanelWindow {
                     // you drag. Open, they grow into TABS: each module's icon,
                     // one click away (the map, the music, Velly …). On a side
                     // edge the rail says all this.
+                    // The open tab's plate: ONE plate that glides from tab to
+                    // tab (and follows a swipe's preview), instead of each tab
+                    // fading its own colour in and out.
+                    Rectangle {
+                        id: tabPlate
+
+                        readonly property bool shown: !root.onSide && root.expanded && !root.arming && root.shownIdx >= 0
+                        x: dots.x + root.shownIdx * (27 + dots.spacing)
+                        y: dots.y + (dots.height - 26) / 2
+                        width: 27
+                        height: 26
+                        radius: Appearance.r(8)
+                        z: 2
+                        color: Colours.alpha(Colours.accent, 0.2)
+                        border.width: 1
+                        border.color: Colours.alpha(Colours.accent, 0.55)
+                        antialiasing: true
+                        opacity: tabPlate.shown ? 1 : 0
+                        visible: opacity > 0.01
+
+                        Behavior on x {
+                            enabled: tabPlate.shown
+                            SpringAnimation {
+                                spring: 5.2
+                                damping: 0.5
+                                epsilon: 0.05
+                            }
+                        }
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: Appearance.anim.fast
+                            }
+                        }
+                    }
+
                     Row {
                         id: dots
 
@@ -1616,8 +1730,8 @@ PanelWindow {
                                 Rectangle {
                                     anchors.fill: parent
                                     radius: dot.tabbed ? Appearance.r(8) : 3
-                                    color: dot.tabbed ? (dot.lit ? Colours.alpha(Colours.accent, 0.2) : (tabHover.hovered ? Colours.alpha(Colours.ink, 0.1) : "transparent")) : (dot.awake ? Colours.accentHot : (dot.lit ? Colours.accent : Colours.alpha(Colours.ink, 0.28)))
-                                    border.width: dot.tabbed && dot.lit ? 1 : 0
+                                    color: dot.tabbed ? (!dot.lit && tabHover.hovered ? Colours.alpha(Colours.ink, 0.1) : "transparent") : (dot.awake ? Colours.accentHot : (dot.lit ? Colours.accent : Colours.alpha(Colours.ink, 0.28)))
+                                    border.width: 0
                                     border.color: Colours.alpha(Colours.accent, 0.55)
                                     antialiasing: true
 
@@ -1635,7 +1749,7 @@ PanelWindow {
                                     font.pixelSize: 15
                                     opacity: dot.tabbed ? 1 : 0
                                     visible: opacity > 0.01
-                                    scale: tabHover.hovered && !dot.lit ? 1.12 : 1
+                                    scale: tabArea.pressed ? 0.84 : (tabHover.hovered && !dot.lit ? 1.12 : 1)
 
                                     Behavior on opacity {
                                         NumberAnimation {
@@ -1757,48 +1871,147 @@ PanelWindow {
                     }
                 }
 
-                // The module body. The capsule's clip reveals it as the capsule
-                // grows, so the content never reflows while you pull.
-                // The module's own full size from the first pixel, centred, and
-                // the growing capsule only uncovers it: nothing reflows while
-                // you pull (the map was drawn squeezed half-way out).
-                Loader {
-                    id: body
+                // The module bodies. The capsule's clip reveals them as the
+                // capsule grows, so the content never reflows while you pull:
+                // each has its module's own full size from the first pixel,
+                // centred, and the growing capsule only uncovers it.
+                // A module you visited stays alive while the island is open,
+                // so flipping tabs never waits for a module to be built
+                // again: the old one slides out, the new one slides in from
+                // the side of its tab, both at once.
+                Repeater {
+                    id: bodies
 
-                    readonly property var full: root.meta[root.moduleIdx]
+                    model: root.meta.length
 
-                    x: root.onSide ? 0 : Math.round((parent.width - width) / 2)
-                    y: pillH
-                    width: root.onSide ? parent.width : body.full.w
-                    height: Math.max(0, root.onSide ? parent.height - pillH : body.full.h - pillH)
-                    clip: true
+                    Loader {
+                        id: slot
 
-                    source: {
-                        if (root.moduleIdx === 0)
-                            return Qt.resolvedUrl("IslandMusic.qml");
-                        if (root.moduleIdx === root.deskIdx)
-                            return Qt.resolvedUrl("IslandMap.qml");
-                        if (root.moduleIdx === root.tasksIdx)
-                            return Qt.resolvedUrl("IslandTasks.qml");
-                        if (root.moduleIdx === root.weatherIdx)
-                            return Qt.resolvedUrl("IslandWeather.qml");
-                        if (root.moduleIdx === root.systemIdx)
-                            return Qt.resolvedUrl("IslandSystem.qml");
-                        if (root.moduleIdx === root.vellyIdx)
-                            return Qt.resolvedUrl("IslandVelly.qml");
-                        return "";
-                    }
+                        required property int index
+                        readonly property var full: root.meta[slot.index] ?? ({
+                                w: 0,
+                                h: 0
+                            })
+                        readonly property bool current: slot.index === root.moduleIdx
+                        // visited while the island was open: kept until it folds
+                        property bool kept: false
+                        // the switch motion: offset along the tab row (or the
+                        // rail on a side) and the fade, both driven by `moving`
+                        property real shift: 0
+                        property bool leaving: false
 
-                    onLoaded: {
-                        if (root.moduleIdx === 0)
-                            body.item.bridge = Qt.binding(() => root.bridge);
-                        if (root.moduleIdx === root.deskIdx) {
-                            // live while open — and already while you pull it
-                            // out, so the pull reveals the real canvas
-                            body.item.live = Qt.binding(() => root.active && root.moduleIdx === root.deskIdx && (root.expanded || root.pressed));
-                            body.item.keys = Qt.binding(() => root.expanded && root.mine);
-                            body.item.ground = Qt.binding(() => root.shellCol);
-                            body.item.poked.connect(root.poke);
+                        // Each body keeps ITS module's size, also while it
+                        // leaves: on a side edge it hugs the rail and sits
+                        // centred on the sheet, so the old module never
+                        // reflows into the new one's width on the way out.
+                        readonly property real ownH: root.onSide ? Math.max(root.railH, slot.full.h) : slot.full.h
+                        readonly property real baseX: root.onSide ? (root.edge === "left" ? 0 : parent.width - width) : Math.round((parent.width - width) / 2)
+                        x: slot.baseX + (root.onSide ? 0 : slot.shift)
+                        y: pillH + (root.onSide ? Math.round((parent.height - slot.ownH) / 2) + slot.shift : 0)
+                        width: slot.full.w
+                        height: Math.max(0, slot.ownH - pillH)
+                        clip: true
+                        active: slot.current || slot.kept
+                        visible: slot.current || slot.leaving
+                        z: slot.current ? 2 : 1
+
+                        source: root.sourceFor(slot.index)
+
+                        onCurrentChanged: {
+                            if (slot.current) {
+                                slot.leaving = false;
+                                leave.stop();
+                                if (root.expanded && root.switchDir !== 0 && Appearance.anim.normal > 0) {
+                                    enter.stop();
+                                    slot.shift = root.switchDir * 26;
+                                    slot.opacity = 0;
+                                    enter.start();
+                                } else {
+                                    slot.shift = 0;
+                                    slot.opacity = 1;
+                                }
+                                if (root.expanded)
+                                    slot.kept = true;
+                            } else if (root.expanded && slot.status === Loader.Ready && Appearance.anim.normal > 0) {
+                                enter.stop();
+                                slot.leaving = true;
+                                leave.start();
+                            } else {
+                                slot.leaving = false;
+                            }
+                        }
+
+                        Connections {
+                            target: root
+
+                            function onExpandedChanged(): void {
+                                if (root.expanded && slot.current)
+                                    slot.kept = true;
+                            }
+                            function onFoldedLongChanged(): void {
+                                if (root.foldedLong && !slot.current)
+                                    slot.kept = false;
+                            }
+                        }
+
+                        ParallelAnimation {
+                            id: enter
+
+                            NumberAnimation {
+                                target: slot
+                                property: "shift"
+                                to: 0
+                                duration: Math.round(Appearance.anim.normal * 0.9)
+                                easing.type: Easing.OutCubic
+                            }
+                            NumberAnimation {
+                                target: slot
+                                property: "opacity"
+                                to: 1
+                                duration: Math.round(Appearance.anim.normal * 0.6)
+                                easing.type: Easing.OutQuad
+                            }
+                        }
+
+                        SequentialAnimation {
+                            id: leave
+
+                            ParallelAnimation {
+                                NumberAnimation {
+                                    target: slot
+                                    property: "shift"
+                                    to: -root.switchDir * 22
+                                    duration: Math.round(Appearance.anim.normal * 0.55)
+                                    easing.type: Easing.InQuad
+                                }
+                                NumberAnimation {
+                                    target: slot
+                                    property: "opacity"
+                                    to: 0
+                                    duration: Math.round(Appearance.anim.normal * 0.45)
+                                    easing.type: Easing.InQuad
+                                }
+                            }
+                            ScriptAction {
+                                script: {
+                                    slot.leaving = false;
+                                    slot.shift = 0;
+                                    slot.opacity = 1;
+                                }
+                            }
+                        }
+
+                        onLoaded: {
+                            if (slot.index === 0)
+                                slot.item.bridge = Qt.binding(() => root.bridge);
+                            if (slot.index === root.deskIdx) {
+                                // live while open — and already while you pull it
+                                // out, so the pull reveals the real canvas
+                                slot.item.live = Qt.binding(() => root.active && root.moduleIdx === root.deskIdx && (root.expanded || root.pressed));
+                                slot.item.keys = Qt.binding(() => root.expanded && root.mine);
+                                slot.item.ground = Qt.binding(() => root.shellCol);
+                                slot.item.poked.connect(root.poke);
+                            }
                         }
                     }
                 }

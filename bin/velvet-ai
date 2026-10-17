@@ -2195,6 +2195,104 @@ def t_brightness_set(percent=0):
     return {"ok": code == 0, "percent": value, "error": err}
 
 
+def wifi_scan(rescan: bool = True) -> list:
+    """Nearby networks, strongest first, one row per name: {ssid, signal, secure, active}."""
+    code, out, _ = run(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list",
+                        "--rescan", "auto" if rescan else "no"], timeout=12)
+    nets = {}
+    for line in (out or "").splitlines():
+        parts = re.split(r"(?<!\\):", line)
+        if len(parts) < 4:
+            continue
+        name = parts[1].replace("\\:", ":").strip()
+        if not name:
+            continue
+        try:
+            sig = int(parts[2] or 0)
+        except ValueError:
+            sig = 0
+        row = nets.get(name)
+        if row is None or row["signal"] < sig:
+            nets[name] = {"ssid": name, "signal": sig, "secure": bool(parts[3].strip() not in ("", "--")),
+                          "active": parts[0].strip() == "*" or bool(row and row["active"])}
+    return sorted(nets.values(), key=lambda n: (not n["active"], -n["signal"]))
+
+
+def wifi_match(wanted: str, nets: list):
+    """The network the user MEANT: "iphone von jace" is "iPhone von Jace",
+    "Jace's iPhone" too; exact beats contained beats the closest spelling."""
+    def norm(t):
+        t = (t or "").lower().replace("’", "'")
+        t = re.sub(r"'s\b|'", "", t)
+        return re.sub(r"[^a-z0-9äöüß]+", " ", t).strip()
+    w = norm(wanted)
+    if not w:
+        return None
+    names = {norm(n["ssid"]): n for n in nets}
+    if w in names:
+        return names[w]
+    wset = set(w.split())
+    hits = [n for k, n in names.items() if w in k or (len(k) >= 4 and k in w)]
+    if hits:
+        return max(hits, key=lambda n: (len(wset & set(norm(n["ssid"]).split())), n["signal"]))
+    scored = []
+    for k, n in names.items():
+        ratio = difflib.SequenceMatcher(None, w, k).ratio()
+        overlap = len(wset & set(k.split())) / max(1, len(wset))
+        scored.append((max(ratio, overlap), n))
+    scored.sort(key=lambda x: -x[0])
+    return scored[0][1] if scored and scored[0][0] >= 0.55 else None
+
+
+@tool("wifi.list", "", "read", "Wi-Fi networks in reach (name, signal, password or open, which one is joined).")
+def t_wifi_list():
+    nets = wifi_scan(True)
+    return {"ok": True, "networks": nets[:12], "count": len(nets)}
+
+
+@tool("wifi.connect", '{"ssid": "iPhone von Jace", "password": ""}', "write",
+      "Join a Wi-Fi network YOURSELF (you can — never tell the user to do it by hand). The name may be "
+      "approximate, it is matched against the networks in reach; give the password when the user said one.")
+def t_wifi_connect(ssid="", password=""):
+    nets = wifi_scan(True)
+    hit = wifi_match(ssid, nets)
+    if hit is None:
+        return {"ok": False, "error": f"kein WLAN namens „{ssid}“ in Reichweite",
+                "in_reach": [n["ssid"] for n in nets[:8]]}
+    name = hit["ssid"]
+    if hit.get("active"):
+        return {"ok": True, "ssid": name, "note": "schon verbunden"}
+    cmd = ["nmcli", "--wait", "25", "device", "wifi", "connect", name]
+    if password:
+        cmd += ["password", str(password)]
+    code, out, err = run(cmd, timeout=32)
+    if code != 0 and not password:
+        # a network joined before keeps its password in a saved profile
+        code2, out2, err2 = run(["nmcli", "--wait", "25", "connection", "up", "id", name], timeout=32)
+        if code2 == 0:
+            code, out, err = code2, out2, err2
+    if code != 0:
+        why = (err or out or "").strip().splitlines()[-1:] or ["connect failed"]
+        need_pw = hit.get("secure") and not password
+        return {"ok": False, "ssid": name, "error": why[0][:160],
+                "hint": "ask the user for the password" if need_pw else ""}
+    return {"ok": True, "ssid": name, "signal": hit.get("signal", 0)}
+
+
+@tool("wifi.toggle", '{"on": true}', "write", "Switch Wi-Fi on or off.")
+def t_wifi_toggle(on=True):
+    code, _, err = run(["nmcli", "radio", "wifi", "on" if on else "off"])
+    return {"ok": code == 0, "on": bool(on), "error": err}
+
+
+@tool("aim.open", "", "write",
+      "Open the hidden AIM TRAINER (a reflex mini-game in the shell) — for 'aim trainer', 'aim training', "
+      "'lass mich zielen üben', 'reaktionstest'.")
+def t_aim_open():
+    code, _, err = run(["qs", "-c", "velvet", "ipc", "call", "panels", "aim"], timeout=5)
+    return {"ok": code == 0, "note": "Esc beendet, eine Runde dauert 30 Sekunden", "error": err}
+
+
 @tool("media.control", '{"action": "play|pause|next|previous"}', "write", "Control the music that is playing.")
 def t_media_control(action=""):
     act = (action or "").lower()
@@ -3956,6 +4054,51 @@ STATE_TOPICS = {
 }
 
 
+JOKE_RE = re.compile(r"\b(witz\w*|joke|flachwitz\w*|bring mich zum lachen|was lustiges)\b", re.I)
+FRESH_RE = re.compile(r"\b(schon (online|raus|draußen|da|erschienen|verfügbar)|erschienen|release\w*|"
+                      r"veröffentlich\w*|rausgekommen|kommt raus|wann kommt|neueste\w*|aktuell\w*|update\w*|"
+                      r"patch\w*|news|nachrichten|was gibt'?s neues|gerade passiert|heute passiert|"
+                      r"wer hat gewonnen|ergebnis\w*|kurs|preis\w*|kostet)\b", re.I)
+WIFI_RE = re.compile(r"\b(wlan|wi-?fi|hotspot|netzwerk|internet)\b", re.I)
+
+# The house book: jokes that land when spoken. She picks one she has not
+# told lately (the memory history says which).
+JOKES = (
+    "Treffen sich zwei Magnete. Sagt der eine: „Was soll ich heute bloß anziehen?“",
+    "Was macht ein Pirat am Computer? Er drückt die Enter-Taste.",
+    "Warum können Seeräuber keinen Kreis berechnen? Weil sie Pi raten.",
+    "Was ist rot und schlecht für die Zähne? Ein Ziegelstein.",
+    "Ich wollte einen Witz über Zeitreisen erzählen — aber ihr habt ihn letzte Woche schon nicht gelacht.",
+    "Warum gehen Ameisen nicht in die Kirche? Weil sie Insekten sind.",
+    "Was sagt ein Gen, wenn es ein anderes trifft? Halogen!",
+    "Wie nennt man einen Bumerang, der nicht zurückkommt? Stock.",
+    "Was ist grün und klopft an die Tür? Ein Klopfsalat.",
+    "Sagt die Null zur Acht: „Schicker Gürtel!“",
+    "Warum hat der Mathematiker seine Frau verlassen? Sie hat etwas mit X gemacht.",
+    "Wie heißt ein Spanier ohne Auto? Carlos.",
+    "Was ist ein Keks unter einem Baum? Ein schattiges Plätzchen.",
+    "Was macht ein Clown im Büro? Faxen.",
+    "Warum war das Mathebuch so traurig? Es hatte zu viele Probleme.",
+    "Ich habe meinem WLAN einen Namen gegeben: „Hack mich, wenn du kannst“. Am nächsten Tag hieß es: „Herausforderung angenommen“.",
+    "Wie nennt man ein Rentier ohne Augen? Keine Ahnung.",
+    "Warum trinken Programmierer so viel Kaffee? Weil sie ohne Java nicht laufen.",
+    "Was ist braun, klebrig und läuft durch die Wüste? Ein Karamel.",
+    "Treffen sich zwei Kerzen. Fragt die eine: „Ist Wachs gefährlich?“ Sagt die andere: „Nein, nur wenn's brennt.“",
+    "Warum können Skelette so schlecht lügen? Man sieht sofort durch sie hindurch.",
+    "Was sitzt auf dem Baum und schreit „Aha“? Ein Uhu mit Sprachfehler.",
+    "Kommt ein Pferd in die Bar. Fragt der Barkeeper: „Warum so ein langes Gesicht?“",
+    "Was ist orange und wandert durch die Berge? Eine Wanderine.",
+)
+
+
+def pick_joke() -> str:
+    told = " ".join(str(h.get("text") or "") for h in (memory().get("history") or [])[-80:]
+                    if isinstance(h, dict) and h.get("role") == "velly")
+    import random                                              # noqa: PLC0415
+    fresh = [j for j in JOKES if j.split("?")[0].split("“")[0][:28] not in told]
+    return random.choice(fresh or list(JOKES))
+
+
 VELVET_TOPIC = re.compile(r"island|insel|look|theme|thema|design|aussehen|aussieht|rahmen|frame|taskleiste|leiste|"
                           r"\bbar\b|velvet|stil|style|glas|blur|unscharf|matt", re.I)
 
@@ -4041,6 +4184,20 @@ def context_block(text: str = "", actions=None, last_answer: str = "") -> str:
         bits.append("your last actions: " + " | ".join(actions[-4:]))
     if VELVET_TOPIC.search(text or ""):
         bits.append("velvet now: " + velvet_now())
+    # Her own jokes were the weakest thing she said ("Mathebuch-Computer …
+    # weil er immer nur \\n braucht"): she tells one from the house book,
+    # one she has not told lately, in her own voice.
+    if JOKE_RE.search(text or ""):
+        bits.append("joke to tell (tell THIS one, in your own words, punchline intact): " + pick_joke())
+    # Release dates, updates, news: what she remembers is old. She invented
+    # "erst 2027" for a Minecraft update that was already out.
+    if FRESH_RE.search(text or "") and not VELVET_TOPIC.search(text or ""):
+        bits.append("this asks for CURRENT facts (a release, an update, news, a price, a date that may have "
+                    "moved): call web.lookup FIRST and answer only from what it finds — never from memory; "
+                    "found nothing → say so in one sentence")
+    if WIFI_RE.search(text or ""):
+        bits.append("wi-fi: you can do it yourself — wifi.list to see what is in reach, wifi.connect with the "
+                    "name (approximate is fine) and the password the user gave; report the result in one line")
     if last_answer and OFFER_RE.search(last_answer.strip()) and is_yes(text):
         bits.append("the user said YES to what you offered at the end of your last answer: do exactly that now, with "
                     "your tools. If the offer left a choice open (left or right, which one), ask which in one short "

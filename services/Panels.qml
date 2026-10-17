@@ -207,6 +207,28 @@ Singleton {
     // Closes the overlays — the launcher, the centre, the menus. The settings
     // WINDOW stays: doing something else never closes it (v8.40); only its own
     // close button, Escape on HOME, Super+Tab or closeSettings() do.
+    // the secret aim trainer (modules/aim)
+    property bool aim: false
+
+    function openAim(): void {
+        root.closeAll();
+        root.aim = true;
+    }
+
+    // ↑ ↑ ↓ ↓ ← → ← → B A, fed by whatever has the keyboard (the island)
+    property var konami: []
+    function konamiKey(key: int): bool {
+        const code = [Qt.Key_Up, Qt.Key_Up, Qt.Key_Down, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right, Qt.Key_Left, Qt.Key_Right, Qt.Key_B, Qt.Key_A];
+        const k = root.konami.concat([key]).slice(-code.length);
+        root.konami = k;
+        if (k.length === code.length && k.every((v, i) => v === code[i])) {
+            root.konami = [];
+            root.openAim();
+            return true;
+        }
+        return false;
+    }
+
     function closeAll(): void {
         root.launcher = false;
         root.notifCentre = false;
@@ -396,6 +418,9 @@ Singleton {
         }
         function keys(): void {
             root.toggleKeys();
+        }
+        function aim(): void {
+            root.openAim();
         }
     }
 
