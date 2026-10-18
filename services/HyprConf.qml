@@ -246,7 +246,9 @@ input {
 
 # Key menu changes land here, applied last:
 ${Binds.confBinds}
-`
+
+# The screens at their best (services/Monitors.qml), after your own lines:
+${Monitors.confRules}`
 
     // ----------------------------------------------------------------- lua out
     readonly property string luaContents: `-- ─────────────────────────────────────────────────────────────
@@ -302,7 +304,10 @@ hl.config({
 
 -- Key menu changes land here, applied last:
 ${Binds.luaBinds}
-`
+
+-- The screens at their best (services/Monitors.qml — DISPLAY → AUTO SCREEN
+-- SETUP): after hyprland.lua's monitor lines, so these win at login.
+${Monitors.luaRules}`
 
     readonly property string fileContents: root.lua ? root.luaContents : root.confContents
     readonly property string filePath: `${root.hyprDir}/${root.lua ? "velvet.lua" : "velvet.conf"}`

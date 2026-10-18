@@ -31,6 +31,16 @@ Singleton {
     readonly property var home: adapter.home
     readonly property var velly: adapter.velly
     readonly property var pad: adapter.pad
+    readonly property var display: adapter.display
+
+    // DISPLAY → RESOLUTION's choices, filled by services/Monitors.qml from
+    // the screen itself (Schema reads them here: no service in config/).
+    property var monitorModes: [
+        {
+            value: "auto",
+            label: "AUTO"
+        }
+    ]
 
     property bool loaded: false
 

@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+#  VELVET  ·  bin/velvet-monitors
+#  What every connected screen is, and what suits it best: its own (native)
+#  resolution, the fastest refresh at it, and a scale that fits its size.
+#  Prints one JSON list; services/Monitors.qml reads it and sets the screens.
+#
+#  The screen's own resolution is the panel's: the first detailed timing in
+#  its EDID (a cheap 26" panel says 1366x768 there and still offers 1920x1080,
+#  which it can only show blurred). Its size is in the same block — the EDID
+#  header often says 0 x 0 cm, which is why Hyprland reports 0 mm.
+#
+#    velvet-monitors            JSON for every screen
+#    velvet-monitors --selftest the picking rules on made-up screens
+import glob
+import json
+import math
+import re
+import subprocess
+import sys
+
+SCALES = (1.0, 1.25, 1.5, 1.6, 1.75, 2.0, 2.5, 3.0)
+
+
+def edid_of(name: str) -> dict:
+    """{'native': [w, h], 'mm': [w, h]} from the connector's EDID, if any."""
+    for path in glob.glob(f"/sys/class/drm/card*-{name}/edid"):
+        try:
+            with open(path, "rb") as fh:
+                e = fh.read()
+        except OSError:
+            continue
+        if len(e) < 128 or e[:8] != b"\x00\xff\xff\xff\xff\xff\xff\x00":
+            continue
+        out = {}
+        if e[21] and e[22]:
+            out["mm"] = [e[21] * 10, e[22] * 10]
+        d = e[54:72]
+        if d[0] or d[1]:                       # a detailed timing, not a text block
+            w = d[2] | ((d[4] & 0xF0) << 4)
+            h = d[5] | ((d[7] & 0xF0) << 4)
+            if d[17] & 0x80:                   # interlaced: the frame is twice the field
+                h *= 2
+            if w and h:
+                out["native"] = [w, h]
+            mw = d[12] | ((d[14] & 0xF0) << 4)
+            mh = d[13] | ((d[14] & 0x0F) << 8)
+            if mw and mh:
+                out["mm"] = [mw, mh]
+        return out
+    return {}
+
+
+def parse_mode(text: str):
+    m = re.match(r"^(\d+)x(\d+)@([\d.]+)", str(text or ""))
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), float(m.group(3))
+
+
+def mode_str(w: int, h: int, rr: float) -> str:
+    return f"{w}x{h}@{rr:.2f}"
+
+
+def best_mode(modes: list, native) -> tuple:
+    """The screen's own resolution at its fastest refresh. Without a native
+    resolution: the first one the screen lists (the kernel puts its
+    preferred mode first), else the biggest that runs at 50 Hz or more."""
+    parsed = [p for p in (parse_mode(m) for m in modes) if p]
+    if not parsed:
+        return None
+    want = None
+    if native and any((p[0], p[1]) == tuple(native) for p in parsed):
+        want = tuple(native)
+    if want is None:
+        want = (parsed[0][0], parsed[0][1])
+    at = [p for p in parsed if (p[0], p[1]) == want]
+    if not at:
+        smooth = [p for p in parsed if p[2] >= 49] or parsed
+        biggest = max(smooth, key=lambda p: (p[0] * p[1], p[2]))
+        at = [p for p in parsed if (p[0], p[1]) == (biggest[0], biggest[1])]
+    return max(at, key=lambda p: p[2])
+
+
+def best_scale(w: int, h: int, mm) -> float:
+    """About 110 logical dots an inch: a 27" 4K screen gets 1.5, a 14" laptop
+    at 2560x1600 gets 2, anything coarse (a 26" 1366x768 panel, a television
+    across the room) stays at 1 — never below: that only blurs."""
+    want = 1.0
+    if mm and 50 < mm[0] < 1500 and 30 < mm[1] < 1000:
+        ppi = math.hypot(w, h) / (math.hypot(mm[0], mm[1]) / 25.4)
+        want = ppi / 110.0
+    elif h > 2160:
+        want = 2.0
+    elif h > 1600:
+        want = 1.5
+    if want < 1.12:
+        return 1.0
+    clean = [s for s in SCALES if abs(w / s - round(w / s)) < 1e-6 and abs(h / s - round(h / s)) < 1e-6]
+    return min(clean or [1.0], key=lambda s: abs(s - want))
+
+
+def screens() -> list:
+    try:
+        raw = subprocess.run(["hyprctl", "monitors", "all", "-j"], capture_output=True, text=True, timeout=5).stdout
+        mons = json.loads(raw or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for m in mons:
+        name = str(m.get("name") or "")
+        if not name:
+            continue
+        modes = []
+        seen = set()
+        for text in m.get("availableModes") or []:
+            p = parse_mode(text)
+            if not p:
+                continue
+            key = (p[0], p[1], round(p[2], 1))
+            if key in seen:
+                continue
+            seen.add(key)
+            modes.append(mode_str(*p))
+        edid = edid_of(name)
+        mm = edid.get("mm")
+        if not mm and m.get("physicalWidth") and m.get("physicalHeight"):
+            mm = [int(m["physicalWidth"]), int(m["physicalHeight"])]
+        best = best_mode(modes, edid.get("native"))
+        if best is None:
+            continue
+        out.append({
+            "name": name,
+            "description": str(m.get("description") or ""),
+            "disabled": bool(m.get("disabled")),
+            "current": {"w": int(m.get("width") or 0), "h": int(m.get("height") or 0),
+                        "rr": float(m.get("refreshRate") or 0), "scale": float(m.get("scale") or 1),
+                        "x": int(m.get("x") or 0), "y": int(m.get("y") or 0)},
+            "modes": modes,
+            "native": edid.get("native"),
+            "mm": mm,
+            "best": {"mode": mode_str(*best), "w": best[0], "h": best[1], "rr": round(best[2], 2),
+                     "scale": best_scale(best[0], best[1], mm)},
+        })
+    return out
+
+
+def selftest() -> int:
+    problems = []
+    tv = ["1366x768@59.96Hz", "1920x1080@60.00Hz", "1280x720@60.00Hz", "720x400@70.08Hz"]
+    b = best_mode(tv, [1366, 768])
+    if b[:2] != (1366, 768):
+        problems.append(f"native first: {b}")
+    gamer = ["2560x1440@59.95Hz", "2560x1440@143.97Hz", "1920x1080@60.00Hz"]
+    if best_mode(gamer, [2560, 1440])[2] < 143:
+        problems.append("fastest refresh at the native resolution")
+    if best_mode(["3840x2160@30.00Hz", "2560x1440@60.00Hz"], None)[:2] != (3840, 2160):
+        problems.append("no EDID: the first listed mode")
+    cases = [((1366, 768, [575, 323]), 1.0), ((3840, 2160, [597, 336]), 1.5), ((2560, 1440, [597, 336]), 1.0),
+             ((2560, 1600, [302, 189]), 2.0), ((1920, 1080, [294, 165]), 1.5), ((1920, 1080, None), 1.0),
+             ((3840, 2160, [1210, 680]), 1.0), ((3840, 2160, None), 1.5)]
+    for (w, h, mm), want in cases:
+        got = best_scale(w, h, mm)
+        if got != want:
+            problems.append(f"scale {w}x{h} {mm}: {got} (want {want})")
+    if problems:
+        print("velvet-monitors selftest: FAILED")
+        for p in problems:
+            print("  ·", p)
+        return 1
+    print(f"velvet-monitors selftest: ok  ({len(screens())} screen(s) now)")
+    return 0
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv[1:]:
+        sys.exit(selftest())
+    print(json.dumps(screens(), ensure_ascii=False))

@@ -815,4 +815,15 @@ JsonAdapter {
         // questions — measured), and comes back when she sleeps.
         property bool duckMedia: true
     }
+
+    // ================================================================ DISPLAY
+    //  The screens themselves (services/Monitors.qml). Never part of a look.
+    property JsonObject display: JsonObject {
+        // Velvet sets every screen to its own resolution, the fastest refresh
+        // at it and a scale for its size — at start, on plug-in, after a
+        // config reload. Off: the monitor lines of hyprland.lua decide.
+        property bool manage: true
+        property string mode: "auto"     // "auto" or "1920x1080@60.00"
+        property string scale: "auto"    // "auto" or "1", "1.25", "1.5" …
+    }
 }

@@ -127,7 +127,7 @@ Singleton {
         },
         {
             name: "DISPLAY",
-            sub: "BRIGHTNESS · NIGHT LIGHT · IDLE",
+            sub: "RESOLUTION · SCALE · BRIGHTNESS · NIGHT LIGHT",
             icon: "light_mode",
             items: root.display
         },
@@ -3345,6 +3345,41 @@ Singleton {
 
     // ================================================================ DISPLAY
     readonly property var display: [
+        {
+            kind: "toggle",
+            key: "display.manage",
+            name: "AUTO SCREEN SETUP",
+            aka: "RESOLUTION AUTO · AUFLÖSUNG AUTOMATISCH · SCREEN SIZE",
+            help: "Velvet reads every screen itself — its own resolution and its size, from the screen's EDID — and sets the sharpest resolution, the fastest refresh at it and a scale that suits its size: at every start, whenever a screen is plugged in, and again after a Hyprland config reload. Written into velvet.lua too, so the next login starts right. Off: the monitor lines in your hyprland.lua decide.",
+            sub: "THE SCREEN'S OWN RESOLUTION AND THE RIGHT SIZE — AUTOMATICALLY"
+        },
+        {
+            kind: "choice",
+            key: "display.mode",
+            name: "RESOLUTION",
+            aka: "AUFLÖSUNG · REFRESH RATE · HZ · MODE",
+            help: "AUTO is the screen's own resolution (the sharpest — anything else is scaled and soft) at the fastest refresh it offers there. Pick another to override it; it only applies to a screen that offers that mode, and only while AUTO SCREEN SETUP is on.",
+            sub: "AUTO = THE SCREEN'S OWN, AT ITS FASTEST REFRESH",
+            options: Config.monitorModes
+        },
+        {
+            kind: "choice",
+            key: "display.scale",
+            name: "SCALE",
+            aka: "SKALIERUNG · UI SIZE · GRÖSSE · ZOOM",
+            help: "How big everything is drawn. AUTO aims at about 110 logical dots per inch from the screen's real size: 1 on ordinary and coarse screens, 1.5 on a 27\" 4K, 2 on a sharp laptop panel — never below 1, which only blurs. Pick a number to override it.",
+            sub: "AUTO = FITS THE SCREEN'S SIZE",
+            options: [
+                { value: "auto", label: "AUTO" },
+                { value: "1", label: "1× · 100 %" },
+                { value: "1.25", label: "1.25× · 125 %" },
+                { value: "1.5", label: "1.5× · 150 %" },
+                { value: "1.75", label: "1.75× · 175 %" },
+                { value: "2", label: "2× · 200 %" },
+                { value: "2.5", label: "2.5× · 250 %" },
+                { value: "3", label: "3× · 300 %" }
+            ]
+        },
         {
             kind: "slider",
             live: "brightness",

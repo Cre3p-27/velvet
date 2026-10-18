@@ -42,3 +42,4 @@ singleton WinTheme 1.0 WinTheme.qml
 singleton ZoomPlugin 1.0 ZoomPlugin.qml
 singleton WorkspaceModes 1.0 WorkspaceModes.qml
 singleton Updates 1.0 Updates.qml
+singleton Monitors 1.0 Monitors.qml
