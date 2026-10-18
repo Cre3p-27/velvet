@@ -875,9 +875,13 @@ FloatingWindow {
     title: "Velvet Settings"
     visible: rendered
     color: Colours.paper
-    implicitWidth: Config.home.winW > 0 ? Config.home.winW : Math.round((Hypr.focusedScreen?.width ?? 1920) * 0.72)
-    implicitHeight: Config.home.winH > 0 ? Config.home.winH : Math.round((Hypr.focusedScreen?.height ?? 1080) * 0.8)
-    minimumSize: Qt.size(980, 640)
+    // the size you gave it, but never bigger than the screen it opens on (a
+    // window sized on a big monitor came back half off a small one).
+    readonly property int fitW: Math.max(800, (Hypr.focusedScreen?.width ?? 1920) - 48)
+    readonly property int fitH: Math.max(560, (Hypr.focusedScreen?.height ?? 1080) - 64)
+    implicitWidth: Math.min(root.fitW, Config.home.winW > 0 ? Config.home.winW : Math.round((Hypr.focusedScreen?.width ?? 1920) * 0.72))
+    implicitHeight: Math.min(root.fitH, Config.home.winH > 0 ? Config.home.winH : Math.round((Hypr.focusedScreen?.height ?? 1080) * 0.8))
+    minimumSize: Qt.size(Math.min(980, root.fitW), Math.min(640, root.fitH))
 
     // the size you gave it comes back next time
     onWidthChanged: sizeSave.restart()
