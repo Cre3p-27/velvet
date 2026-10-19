@@ -590,12 +590,16 @@ FloatingWindow {
                 }
             ] : root.pane === "looks" ? [
                 {
-                    k: "← →",
+                    k: "ARROWS",
                     v: "PICK A LOOK"
                 },
                 {
                     k: "ENTER",
-                    v: "PUT IT ON"
+                    v: "OPEN · AGAIN PUTS IT ON"
+                },
+                {
+                    k: "/",
+                    v: "SEARCH"
                 },
                 {
                     k: "BACKSPACE",

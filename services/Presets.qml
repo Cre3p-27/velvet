@@ -125,6 +125,8 @@ Singleton {
     // Your names for the looks ({ id: "NAME" }); a saved look keeps its name in
     // its own entry. LOOKS → click a name to change it.
     property var names: ({})
+    // When each look was last put on ({ id: ms }) — the store's RECENT order.
+    property var wornAt: ({})
 
     function nameOf(look: var): string {
         if (!look)
@@ -1897,6 +1899,9 @@ Singleton {
                 batch[k] = root.copy(root.before[k]);
         Config.setMany(batch);
         root.applied = id;
+        root.wornAt = Object.assign({}, root.wornAt, {
+            [id]: Date.now()
+        });
         root.persist();
         return true;
     }
@@ -2036,7 +2041,8 @@ Singleton {
             applied: root.applied,
             withColours: root.withColours,
             tunes: root.tunes,
-            names: root.names
+            names: root.names,
+            wornAt: root.wornAt
         }, null, 1));
     }
 
@@ -2054,6 +2060,7 @@ Singleton {
                 root.withColours = d.withColours ?? true;
                 root.tunes = root.sane(d.tunes ?? ({}));
                 root.names = d.names ?? ({});
+                root.wornAt = d.wornAt ?? ({});
             } catch (e) {}
             root.loaded = true;
         }
