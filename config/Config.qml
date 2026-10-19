@@ -73,7 +73,7 @@ Singleton {
             "appearance.skin": ["persona", "console", "arcade", "hud", "ledger", "glass", "tome", "poster", "clean", "win"],
             "appearance.typeStyle": ["persona", "soft", "mono", "serif", "block", "arcade", "tech", "clean", "win"],
             "appearance.backdrop": ["persona", "plain", "grid", "dots", "checker", "ruled", "vignette", "aurora"],
-            "appearance.vibe": ["", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "minimal", "flat", "neu", "clay", "windows"],
+            "appearance.vibe": ["", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "minimal", "flat", "neu", "clay", "windows", "ink", "chrome"],
             "sfx.pack": ["velvet", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"]
         })
 

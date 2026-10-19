@@ -181,7 +181,7 @@ PanelWindow {
     Rectangle {
         visible: root.mode === "fade"
         anchors.fill: parent
-        color: Colours.alpha(root.vibe === "glass" || root.vibe === "clean" || root.vibe === "windows" ? Colours.paper : Colours.accent, 0.5 * root.env(root.t))
+        color: Colours.alpha(root.vibe === "glass" || root.vibe === "chrome" || root.vibe === "clean" || root.vibe === "windows" ? Colours.paper : Colours.accent, 0.5 * root.env(root.t))
     }
 
     // ── the name, on a plate of its own so it reads over any wipe

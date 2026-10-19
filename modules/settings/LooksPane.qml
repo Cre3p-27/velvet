@@ -96,12 +96,15 @@ FocusScope {
                 if (!words.every(w => h.indexOf(w) >= 0))
                     continue;
             }
+            // AS DESIGNED: VELVET first, then what is new, then the rest
             list.push({
                 look: l,
-                order: i
+                order: l.original === true ? -1000 : (l.isNew === true ? -500 + i : i)
             });
         }
-        if (root.sortBy === "az")
+        if (root.sortBy === "featured")
+            list.sort((a, b) => a.order - b.order);
+        else if (root.sortBy === "az")
             list.sort((a, b) => Presets.nameOf(a.look).localeCompare(Presets.nameOf(b.look)) || a.order - b.order);
         else if (root.sortBy === "recent") {
             const w = Presets.wornAt ?? ({});
@@ -1195,6 +1198,12 @@ FocusScope {
                         ink: Colours.on(Colours.accent)
                     }
                     Badge {
+                        visible: tile.look?.isNew === true && !tile.on
+                        text: "NEW"
+                        fill: Colours.accent
+                        ink: Colours.on(Colours.accent)
+                    }
+                    Badge {
                         visible: tile.look?.custom === true
                         text: "YOURS"
                         fill: Colours.alpha(Colours.surface, 0.85)
@@ -1388,7 +1397,7 @@ FocusScope {
     component Hero: Item {
         id: heroRoot
 
-        readonly property var picks: ["velvet", "glass", "sakura", "cyber", "clay", "win11", "ember", "arcade", "neu"].map(id => Presets.find(id)).filter(l => l)
+        readonly property var picks: ["ink", "chrome", "velvet", "glass", "sakura", "cyber", "clay", "win11", "ember", "arcade", "neu"].map(id => Presets.find(id)).filter(l => l)
         property int at: 0
         property int prev: -1
         readonly property var look: heroRoot.picks.length > 0 ? heroRoot.picks[Math.min(heroRoot.at, heroRoot.picks.length - 1)] : null
@@ -1502,7 +1511,7 @@ FocusScope {
                             }
 
                             P5Text {
-                                text: `FEATURED · ${({
+                                text: `${slide.modelData.isNew === true ? "NEW" : "FEATURED"} · ${({
                                         vibes: "VIBE",
                                         classic: slide.modelData.original === true ? "THE ORIGINAL" : "CLASSIC",
                                         windows: "WINDOWS",
@@ -2302,6 +2311,7 @@ FocusScope {
         Backdrop {
             anchors.fill: parent
             kind: vc.look?.backdrop ?? "plain"
+            palette: vc.look?.settings?.["appearance.auroraPalette"] ?? "violet"
             colour: vc.inkC
             step: 38 * vc.u
         }

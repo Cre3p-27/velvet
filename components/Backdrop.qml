@@ -12,6 +12,8 @@ Item {
     id: root
 
     property string kind: Config.appearance.backdrop
+    // the aurora's colours (a look's card shows its own)
+    property string palette: Config.appearance.auroraPalette
     property color colour: Colours.ink
     // How loud the pattern is, 0..1 (a few percent is plenty).
     property real strength: 1.0
@@ -54,7 +56,7 @@ Item {
                 sunset: ["#ff7a59", "#ffb347", "#ff4f8b", "#8a4fff", "#ffd6a5"],
                 forest: ["#2bd48a", "#8be04a", "#1aa6a0", "#3a8f5a", "#c6f5a6"],
                 mono: ["#ffffff", "#cfd8ff", "#9aa3c7", "#ffffff", "#d7dcf0"]
-            })[Config.appearance.auroraPalette] ?? ["#8b6cff", "#3ee0ff", "#ff6fb5", "#4a90ff", "#c4a7ff"];
+            })[root.palette] ?? ["#8b6cff", "#3ee0ff", "#ff6fb5", "#4a90ff", "#c4a7ff"];
         return [
             { x: 0.14, y: 0.18, r: 0.6, c: pal[0], a: 0.8 },
             { x: 0.88, y: 0.14, r: 0.5, c: pal[1], a: 0.62 },

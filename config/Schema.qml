@@ -2009,7 +2009,7 @@ Singleton {
     // ============================================================ THIS LOOK
     readonly property var thisLook: {
         const v = id => ({ key: "appearance.vibe", is: id });
-        const glass = { key: "appearance.vibe", is: "glass" };
+        const glass = { key: "appearance.vibe", in: ["glass", "chrome"] };
         const soft = { key: "appearance.vibe", in: ["neu", "clay"] };
         const quiet = { key: "appearance.skin", is: "clean" };
         const persona = { key: "appearance.skin", is: "persona" };
