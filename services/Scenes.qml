@@ -347,6 +347,46 @@ Singleton {
             root.follow(list[i]);
     }
 
+    // The desk arranged right on the desktop (modules/wallpaper/ArrangeDesk):
+    // the LIVE scene, by the item's id — whatever the DESKTOP designer has on
+    // its table. A wallpaper that showed the EVERYWHERE desk gets its own
+    // with the first change, as in the designer.
+    function patchLive(id: string, fields: var): void {
+        const list = root.items.slice();
+        const i = list.findIndex(it => it && it.id === id);
+        if (i < 0)
+            return;
+        list[i] = Object.assign({}, list[i], fields);
+        const next = Object.assign({}, root.store);
+        next[root.key] = list;
+        root.store = next;
+        root.persist();
+        root.writes = root.writes + 1;
+        savedToast.restart();
+        if (!root.editingElsewhere && list[i].kind !== "widget") {
+            const win = root.windowFor(list[i]);
+            if (win)
+                root.place(list[i], win);
+        }
+    }
+
+    function removeLive(id: string): void {
+        const list = root.items.slice();
+        const i = list.findIndex(it => it && it.id === id);
+        if (i < 0)
+            return;
+        const before = root.items.slice();
+        root.snapshot(`TOOK OFF ${root.labelFor(list[i]).toUpperCase()}`);
+        list.splice(i, 1);
+        const next = Object.assign({}, root.store);
+        next[root.key] = list;
+        root.store = next;
+        root.persist();
+        root.closeOrphans(before);
+        root.writes = root.writes + 1;
+        savedToast.restart();
+    }
+
     function removeAt(i: int): void {
         if (i < 0 || i >= root.editing.length)
             return;

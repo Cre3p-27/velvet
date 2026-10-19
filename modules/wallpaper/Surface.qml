@@ -12,6 +12,7 @@
 //  Nothing here runs while the pointer is away: every value settles and
 //  every animation stops, so a still desktop still costs nothing.
 import qs.config
+import qs.services
 import QtQuick
 
 Item {
@@ -28,6 +29,8 @@ Item {
     property bool scrollable: false
     // Right-click opens the widget in DESKTOP (WidgetActions.edit).
     property bool editable: true
+    // A long press lifts the desk to be arranged by hand (ARRANGE).
+    property bool arrangeable: true
     // How far it comes up to meet the pointer, and how far it leans.
     property real lift: 0.05
     property real tilt: 6
@@ -167,6 +170,16 @@ Item {
         enabled: root.active
         acceptedButtons: Qt.LeftButton | Qt.RightButton
         containmentMask: root.round ? ellipse : null
+        pressAndHoldInterval: 480
+
+        // held: the desk lifts (the click does not fire as well)
+        onPressAndHold: mouse => {
+            if (!root.arrangeable || mouse.button !== Qt.LeftButton) {
+                mouse.accepted = false;
+                return;
+            }
+            Panels.openArrange("");
+        }
 
         property real wheelAcc: 0
         property bool holding: false

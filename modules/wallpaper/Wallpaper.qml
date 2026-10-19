@@ -429,18 +429,32 @@ PanelWindow {
         property string listJson: "[]"
         property string listKey: ""
         property int epoch: 0
+        // another desk (a new wallpaper, another look): its widgets appear in
+        // place — only a move on the SAME desk glides
+        property bool jumping: false
 
         function sync(): void {
             const next = Scenes.liveWidgets();
             const j = JSON.stringify(next);
+            const otherDesk = Scenes.key !== widgetLayer.listKey;
+            if (otherDesk)
+                widgetLayer.jumping = true;
             if (j !== widgetLayer.listJson) {
                 widgetLayer.listJson = j;
                 widgetLayer.list = next;
             }
-            if (Scenes.key !== widgetLayer.listKey) {
+            if (otherDesk) {
                 widgetLayer.listKey = Scenes.key;
                 widgetLayer.epoch++;
+                unjump.restart();
             }
+        }
+
+        Timer {
+            id: unjump
+
+            interval: 60
+            onTriggered: widgetLayer.jumping = false
         }
 
         Component.onCompleted: widgetLayer.sync()
@@ -491,6 +505,42 @@ PanelWindow {
                 y: parent.height * slot.fy
                 width: parent.width * slot.fw
                 height: parent.height * slot.fh
+
+                // moved on the desk (ARRANGE, the DESKTOP tab): it glides there
+                property bool placed: false
+                Behavior on x {
+                    enabled: slot.placed && !widgetLayer.jumping
+                    NumberAnimation {
+                        duration: Appearance.anim.slow
+                        easing.type: Easing.OutCubic
+                    }
+                }
+                Behavior on y {
+                    enabled: slot.placed && !widgetLayer.jumping
+                    NumberAnimation {
+                        duration: Appearance.anim.slow
+                        easing.type: Easing.OutCubic
+                    }
+                }
+                Behavior on width {
+                    enabled: slot.placed && !widgetLayer.jumping
+                    NumberAnimation {
+                        duration: Appearance.anim.slow
+                        easing.type: Easing.OutCubic
+                    }
+                }
+                Behavior on height {
+                    enabled: slot.placed && !widgetLayer.jumping
+                    NumberAnimation {
+                        duration: Appearance.anim.slow
+                        easing.type: Easing.OutCubic
+                    }
+                }
+                Timer {
+                    running: true
+                    interval: 50
+                    onTriggered: slot.placed = true
+                }
 
                 // The glide-in: staggered, so a wall of widgets arrives as
                 // a wave rather than a pop. WALLPAPER → LIVING → GLIDE IN.
@@ -718,7 +768,7 @@ PanelWindow {
                                 color: Colours.alpha(Colours.accent, 0.8)
                             }
                             P5Text {
-                                text: "RIGHT-CLICK TO EDIT"
+                                text: "HOLD TO ARRANGE · RIGHT-CLICK TO EDIT"
                                 color: Colours.alpha(Colours.inkDim, 0.85)
                                 font.pixelSize: Appearance.font.size.tiny
                                 font.weight: Font.DemiBold

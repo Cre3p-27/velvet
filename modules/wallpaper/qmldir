@@ -9,3 +9,5 @@ singleton WidgetActions 1.0 WidgetActions.qml
 SoftWidget 1.0 SoftWidget.qml
 DesktopMenu 1.0 DesktopMenu.qml
 DesktopMenuCard 1.0 DesktopMenuCard.qml
+ArrangeDesk 1.0 ArrangeDesk.qml
+DeskArrange 1.0 DeskArrange.qml

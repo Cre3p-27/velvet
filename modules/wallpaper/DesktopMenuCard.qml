@@ -25,6 +25,18 @@ Plate {
 
     signal done
 
+    // DesktopMenu says when the card is up: the lines arrive one by one
+    property bool entered: true
+    property real reveal: root.entered ? 1 : 0
+    Behavior on reveal {
+        NumberAnimation {
+            duration: Appearance.anim.slow
+            easing.type: Easing.OutCubic
+        }
+    }
+    // the line under the pointer: ONE plate glides from line to line
+    property Item hotLine: null
+
     width: 420
     height: body.height + 2 * Appearance.spacing.normal
     radius: Appearance.rounding.normal
@@ -74,19 +86,17 @@ Plate {
         property string label: ""
         property string hint: ""
         property bool open: false
+        property int order: 0
+        readonly property bool lit: root.hotLine === line
+        // its share of the card's arrival
+        readonly property real here: Math.max(0, Math.min(1, (root.reveal - line.order * 0.07) / 0.45))
         signal activated
 
         width: parent?.width ?? 0
         height: 42
-
-        Slash {
-            anchors.fill: parent
-            color: area.containsMouse ? Colours.accent : "transparent"
-            Behavior on color {
-                ColorAnimation {
-                    duration: Appearance.anim.fast
-                }
-            }
+        opacity: line.here
+        transform: Translate {
+            x: (1 - line.here) * -16
         }
 
         Row {
@@ -98,16 +108,36 @@ Plate {
             Icon {
                 anchors.verticalCenter: parent.verticalCenter
                 name: line.icon
-                color: area.containsMouse ? Colours.paper : Colours.accent
+                color: line.lit ? Colours.paper : Colours.accent
                 font.pixelSize: 21
+                scale: line.lit ? 1.12 : 1
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: Appearance.anim.fast
+                    }
+                }
+                Behavior on scale {
+                    SpringAnimation {
+                        spring: 6
+                        damping: 0.38
+                        epsilon: 0.002
+                    }
+                }
             }
 
             P5Text {
                 anchors.verticalCenter: parent.verticalCenter
                 display: true
                 text: line.label
-                color: area.containsMouse ? Colours.paper : Colours.ink
+                color: line.lit ? Colours.paper : Colours.ink
                 font.pixelSize: Appearance.font.size.normal
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: Appearance.anim.fast
+                    }
+                }
             }
         }
 
@@ -116,7 +146,7 @@ Plate {
             anchors.rightMargin: 14
             anchors.verticalCenter: parent.verticalCenter
             text: line.open ? "▾" : line.hint
-            color: area.containsMouse ? Colours.alpha(Colours.paper, 0.85) : Colours.inkDim
+            color: line.lit ? Colours.alpha(Colours.paper, 0.85) : Colours.inkDim
             font.pixelSize: Appearance.font.size.tiny
             tracking: 2
         }
@@ -127,8 +157,78 @@ Plate {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onEntered: Sfx.cursor()
+            onEntered: {
+                root.hotLine = line;
+                Sfx.cursor();
+            }
+            onExited: {
+                if (root.hotLine === line)
+                    root.hotLine = null;
+            }
+            onPressed: pressPlate.restart()
             onClicked: line.activated()
+        }
+    }
+
+    // the plate under the pointer's line: it glides, it does not blink
+    Slash {
+        id: plate
+
+        readonly property Item line: root.hotLine
+        property real atY: 0
+        property real atH: 42
+
+        x: body.x
+        width: body.width
+        y: plate.atY
+        height: plate.atH
+        color: Colours.accent
+        opacity: plate.line ? 1 : 0
+        scale: pressScale.value
+        transformOrigin: Item.Center
+
+        onLineChanged: {
+            if (plate.line) {
+                plate.atY = body.y + plate.line.y;
+                plate.atH = plate.line.height;
+            }
+        }
+
+        Behavior on atY {
+            enabled: plate.opacity > 0.05
+            SpringAnimation {
+                spring: 5.5
+                damping: 0.42
+                epsilon: 0.2
+            }
+        }
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Appearance.anim.fast
+            }
+        }
+
+        QtObject {
+            id: pressScale
+
+            property real value: 1
+        }
+        SequentialAnimation {
+            id: pressPlate
+
+            NumberAnimation {
+                target: pressScale
+                property: "value"
+                to: 0.96
+                duration: 70
+            }
+            SpringAnimation {
+                target: pressScale
+                property: "value"
+                to: 1
+                spring: 6
+                damping: 0.35
+            }
         }
     }
 
@@ -172,7 +272,19 @@ Plate {
         }
 
         Line {
+            icon: "open_with"
+            order: 1
+            label: "ARRANGE THE DESK"
+            hint: "RIGHT HERE · DRAG"
+            onActivated: {
+                root.done();
+                Panels.openArrange("");
+            }
+        }
+
+        Line {
             icon: "edit"
+            order: 2
             label: "EDIT DESKTOP"
             hint: "WIDGETS · WINDOWS"
             onActivated: {
@@ -183,6 +295,7 @@ Plate {
 
         Line {
             icon: "widgets"
+            order: 3
             label: "ADD WIDGET HERE"
             hint: "AT THE POINTER"
             open: root.adding
@@ -254,6 +367,7 @@ Plate {
         Line {
             visible: Config.wallpaper.wheel
             icon: "wallpaper"
+            order: 4
             label: "CHANGE WALLPAPER"
             hint: "SUPER+W"
             onActivated: {
@@ -264,6 +378,7 @@ Plate {
 
         Line {
             icon: "palette"
+            order: 5
             label: Looks.hasLook ? "UPDATE ITS LOOK" : "SAVE ITS LOOK"
             hint: "ALL SETTINGS"
             onActivated: root.saveLook()
@@ -271,6 +386,7 @@ Plate {
 
         Line {
             icon: "tune"
+            order: 6
             label: "PER WALLPAPER"
             hint: "WHAT IT HOLDS"
             onActivated: {

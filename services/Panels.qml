@@ -73,6 +73,9 @@ Singleton {
     // The desktop's right-click menu: the screen it is up on ("" = closed)
     // and the pixel under the pointer there.
     property string deskMenuScreen: ""
+    // ARRANGE: the desk lifted off the screen to be arranged by hand
+    // (modules/wallpaper/DeskArrange.qml) — the screen it is on, "" = closed
+    property string arrangeScreen: ""
     property real deskMenuX: 0
     property real deskMenuY: 0
 
@@ -169,7 +172,7 @@ Singleton {
     //  you stay on the desktop you opened the overlay on. The window is
     //  short, so a workspace you pick yourself right after is left alone.
     // (The settings window is a window: it never holds the keyboard hostage.)
-    readonly property bool anyOpen: root.launcher || root.notifCentre || root.session || root.wheel || root.keys || root.deskMenuScreen !== ""
+    readonly property bool anyOpen: root.launcher || root.notifCentre || root.session || root.wheel || root.keys || root.deskMenuScreen !== "" || root.arrangeScreen !== ""
     property int wsAtOpen: -1
     property real closedAt: 0
 
@@ -237,6 +240,16 @@ Singleton {
         root.keys = false;
         root.deskMenuScreen = "";
         root.islandScreen = "";
+        root.arrangeScreen = "";
+    }
+
+    function openArrange(screenName: string): void {
+        root.closeAll();
+        root.arrangeScreen = screenName || Hypr.focusedScreen?.name || Quickshell.screens[0]?.name || "screen";
+    }
+
+    function closeArrange(): void {
+        root.arrangeScreen = "";
     }
 
     function toggleWelcome(): void {
@@ -421,6 +434,13 @@ Singleton {
         }
         function aim(): void {
             root.openAim();
+        }
+        // the desk, lifted to be arranged by hand
+        function arrange(): void {
+            if (root.arrangeScreen !== "")
+                root.closeArrange();
+            else
+                root.openArrange("");
         }
     }
 

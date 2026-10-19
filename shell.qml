@@ -194,6 +194,13 @@ ShellRoot {
 
         DesktopMenu {}
     }
+    // ARRANGE: the desk lifted off the screen to be arranged by hand
+    Parked {
+        open: Panels.arrangeScreen !== ""
+        keep: 20
+
+        DeskArrange {}
+    }
     Osd {}
     Toasts {}
     Parked {

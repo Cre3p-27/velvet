@@ -85,6 +85,7 @@ PanelWindow {
             readonly property real wantX: Panels.deskMenuX
             readonly property real wantY: Panels.deskMenuY
 
+            entered: root.entered
             atX: root.width > 0 ? Panels.deskMenuX / root.width : 0.5
             atY: root.height > 0 ? Panels.deskMenuY / root.height : 0.5
             x: Math.max(12, Math.min(root.width - width - 12, wantX))
