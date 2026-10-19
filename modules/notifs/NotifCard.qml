@@ -16,6 +16,13 @@ Item {
 
     signal dismissed
     signal closed
+    // The popups let a card be swiped away (NotifPopups); the centre does
+    // not. The card's own MouseArea tells a click from a sideways drag — a
+    // handler stacked above it took the clicks from its buttons.
+    property bool swipeable: false
+    property bool swiping: false
+    signal swipeMoved(real dx)
+    signal swipeEnded(real dx, real vx)
 
     readonly property bool critical: wrapper?.urgency === "critical"
     // Read as text further down, so it has to clear the contrast threshold.
@@ -478,6 +485,18 @@ Item {
         }
     }
 
+    Item {
+        id: swipeProxy
+
+        width: 1
+        height: 1
+        visible: false
+        onXChanged: {
+            if (hover.drag.active)
+                root.swipeMoved(swipeProxy.x);
+        }
+    }
+
     MouseArea {
         id: hover
 
@@ -485,6 +504,34 @@ Item {
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton
         z: -1
+
+        drag.target: root.swipeable ? swipeProxy : null
+        drag.axis: Drag.XAxis
+        drag.threshold: 8
+        property real lastX: 0
+        property double lastT: 0
+        property real vx: 0
+
+        onPressed: mouse => {
+            swipeProxy.x = 0;
+            hover.lastX = mouse.x;
+            hover.lastT = Date.now();
+            hover.vx = 0;
+        }
+        onPositionChanged: mouse => {
+            if (!hover.drag.active)
+                return;
+            const now = Date.now();
+            const dt = Math.max(1, now - hover.lastT);
+            hover.vx = 0.6 * hover.vx + 0.4 * ((mouse.x - hover.lastX) / dt * 1000);
+            hover.lastX = mouse.x;
+            hover.lastT = now;
+        }
+        drag.onActiveChanged: {
+            root.swiping = hover.drag.active;
+            if (!hover.drag.active)
+                root.swipeEnded(swipeProxy.x, hover.vx);
+        }
 
         onClicked: event => {
             if (event.button === Qt.MiddleButton) {

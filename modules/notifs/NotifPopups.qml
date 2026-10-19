@@ -57,6 +57,15 @@ PanelWindow {
         width: parent.width
         spacing: Appearance.spacing.small
 
+        // a card that left: the ones below close up, they do not jump
+        move: Transition {
+            NumberAnimation {
+                properties: "y"
+                duration: Appearance.anim.normal
+                easing.type: Easing.OutCubic
+            }
+        }
+
         Repeater {
             // ScriptModel keeps each card alive across list changes: a plain
             // array rebuilt every card (and restarted its timer) on each new one.
@@ -74,18 +83,75 @@ PanelWindow {
                 wrapper: modelData
 
                 // Fly in from the side the stack lives on, with a small
-                // settle-pop — an OutBack stamp on every arrival.
-                x: shown ? 0 : (root.onRight ? width + 30 : -width - 30)
-                opacity: shown ? 1 : 0
+                // settle-pop — an OutBack stamp on every arrival — and fly
+                // out again when it goes. Dragged sideways it follows the
+                // hand; far enough (or flicked) it is swiped away, else it
+                // springs back. After the entrance x simply IS the sprung
+                // dragX (a timed curve on x chasing a spring never moves).
+                readonly property real away: root.onRight ? width + 30 : -width - 30
+                x: card.shown ? card.dragX : card.away
+                opacity: shown && !leaving ? 1 - Math.min(0.6, Math.abs(card.dragX) / Math.max(1, width) * 0.9) : 0
                 scale: shown ? 1 : 0.92
                 property bool shown: false
+                property bool inPlace: false
+                property bool leaving: false
+                property bool closing: false
+                property real dragX: 0
 
+                swipeable: true
                 Component.onCompleted: shown = true
 
+                Timer {
+                    running: card.shown
+                    interval: Appearance.anim.normal + 40
+                    onTriggered: card.inPlace = true
+                }
+
+                function leave(close: bool): void {
+                    if (card.leaving)
+                        return;
+                    card.closing = close;
+                    card.leaving = true;
+                    card.inPlace = true;
+                    // out the way it was swiped, else back to its side
+                    card.dragX = card.dragX < -10 ? -card.width - 30 : (card.dragX > 10 ? card.width + 30 : card.away);
+                    gone.restart();
+                }
+
+                Timer {
+                    id: gone
+
+                    interval: Appearance.anim.normal
+                    onTriggered: card.closing ? Notifs.close(card.modelData) : Notifs.dismiss(card.modelData)
+                }
+
+                onSwipeMoved: dx => card.dragX = dx
+                onSwipeEnded: (dx, vx) => {
+                    const far = Math.abs(dx) > card.width * 0.32;
+                    // a flick counts only with some way behind it: a twitch of
+                    // the hand (or a burst of events) is fast but short
+                    const flick = Math.abs(vx) > 900 && Math.abs(dx) > card.width * 0.12 && Math.sign(vx) === Math.sign(dx);
+                    if (far || flick) {
+                        Sfx.close();
+                        card.leave(false);
+                    } else {
+                        card.dragX = 0;
+                    }
+                }
+
                 Behavior on x {
+                    enabled: !card.inPlace
                     NumberAnimation {
                         duration: Appearance.anim.normal
                         easing.type: Easing.OutExpo
+                    }
+                }
+                Behavior on dragX {
+                    enabled: !card.swiping
+                    SpringAnimation {
+                        spring: 4.5
+                        damping: 0.38
+                        epsilon: 0.3
                     }
                 }
                 Behavior on scale {
@@ -101,13 +167,13 @@ PanelWindow {
                     }
                 }
 
-                onDismissed: Notifs.dismiss(modelData)
-                onClosed: Notifs.close(modelData)
+                onDismissed: card.leave(false)
+                onClosed: card.leave(true)
 
                 Timer {
-                    running: !hovering.hovered
+                    running: !hovering.hovered && !card.swiping && !card.leaving
                     interval: card.critical ? Config.notifs.timeout * 2 : Config.notifs.timeout
-                    onTriggered: Notifs.dismiss(card.modelData)
+                    onTriggered: card.leave(false)
                 }
 
                 // A HoverHandler sees the pointer even over the card's own
