@@ -3563,6 +3563,13 @@ Singleton {
                 },
                 {
                     kind: "toggle",
+                    key: "wallpaper.livingDepth",
+                    name: "DEPTH ON A DESKTOP SWITCH",
+                    help: "Switching desktops, the picture moves a few pixels the way your windows slide and springs back; the widgets, nearer, move a little more — the desktop has depth. Follows Hyprland's own workspace animation (up and down, sideways, or a breath of zoom).",
+                    sub: "THE PICTURE AND THE WIDGETS MOVE WITH YOUR WINDOWS — AND SPRING BACK"
+                },
+                {
+                    kind: "toggle",
                     key: "wallpaper.livingRipples",
                     name: "WINDOW RIPPLES",
                     help: "A ring of accent light spreads from where a new window opens.",

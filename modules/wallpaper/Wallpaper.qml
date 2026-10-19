@@ -8,6 +8,7 @@ import qs.components
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import Quickshell.Io
 import QtQuick
 import QtQuick.Shapes
 
@@ -99,6 +100,13 @@ PanelWindow {
         id: ground
 
         anchors.fill: parent
+        // depth: the picture rides a desktop switch a little (see below); the
+        // scale keeps its edges off the screen while it does
+        scale: 1 + Math.abs(root.depth) * 0.032
+        transform: Translate {
+            x: root.depthSide ? root.depth * root.depthPx : 0
+            y: root.depthVert ? root.depth * root.depthPx : 0
+        }
 
         // ---------------------------------------------------------- crossfade
         // `back` holds what was there; `front` fades in over it once it has
@@ -418,6 +426,11 @@ PanelWindow {
         id: widgetLayer
 
         anchors.fill: parent
+        // nearer than the picture: it moves twice as far on a desktop switch
+        transform: Translate {
+            x: root.depthSide ? root.depth * root.depthPx * 2.2 : 0
+            y: root.depthVert ? root.depth * root.depthPx * 2.2 : 0
+        }
         visible: root.living && Config.wallpaper.livingWidgets && root.modelData?.name === Hypr.focusedScreen?.name
 
         // A stable model: liveWidgets() is a NEW array on every scene write
@@ -1108,6 +1121,93 @@ PanelWindow {
         repeat: true
         running: Config.wallpaper.kenBurns && root.builtin && !Locker.locked && !Hypr.allCovered && !(Panels.wheel || Panels.windowMap || Panels.islandMapOpen)
         onTriggered: root.kbT = (root.kbT + 0.25) % 180
+    }
+
+    // ═══════════════════════════════════════════ depth on a desktop switch
+    //  Switching desktops, the picture moves a few pixels the way the windows
+    //  slide and springs back; the widgets, nearer, move further. The way it
+    //  moves follows Hyprland's own workspace animation (slidevert: up and
+    //  down, slide: sideways, anything else: only a breath of zoom).
+    //  WALLPAPER → LIVING DESKTOP → DEPTH ON A DESKTOP SWITCH.
+    readonly property bool depthOn: root.living && Config.wallpaper.livingDepth && Config.appearance.animationScale > 0
+    property string wsStyle: "slidevert"
+    readonly property bool depthVert: root.wsStyle.indexOf("vert") >= 0
+    readonly property bool depthSide: !root.depthVert && root.wsStyle.indexOf("slide") >= 0
+    readonly property real depthPx: Math.min(root.width, root.height) * 0.012
+    property real depth: 0
+    property int wsFrom: Hypr.activeWsId
+
+    Connections {
+        target: Hypr
+
+        function onActiveWsIdChanged(): void {
+            const to = Hypr.activeWsId;
+            const from = root.wsFrom;
+            root.wsFrom = to;
+            if (!root.depthOn || to === from || to <= 0 || from <= 0 || Locker.locked || Hypr.allCovered)
+                return;
+            if ((root.modelData?.name ?? "") !== (Hypr.focusedScreen?.name ?? ""))
+                return;
+            // a higher desktop comes in from below (slidevert) or the right:
+            // the picture leaves with the old one, then settles
+            depthKick.dir = to > from ? -1 : 1;
+            depthKick.restart();
+        }
+    }
+
+    SequentialAnimation {
+        id: depthKick
+
+        property real dir: 1
+
+        NumberAnimation {
+            target: root
+            property: "depth"
+            to: depthKick.dir
+            duration: Math.round(120 * Config.appearance.animationScale)
+            easing.type: Easing.OutCubic
+        }
+        SpringAnimation {
+            target: root
+            property: "depth"
+            to: 0
+            spring: 2.4
+            damping: 0.3
+            epsilon: 0.002
+        }
+    }
+
+    // which way Hyprland slides its desktops (read at start and on a reload)
+    Process {
+        id: wsAnim
+
+        command: ["hyprctl", "animations", "-j"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const d = JSON.parse(text);
+                    const list = Array.isArray(d) && Array.isArray(d[0]) ? d[0] : d;
+                    for (let i = 0; i < list.length; i++)
+                        if (list[i] && list[i].name === "workspaces") {
+                            root.wsStyle = list[i].enabled === false ? "none" : String(list[i].style || "slide");
+                            return;
+                        }
+                } catch (e) {}
+            }
+        }
+    }
+    Timer {
+        running: root.depthOn
+        interval: 1500
+        onTriggered: wsAnim.running = true
+    }
+    Connections {
+        target: Hyprland
+
+        function onRawEvent(event: HyprlandEvent): void {
+            if (event.name === "configreloaded" && root.depthOn)
+                wsAnim.running = true;
+        }
     }
 
     // Restore whatever was set the last time the shell ran.

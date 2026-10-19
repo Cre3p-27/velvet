@@ -537,6 +537,7 @@ JsonAdapter {
         property real livingOpacity: 0.72     // chip opacity · 0.3..1
         property bool livingEntrance: true    // widgets glide in when the wallpaper loads
         property bool livingRipples: true     // accent wave where a new window lands
+        property bool livingDepth: true       // a desktop switch nudges the picture and the widgets
         property bool livingTimeTint: true    // the picture warms at sunset, cools at night
         property bool livingAurora: false     // a slow drift of accent light
     }
