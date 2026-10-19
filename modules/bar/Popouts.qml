@@ -89,35 +89,64 @@ PanelWindow {
         readonly property real gap: 6
         readonly property real slide: root.entered ? 0 : 30
 
-        width: content.implicitWidth
-        height: content.implicitHeight
+        // One card that MORPHS from what it showed to what it shows (a tip
+        // to the next tip, a tip to the quick panel): its size springs, the
+        // new content fades in once there is room for it.
+        width: card.cw
+        height: card.ch
+        property real cw: content.implicitWidth
+        property real ch: content.implicitHeight
+        Behavior on cw {
+            enabled: root.entered
+            SpringAnimation {
+                spring: 5
+                damping: 0.42
+                epsilon: 0.3
+            }
+        }
+        Behavior on ch {
+            enabled: root.entered
+            SpringAnimation {
+                spring: 5
+                damping: 0.42
+                epsilon: 0.3
+            }
+        }
+
+        // The anchor glides (a tip moving on to the next button), the slide
+        // eases, the size springs — and the position is simply where they put
+        // it. A curve on x itself was restarted by every frame of the size's
+        // spring and never moved (measured: stuck at the old place).
+        property real ax: Popout.anchorPos
+        Behavior on ax {
+            enabled: root.entered
+            SpringAnimation {
+                spring: 5
+                damping: 0.42
+                epsilon: 0.3
+            }
+        }
+        property real sl: card.slide
+        Behavior on sl {
+            NumberAnimation {
+                duration: Appearance.anim.normal
+                easing.type: Easing.OutExpo
+            }
+        }
 
         x: {
             if (root.vertical)
-                return root.position === "left" ? root.barFootprint - Config.bar.margin + gap + card.slide : root.width - root.barFootprint + Config.bar.margin - gap - width - card.slide;
-            return Math.max(Config.bar.margin, Math.min(root.width - width - Config.bar.margin, Popout.anchorPos - width / 2));
+                return root.position === "left" ? root.barFootprint - Config.bar.margin + gap + card.sl : root.width - root.barFootprint + Config.bar.margin - gap - width - card.sl;
+            return Math.max(Config.bar.margin, Math.min(root.width - width - Config.bar.margin, card.ax - width / 2));
         }
 
         y: {
             if (!root.vertical)
-                return root.position === "top" ? root.barFootprint - Config.bar.margin + gap + card.slide : root.height - root.barFootprint + Config.bar.margin - gap - height - card.slide;
-            return Math.max(Config.bar.margin, Math.min(root.height - height - Config.bar.margin, Popout.anchorPos - height / 2));
+                return root.position === "top" ? root.barFootprint - Config.bar.margin + gap + card.sl : root.height - root.barFootprint + Config.bar.margin - gap - height - card.sl;
+            return Math.max(Config.bar.margin, Math.min(root.height - height - Config.bar.margin, card.ax - height / 2));
         }
 
         opacity: root.entered ? 1 : 0
-
-        Behavior on x {
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutExpo
-            }
-        }
-        Behavior on y {
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutExpo
-            }
-        }
         Behavior on opacity {
             NumberAnimation {
                 duration: Appearance.anim.fast
@@ -125,7 +154,7 @@ PanelWindow {
         }
 
         Plate {
-            anchors.fill: content
+            anchors.fill: parent
             radius: Appearance.rounding.large
             color: Colours.alpha(Colours.surface, Math.min(0.97, Config.bar.opacity + 0.12))
             border.width: 1
@@ -139,20 +168,47 @@ PanelWindow {
             }
         }
 
-        Loader {
-            id: content
+        // the content's window: it is cut to the card while the card grows
+        Item {
+            anchors.fill: parent
+            clip: true
 
-            active: root.shown || root.closing
-            sourceComponent: {
-                switch (root.frozenName) {
-                case "tray":
-                    return trayC;
-                case "tip":
-                    return tipC;
-                case "ws":
-                    return wsC;
-                default:
-                    return quickC;
+            Loader {
+                id: content
+
+                active: root.shown || root.closing
+                // centred while the card grows round it
+                x: Math.round((card.width - width) / 2)
+                y: Math.round((card.height - height) / 2)
+                opacity: 1
+
+                onSourceComponentChanged: {
+                    if (root.entered) {
+                        content.opacity = 0;
+                        contentIn.restart();
+                    }
+                }
+
+                NumberAnimation {
+                    id: contentIn
+
+                    target: content
+                    property: "opacity"
+                    to: 1
+                    duration: Appearance.anim.normal
+                    easing.type: Easing.OutCubic
+                }
+                sourceComponent: {
+                    switch (root.frozenName) {
+                    case "tray":
+                        return trayC;
+                    case "tip":
+                        return tipC;
+                    case "ws":
+                        return wsC;
+                    default:
+                        return quickC;
+                    }
                 }
             }
         }

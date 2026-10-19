@@ -28,11 +28,14 @@ Item {
 
     scale: mouse.pressed ? 0.9 : (mouse.containsMouse && hoverable ? 1.09 : 1.0)
 
+    // sprung, not timed: a quick pass over the bar never restarts a curve,
+    // and a press lands with a little give
     Behavior on scale {
-        NumberAnimation {
-            duration: Appearance.anim.fast
-            easing.type: Easing.OutBack
-            easing.overshoot: 2.4
+        enabled: Config.appearance.animationScale > 0
+        SpringAnimation {
+            spring: 6.5
+            damping: 0.32
+            epsilon: 0.002
         }
     }
 
@@ -47,15 +50,19 @@ Item {
         z: -1
 
         Behavior on width {
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutBack
+            enabled: Config.appearance.animationScale > 0
+            SpringAnimation {
+                spring: 5
+                damping: 0.36
+                epsilon: 0.2
             }
         }
         Behavior on height {
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutBack
+            enabled: Config.appearance.animationScale > 0
+            SpringAnimation {
+                spring: 5
+                damping: 0.36
+                epsilon: 0.2
             }
         }
         Behavior on color {

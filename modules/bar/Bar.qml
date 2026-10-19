@@ -210,8 +210,34 @@ Item {
                 Layout.alignment: Qt.AlignCenter
                 Layout.fillHeight: modelData === "spacer" && root.vertical && !root.floating
                 Layout.fillWidth: modelData === "spacer" && !root.vertical && !root.floating
-                Layout.preferredWidth: item?.implicitWidth ?? 0
-                Layout.preferredHeight: item?.implicitHeight ?? 0
+                Layout.preferredWidth: slot.shownW
+                Layout.preferredHeight: slot.shownH
+
+                // A module that changes its size (a song title, the tray, the
+                // clock's seconds) glides to it: its neighbours slide along
+                // instead of jumping. Not while the bar is being built.
+                property real shownW: item?.implicitWidth ?? 0
+                property real shownH: item?.implicitHeight ?? 0
+                property bool flowing: false
+                Behavior on shownW {
+                    enabled: slot.flowing
+                    NumberAnimation {
+                        duration: Appearance.anim.normal
+                        easing.type: Easing.OutCubic
+                    }
+                }
+                Behavior on shownH {
+                    enabled: slot.flowing
+                    NumberAnimation {
+                        duration: Appearance.anim.normal
+                        easing.type: Easing.OutCubic
+                    }
+                }
+                Timer {
+                    running: true
+                    interval: 700
+                    onTriggered: slot.flowing = true
+                }
 
                 active: true
                 sourceComponent: {
