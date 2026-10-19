@@ -589,7 +589,9 @@ def game_running() -> bool:
         return False
     cls = str(win.get("class") or "").lower()
     full = int(win.get("fullscreen") or 0) > 0
+    # native Unity/Godot games are named after their binary: Game.x86_64
     gamey = cls.startswith("steam_app") or cls in ("gamescope", "steam_proton") or ".exe" in cls \
+        or cls.endswith((".x86_64", ".x86", ".x64", ".arm64")) \
         or any(k in cls for k in ("minecraft", "lutris", "heroic", "wine", "retroarch", "osu"))
     return gamey or (full and cls not in ("google-chrome", "firefox", "mpv", "vlc", "chromium", "brave-browser"))
 

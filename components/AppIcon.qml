@@ -37,7 +37,12 @@ Item {
         }
         add(c);
         add(c.toLowerCase());
-        add(c.split(".").pop().toLowerCase());
+        // reverse-DNS names end in the app (org.gnome.Nautilus); a game's
+        // binary ends in its architecture (UltimateChickenHorse.x86_64) —
+        // there the name is in front
+        const parts = c.split(".");
+        const last = parts[parts.length - 1].toLowerCase();
+        add(/^(x86_64|x86|x64|amd64|i386|arm64|aarch64|exe|bin|appimage)$/.test(last) && parts.length > 1 ? parts[0].toLowerCase() : last);
         if (/claude/i.test(c))
             add("claude-desktop");
         return out;
