@@ -1,0 +1,46 @@
+diff --git a/src/pipeline-tts.cpp b/src/pipeline-tts.cpp
+index 7e64d76..d220fb1 100644
+--- a/src/pipeline-tts.cpp
++++ b/src/pipeline-tts.cpp
+@@ -2,6 +2,7 @@
+ // onto the same shared backend, parse all metadata into typed structs,
+ // and provide a structured load-time summary for --load-only mode.
+ 
++#include <cmath>
+ #include "pipeline-tts.h"
+ 
+ #include "audio-io.h"
+@@ -253,8 +254,18 @@ bool pipeline_tts_load(PipelineTTS * pt,
+     // to 4096 positions (the longest ICL prompt observed is ~250 +
+     // max_new_tokens ~ 1500, so 4096 has 60% headroom). Predictor holds
+     // one frame of 16 sub-steps per slot.
++    // Velvet: QWENTTS_MAX_SEQ shrinks the cache for short sentences (a
++    // sentence of 240 characters with its cloning prompt stays under ~600
++    // positions; 1536 frees ~560 MB of VRAM next to a big language model).
++    int max_seq = 4096;
++    if (const char * ms = getenv("QWENTTS_MAX_SEQ")) {
++        const int v = atoi(ms);
++        if (v >= 512 && v <= 8192) {
++            max_seq = v;
++        }
++    }
+     if (!kv_cache_init(&pt->talker_kv, pt->talker.num_hidden_layers, pt->talker.num_key_value_heads,
+-                       pt->talker.head_dim, 4096, pt->max_batch, pt->backend)) {
++                       pt->talker.head_dim, max_seq, pt->max_batch, pt->backend)) {
+         ggml_backend_sched_free(pt->sched);
+         pt->sched = NULL;
+         pipeline_codec_free(&pt->codec);
+@@ -1155,6 +1166,13 @@ void tts_engine_step(TtsEngine * e, std::vector<TtsJob *> * retired) {
+         // codec_eos. Then run the upstream sampling chain.
+         Timer t_host;
+         apply_suppress(s.logits.data(), vocab, vocab - 1024, vocab, codec_eos_id);
++        // Velvet: no sentence ends before it has begun. In ICL cloning the
++        // talker samples EOS at step 0 for a short text now and then ("Hm,
++        // Moment." three takes in five came back empty): keep EOS out of the
++        // first frames, like a min_new_tokens would.
++        if (s.step < 3 && codec_eos_id >= 0 && codec_eos_id < vocab) {
++            s.logits[(size_t) codec_eos_id] = -INFINITY;
++        }
+         float u_c0 = 0.0f;
+         int   c0   = sample_top_k_p(s.logits.data(), vocab, p->temperature, p->top_k, p->top_p, p->repetition_penalty,
+                                     s.talker_history.data(), (int) s.talker_history.size(), s.job->resolved_seed,

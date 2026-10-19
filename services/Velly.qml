@@ -1225,7 +1225,7 @@ Singleton {
     //  that is the whole voice setting.
     //  The natural voices first — real speakers, Kartoffel-Orpheus on the
     //  graphics card — then Piper's German shelf as the light fallback.
-    readonly property var voiceNames: ["natural:Sophie", "natural:Marie", "natural:Mia", "natural:Maria",
+    readonly property var voiceNames: ["qwen:Nova", "qwen:Mira", "qwen:Ella", "qwen:Theo", "natural:Sophie", "natural:Marie", "natural:Mia", "natural:Maria",
                                        "natural:Sophia", "natural:Lina", "natural:Lea", "natural:Julian",
                                        "natural:Jakob", "natural:Felix", "natural:Jonas", "natural:Noah",
                                        "piper:", "piper:de_DE-thorsten-high", "piper:de_DE-thorsten-medium",
@@ -1235,6 +1235,8 @@ Singleton {
 
     readonly property string voiceCurrent: {
         const engine = `${Config.velly.voiceEngine ?? "auto"}`;
+        if (engine === "qwen")
+            return `qwen:${Config.velly.qwenVoice || "Nova"}`;
         if (engine === "natural" || engine === "orpheus")
             return `natural:${Config.velly.naturalVoice || "Sophie"}`;
         return `piper:${Config.velly.voiceName ?? ""}`;
@@ -1242,6 +1244,8 @@ Singleton {
 
     readonly property string voiceLabel: {
         const cur = root.voiceCurrent;
+        if (cur.startsWith("qwen:"))
+            return `QWEN3 · ${cur.slice(5).toUpperCase()}`;
         if (cur.startsWith("natural:"))
             return `NATÜRLICH · ${cur.slice(8).toUpperCase()}`;
         const name = cur.slice(6);
@@ -1255,7 +1259,10 @@ Singleton {
             at = 0;
         at = (at + step + list.length) % list.length;
         const pick = `${list[at] ?? ""}`;
-        if (pick.startsWith("natural:")) {
+        if (pick.startsWith("qwen:")) {
+            root.setKey("velly.voiceEngine", JSON.stringify("qwen"));
+            root.setKey("velly.qwenVoice", JSON.stringify(pick.slice(5)));
+        } else if (pick.startsWith("natural:")) {
             root.setKey("velly.voiceEngine", JSON.stringify("natural"));
             root.setKey("velly.naturalVoice", JSON.stringify(pick.slice(8)));
         } else {
@@ -1270,7 +1277,7 @@ Singleton {
         id: voicePreviewLater
 
         interval: 350
-        onTriggered: root.say(root.voiceCurrent.startsWith("natural:") ? `Hi, ich bin ${root.voiceCurrent.slice(8)}. Gefällt dir meine Stimme?` : "So klinge ich. Passt das?")
+        onTriggered: root.say(root.voiceCurrent.startsWith("qwen:") ? "Hi, so klinge ich mit dieser Stimme. Gefällt sie dir?" : (root.voiceCurrent.startsWith("natural:") ? `Hi, ich bin ${root.voiceCurrent.slice(8)}. Gefällt dir meine Stimme?` : "So klinge ich. Passt das?"))
     }
 
     function voicePreview(): void {

@@ -579,16 +579,30 @@ Singleton {
                     kind: "choice",
                     key: "velly.voiceEngine",
                     name: "STIMM-ENGINE",
-                    help: "Womit sie spricht. NATÜRLICH ist die menschliche Orpheus-Stimme, gestreamt: sie spricht schon, während der Satz noch entsteht (braucht die Grafikkarte, ~3 GB, spricht nicht während eines Vollbild-Spiels — dann übernimmt Piper); PIPER ist schnell und läuft auf der CPU; ESPEAK-NG ist robotisch, aber immer da; CLOUD braucht einen Schlüssel; ANIMALESE sind nur Pieptöne; STILL schweigt. AUTO nimmt die beste, die gerade geht.",
-                    sub: "NATÜRLICH: ECHTE MENSCHLICHE STIMMEN, GESTREAMT (KARTOFFEL-ORPHEUS, GRAFIKKARTE) · AUTO NIMMT DIE BESTE, DIE GERADE GEHT",
+                    help: "Womit sie spricht. QWEN3 ist die neue Stimme (Qwen3-TTS 1.7B auf der Grafikkarte, ~2,5 GB): in den Tests wurde jedes Wort richtig verstanden, gestreamt, eine feste Stimme Satz für Satz. NATÜRLICH ist die ältere Orpheus-Stimme (~3 GB). Beide sprechen nicht während eines Vollbild-Spiels — dann übernimmt Piper. PIPER ist schnell und läuft auf der CPU; ESPEAK-NG ist robotisch, aber immer da; CLOUD braucht einen Schlüssel; ANIMALESE sind nur Pieptöne; STILL schweigt. AUTO nimmt die beste, die gerade geht.",
+                    sub: "QWEN3: DIE KLARSTE STIMME, GESTREAMT (GRAFIKKARTE) · NATÜRLICH: ORPHEUS · AUTO NIMMT DIE BESTE, DIE GERADE GEHT",
                     options: [
                         { value: "auto", label: "AUTO" },
-                        { value: "natural", label: "NATÜRLICH" },
+                        { value: "qwen", label: "QWEN3 · AM KLARSTEN" },
+                        { value: "natural", label: "NATÜRLICH (ORPHEUS)" },
                         { value: "piper", label: "PIPER" },
                         { value: "espeak", label: "ESPEAK-NG" },
                         { value: "cloud", label: "CLOUD" },
                         { value: "animalese", label: "ANIMALESE (BLIPS)" },
                         { value: "none", label: "STILL" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "velly.qwenVoice",
+                    name: "QWEN-STIMME",
+                    help: "Wer Velly mit der Qwen3-Stimme ist. Jede ist eine feste Vorlage, aus der jeder Satz geklont wird — so bleibt es dieselbe Stimme. NOVA: hell, lebendig (die gleichmäßigste über fünf Testsätze); MIRA: ruhiger; ELLA: etwas höher; THEO: männlich. Gilt, wenn die Stimm-Engine QWEN3 ist (oder AUTO sie wählt).",
+                    sub: "WER VELLY SPRICHT · NOVA · MIRA · ELLA · THEO",
+                    options: [
+                        { value: "Nova", label: "NOVA · LEBENDIG" },
+                        { value: "Mira", label: "MIRA · RUHIG" },
+                        { value: "Ella", label: "ELLA · HELL" },
+                        { value: "Theo", label: "THEO · MÄNNLICH" }
                     ]
                 },
                 {

@@ -6,8 +6,11 @@ Velly's mouth. One process per sentence: it turns text into audio, plays it,
 and narrates the loudness of what it is playing into
 ~/.config/velvet/ai-speech.json so the island's orb can move its lips.
 
-Three engines, in the order "auto" tries them:
+The engines, in the order "auto" tries them:
 
+    qwen        Qwen3-TTS 1.7B on the graphics card (qwentts.cpp, streamed,
+                one cloned voice: Nova · Mira · Ella · Theo)
+    natural     Kartoffel-Orpheus on the graphics card (streamed)
     piper       local neural voices (~/.local/share/velvet/voices/*.onnx)
     espeak-ng   local, robotic, always there
     cloud       an OpenAI-compatible /audio/speech — needs the same key as
@@ -25,6 +28,7 @@ Stdlib only, like everything in bin/.
     velvet-voice --stop              cut off whatever is speaking
     velvet-voice --status            what engine would be used
     velvet-voice --selftest          synthesise, measure, print — no speakers
+    velvet-voice --make-qwen-voices  make the Qwen voices' reference takes
 """
 
 import importlib.util
@@ -886,6 +890,400 @@ def soft_limit(x):
     return x
 
 
+# ─────────────────────────────────────────────────── Qwen3-TTS, the new voice
+#  Qwen3-TTS 1.7B (Alibaba, Apache 2.0) through qwentts.cpp (C++/GGML,
+#  Vulkan): a talker writes 12.5 codec frames a second, the codec renders
+#  24 kHz — and the server streams the audio while the talker is still
+#  writing. It speaks in a cloned voice: a few seconds of a speaker and what
+#  they said (QWEN_VOICES), registered with the server once it is up.
+QWEN_DIR = os.path.join(DATA_DIR, "models", "qwen3-tts")
+QWEN_MODEL = os.path.join(QWEN_DIR, "qwen-talker-1.7b-base-Q8_0.gguf")
+QWEN_CODEC = os.path.join(QWEN_DIR, "qwen-tokenizer-12hz-Q8_0.gguf")
+QWEN_SERVER = os.path.join(DATA_DIR, "engines", "qwentts", "tts-server")
+QWEN_PORT = int(os.environ.get("VELLY_QWEN_PORT") or "8141")
+QWEN_IDLE = 420.0
+QWEN_TOUCH = os.path.join(CONF_DIR, "ai-qwen.touch")
+QWEN_STATE = os.path.join(CONF_DIR, "ai-qwen.json")
+QWEN_LOG = os.path.join(DATA_DIR, "velvet-qwen-server.log")
+QWEN_VOICES = os.path.join(DATA_DIR, "voices", "qwen")     # <Name>.wav + <Name>.txt
+QWEN_DEFAULT = "Nova"
+
+
+def qwen_health(timeout: float = 0.5) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{QWEN_PORT}/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def qwen_touch() -> None:
+    try:
+        with open(QWEN_TOUCH, "w", encoding="utf-8") as fh:
+            fh.write(str(time.time()))
+    except OSError:
+        pass
+
+
+def qwen_voices() -> list:
+    """The cloned voices on disk: a reference recording and its words."""
+    try:
+        names = sorted(f[:-4] for f in os.listdir(QWEN_VOICES) if f.endswith(".wav")
+                       and os.path.isfile(os.path.join(QWEN_VOICES, f[:-4] + ".txt")))
+    except OSError:
+        return []
+    return names
+
+
+def qwen_need_mb() -> int:
+    # measured on the RX 9070 XT with a 1536-position cache: 3109 MB while
+    # speaking (2534 loaded) for 2370 MB of files
+    try:
+        return int((os.path.getsize(QWEN_MODEL) + os.path.getsize(QWEN_CODEC)) / 1048576) + 800
+    except OSError:
+        return 3200
+
+
+def qwen_fits() -> tuple:
+    vram = free_vram_mb()
+    need = qwen_need_mb() + brain_reserve_mb()
+    return (not vram or vram >= need), vram, need
+
+
+def qwen_register(name: str) -> bool:
+    """Hand the server one cloned voice (it keeps it until it stops)."""
+    import base64                                              # noqa: PLC0415
+    wav = os.path.join(QWEN_VOICES, name + ".wav")
+    txt = os.path.join(QWEN_VOICES, name + ".txt")
+    try:
+        with open(txt, encoding="utf-8") as fh:
+            words = fh.read().strip()
+        with open(wav, "rb") as fh:
+            blob = base64.b64encode(fh.read()).decode()
+    except OSError:
+        return False
+    body = json.dumps({"name": name, "ref_text": words, "wav_b64": blob}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{QWEN_PORT}/v1/audio/voices", data=body, method="POST",
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.status == 200
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def qwen_warm(voice: str) -> None:
+    """One short sentence right after loading: the card builds its kernels
+    now, so the first real sentence is as quick as every other."""
+    body = {"input": "Hallo.", "language": "german", "response_format": "pcm", "max_new_tokens": 40}
+    if voice:
+        body["voice"] = voice
+    req = urllib.request.Request(f"http://127.0.0.1:{QWEN_PORT}/v1/audio/speech", data=json.dumps(body).encode(),
+                                 method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            resp.read()
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
+def qwen_serve() -> int:
+    """--serve-qwen: tts-server as a child, the cloned voices registered,
+    stopped once nobody has spoken for QWEN_IDLE seconds. One keeper."""
+    if qwen_health():
+        return 0
+    state = read_json(QWEN_STATE, {})
+    try:
+        if state.get("keeper") and state.get("state") in ("loading", "up"):
+            os.kill(int(state["keeper"]), 0)
+            return 0
+    except (OSError, ValueError, TypeError):
+        pass
+    fits, vram, need = qwen_fits()
+    if not fits:
+        write_json_file(QWEN_STATE, {"at": int(time.time() * 1000), "state": "down", "keeper": 0,
+                                     "error": f"zu wenig Grafikspeicher ({vram} MB frei, ~{need} MB nötig mit Gehirn)"})
+        return 1
+    # the discrete card only: the iGPU borrows system RAM and crawls
+    device = (os.environ.get("VELLY_DEVICE") or "Vulkan0").strip()
+    cmd = [QWEN_SERVER, "--model", QWEN_MODEL, "--codec", QWEN_CODEC, "--host", "127.0.0.1",
+           "--port", str(QWEN_PORT), "--lang", "german", "--device", device]
+    qwen_touch()
+    logfh = open(QWEN_LOG, "a", encoding="utf-8")
+    env = dict(os.environ)
+    # a sentence (≤ 240 characters) and its cloning prompt stay under ~600
+    # positions: 1536 instead of 4096 leaves ~560 MB more to the brain
+    env["QWENTTS_MAX_SEQ"] = "1536"
+    proc = subprocess.Popen(cmd, stdout=logfh, stderr=logfh, start_new_session=True, env=env)
+    write_json_file(QWEN_STATE, {"at": int(time.time() * 1000), "state": "loading", "keeper": os.getpid(),
+                                 "pid": proc.pid, "port": QWEN_PORT})
+
+    def stop(_sig, _frm):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    up = False
+    try:
+        while True:
+            if proc.poll() is not None:
+                break
+            if not up and qwen_health(0.5):
+                up = True
+                voices = qwen_voices()
+                for name in voices:
+                    qwen_register(name)
+                qwen_warm(QWEN_DEFAULT if QWEN_DEFAULT in voices else (voices[0] if voices else ""))
+                write_json_file(QWEN_STATE, {"at": int(time.time() * 1000), "state": "up", "keeper": os.getpid(),
+                                             "pid": proc.pid, "port": QWEN_PORT, "voices": voices})
+            try:
+                idle = time.time() - os.path.getmtime(QWEN_TOUCH)
+            except OSError:
+                idle = QWEN_IDLE + 1
+            if idle > QWEN_IDLE:
+                break
+            time.sleep(1.0 if not up else 3.0)
+    except KeyboardInterrupt:
+        pass
+    try:
+        proc.terminate()
+        proc.wait(timeout=8)
+    except Exception:                                          # noqa: BLE001
+        try:
+            proc.kill()
+        except Exception:                                      # noqa: BLE001
+            pass
+    write_json_file(QWEN_STATE, {"at": int(time.time() * 1000), "state": "down", "keeper": 0})
+    return 0
+
+
+class Qwen(Engine):
+    """Qwen3-TTS: one cloned voice, streamed as it is generated."""
+    name = "qwen"
+    temperature = 0.7          # the talker; lower is steadier, higher livelier
+    seed = -1
+
+    def __init__(self, cfg, ai):
+        voices = qwen_voices()
+        wanted = str(cfg.get("qwenVoice") or QWEN_DEFAULT).strip()
+        self.voice = wanted if wanted in voices else (QWEN_DEFAULT if QWEN_DEFAULT in voices else (voices[0] if voices else ""))
+        have = os.path.isfile(QWEN_MODEL) and os.path.isfile(QWEN_CODEC) and os.path.isfile(QWEN_SERVER)
+        self.ok = have and bool(self.voice)
+        if not have:
+            self.note = "Qwen-Stimme noch nicht geladen"
+        elif not self.voice:
+            self.note = "keine Qwen-Stimmvorlage (velvet-voice --make-qwen-voices)"
+        if self.ok and not qwen_health(0.3) and game_running():
+            self.ok = False
+            self.note = "ein Spiel läuft — die Grafikkarte bleibt beim Spiel"
+        state = read_json(QWEN_STATE, {})
+        if self.ok and not qwen_health(0.3) and state.get("state") == "down" and state.get("error") \
+                and time.time() * 1000 - float(state.get("at") or 0) < 60000:
+            self.ok = False
+            self.note = state["error"]
+
+    def ready(self, wait: float = 90.0) -> bool:
+        if qwen_health():
+            qwen_touch()
+            return True
+        fits, vram, need = qwen_fits()
+        if not fits:
+            self.note = f"zu wenig Grafikspeicher ({vram} MB frei, ~{need} MB nötig mit Gehirn)"
+            return False
+        qwen_touch()
+        try:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "--serve-qwen"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             start_new_session=True)
+        except OSError as exc:
+            self.note = str(exc)
+            return False
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            if qwen_health(0.5) and read_json(QWEN_STATE, {}).get("state") == "up":
+                return True
+            state = read_json(QWEN_STATE, {})
+            if state.get("state") == "down" and state.get("error"):
+                self.note = state["error"]
+                return False
+            time.sleep(0.3)
+        self.note = "die Qwen-Stimme kam nicht hoch"
+        return False
+
+    @staticmethod
+    def expected_s(text: str) -> float:
+        """How long a sentence this long takes to say (measured, see v8.58)."""
+        return max(0.7, 0.45 + len(text) / QWEN_CPS)
+
+    def stream(self, text: str, emit, halt=None) -> bool:
+        if not self.ok or not self.ready():
+            return False
+        qwen_touch()
+        import numpy                                           # noqa: PLC0415
+        expected = self.expected_s(text)
+        body = {"input": text, "voice": self.voice, "language": "german", "response_format": "pcm",
+                "temperature": self.temperature, "seed": self.seed,
+                # 12.5 frames a second: room for a slow take, never a runaway
+                "max_new_tokens": max(40, int(12.5 * (expected * 1.7 + 1.5)))}
+        st = {"sent": False, "out": 0, "voiced": False, "lead": 0, "cut": False, "t0": time.time(), "empty": 0}
+        held = bytearray()
+        block = int(QWEN_RATE * 0.04) * 2                      # 40 ms of s16le
+        last = {"pcm": None}
+
+        def push(pcm, final: bool) -> None:
+            if not st["voiced"]:
+                # the breath before the first word is not said
+                rms = float(numpy.sqrt(numpy.mean(pcm * pcm))) if pcm.size else 0.0
+                if rms < 0.006 and st["lead"] < 12:
+                    st["lead"] += 1
+                    return
+                st["voiced"] = True
+                k = min(pcm.size, int(QWEN_RATE * 0.006))
+                pcm = pcm.copy()
+                pcm[:k] *= numpy.linspace(0.0, 1.0, k, dtype=numpy.float32)
+            if final:
+                k = min(pcm.size, int(QWEN_RATE * 0.012))
+                pcm = pcm.copy()
+                pcm[pcm.size - k:] *= numpy.linspace(1.0, 0.0, k, dtype=numpy.float32)
+            if not st["sent"]:
+                st["first"] = time.time() - st["t0"]
+            st["sent"] = True
+            st["out"] += pcm.size
+            emit(soft_limit(pcm))
+
+        for _attempt in range(3):
+            got = self._take(body, st, held, block, last, push, halt, expected)
+            if got is None:
+                return st["sent"]
+            if got > 0 or st["sent"] or (halt is not None and halt.is_set()):
+                break
+            # the talker ended before its first frame: it does that now and
+            # then on a short sentence ("Klar, mach ich." twice in four, CPU,
+            # measured) — ask again, it costs only the prompt
+            st["empty"] += 1
+        if halt is not None and halt.is_set():
+            return st["sent"]
+        if last["pcm"] is not None:
+            push(last["pcm"], True)
+        if not st["sent"]:
+            self.note = "die Qwen-Stimme blieb stumm"
+        if os.environ.get("VELLY_VOICE_DEBUG") == "1":
+            log(f"qwen: said {st['out'] / QWEN_RATE:.2f}s of ~{expected:.2f}s, "
+                f"{'cut at the limit' if st['cut'] else 'end of speech'}, first sound after "
+                f"{st.get('first', -1):.2f}s, {st['empty']} empty take(s) — {text[:40]!r}")
+        return st["sent"]
+
+    def _take(self, body, st, held, block, last, push, halt, expected):
+        """One request; the number of bytes it brought, None on a failure
+        before anything was said (the note says why)."""
+        import numpy                                           # noqa: PLC0415
+        req = urllib.request.Request(f"http://127.0.0.1:{QWEN_PORT}/v1/audio/speech", data=json.dumps(body).encode(),
+                                     method="POST", headers={"Content-Type": "application/json"})
+        got = 0
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                while True:
+                    if halt is not None and halt.is_set():
+                        return got
+                    chunk = resp.read1(9600)
+                    if not chunk:
+                        break
+                    got += len(chunk)
+                    held.extend(chunk)
+                    whole = len(held) - len(held) % block
+                    if whole <= 0:
+                        continue
+                    pcm = numpy.frombuffer(bytes(held[:whole]), dtype="<i2").astype(numpy.float32) / 32768.0
+                    del held[:whole]
+                    # one block back: the last one gets the fade when the
+                    # stream ends
+                    if last["pcm"] is not None:
+                        push(last["pcm"], False)
+                    last["pcm"] = pcm
+                    if st["out"] / QWEN_RATE > expected * 1.6 + 0.9:
+                        # no sentence runs this far past its length: a talker
+                        # that lost its end is cut, not spoken
+                        st["cut"] = True
+                        break
+        except Exception as exc:                               # noqa: BLE001
+            if not st["sent"] and last["pcm"] is None:
+                self.note = f"Qwen-Stimme: {exc}"[:160]
+                return None
+        return got
+
+    def synth(self, text: str, out_wav: str) -> bool:
+        chunks = []
+        if not self.stream(text, chunks.append):
+            return False
+        import numpy                                           # noqa: PLC0415
+        pad = numpy.zeros(int(QWEN_RATE * 0.06), dtype=numpy.float32)
+        pcm = numpy.concatenate([pad] + chunks + [pad])
+        with wave.open(out_wav, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(QWEN_RATE)
+            w.writeframes((numpy.clip(pcm, -1.0, 1.0) * 32767).astype(numpy.int16).tobytes())
+        return os.path.getsize(out_wav) > 2000
+
+
+QWEN_RATE = 24000
+QWEN_CPS = 15.0             # German characters a second, Qwen's pace (13.7–18.5 measured)
+
+# The voices: each is a take of the base model's own voices (a seed picks
+# one), kept as the reference every sentence is cloned from — so Velly keeps
+# ONE voice, sentence after sentence. Measured (whisper small, 5 sentences
+# each, CPU): every word right in all of them; NOVA is the steadiest
+# (pitch 186–202 Hz over the five, the liveliest melody), THEO the man.
+QWEN_SEEDS = {"Nova": 2, "Mira": 1, "Ella": 6, "Theo": 3}
+QWEN_REF_TEXT = ("Hallo, ich bin Velly. Ich helfe dir gern bei allem, was du an deinem Rechner vorhast. "
+                 "Sag einfach Bescheid, wenn du etwas brauchst.")
+
+
+def make_qwen_voices(force: bool = False) -> int:
+    """--make-qwen-voices [--force]: the reference takes, made once."""
+    if not (os.path.isfile(QWEN_MODEL) and os.path.isfile(QWEN_CODEC) and os.path.isfile(QWEN_SERVER)):
+        print(json.dumps({"ok": False, "error": "Qwen-Stimme noch nicht geladen"}, ensure_ascii=False))
+        return 1
+    os.makedirs(QWEN_VOICES, exist_ok=True)
+    if not qwen_health():
+        qwen_touch()
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "--serve-qwen"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
+        deadline = time.time() + 120
+        while time.time() < deadline and not qwen_health(0.5):
+            time.sleep(0.5)
+    if not qwen_health():
+        print(json.dumps({"ok": False, "error": "die Qwen-Stimme kam nicht hoch"}, ensure_ascii=False))
+        return 1
+    made = []
+    for name, seed in QWEN_SEEDS.items():
+        wav = os.path.join(QWEN_VOICES, name + ".wav")
+        if os.path.isfile(wav) and not force:
+            continue
+        body = {"input": QWEN_REF_TEXT, "language": "german", "response_format": "pcm", "seed": seed,
+                "max_new_tokens": 300}
+        req = urllib.request.Request(f"http://127.0.0.1:{QWEN_PORT}/v1/audio/speech", data=json.dumps(body).encode(),
+                                     method="POST", headers={"Content-Type": "application/json"})
+        qwen_touch()
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            pcm = resp.read()
+        if len(pcm) < QWEN_RATE:
+            continue
+        tmp = wav + ".tmp"
+        with wave.open(tmp, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(QWEN_RATE)
+            w.writeframes(pcm)
+        os.replace(tmp, wav)
+        with open(os.path.join(QWEN_VOICES, name + ".txt"), "w", encoding="utf-8") as fh:
+            fh.write(QWEN_REF_TEXT + "\n")
+        qwen_register(name)
+        made.append(name)
+    print(json.dumps({"ok": True, "made": made, "voices": qwen_voices(), "dir": QWEN_VOICES}, ensure_ascii=False))
+    return 0
+
+
 class Espeak(Engine):
     name = "espeak"
 
@@ -1078,7 +1476,7 @@ def speakable(text: str) -> str:
 
 def choose_engine(cfg, ai) -> Engine:
     wanted = str(cfg.get("voiceEngine") or "auto").lower()
-    builders = {"natural": Natural, "orpheus": Natural, "piper": Piper, "espeak": Espeak, "espeak-ng": Espeak,
+    builders = {"qwen": Qwen, "natural": Natural, "orpheus": Natural, "piper": Piper, "espeak": Espeak, "espeak-ng": Espeak,
                 "cloud": Cloud, "animalese": Animalese, "blips": Animalese}
     if wanted == "none":
         engine = Engine()
@@ -1092,12 +1490,17 @@ def choose_engine(cfg, ai) -> Engine:
         # An explicit engine that cannot work — espeak chosen on a machine
         # without espeak-ng — must not cost her the voice that IS installed.
         # Keep the reason, use what auto would have picked.
-        for candidate in (Natural, Piper, Espeak, Cloud, Animalese):
-            if candidate is builders[wanted]:
+        # the two GPU voices stand in for each other only when the one asked
+        # for is not installed: when the card is full (the brain, a game) the
+        # other does not fit either — Piper speaks then
+        gpu = builders[wanted] in (Natural, Qwen)
+        missing = "geladen" in (engine.note or "") or "Stimmvorlage" in (engine.note or "")
+        for candidate in (Qwen, Natural, Piper, Espeak, Cloud, Animalese):
+            if candidate is builders[wanted] or (gpu and candidate in (Natural, Qwen) and not missing):
                 continue
             # Piper standing in for the natural voice speaks with the best
             # voice there is, not the "-low" one left in voiceName
-            fallback = candidate(stand_in_cfg(cfg) if candidate is Piper and builders[wanted] is Natural else cfg, ai)
+            fallback = candidate(stand_in_cfg(cfg) if candidate is Piper and builders[wanted] in (Natural, Qwen) else cfg, ai)
             if fallback.ok:
                 # Keep the reason, but do not shout it once per sentence: it
                 # filled the journal with one warning per answer. `--status`
@@ -1108,7 +1511,7 @@ def choose_engine(cfg, ai) -> Engine:
         return engine
     # auto: a real voice first, every time — the blips are the last resort, and
     # they are only reached on a machine where nothing else exists.
-    for candidate in (Natural, Piper, Espeak, Cloud, Animalese):
+    for candidate in (Qwen, Natural, Piper, Espeak, Cloud, Animalese):
         engine = candidate(cfg, ai)
         if engine.ok:
             return engine
@@ -1188,13 +1591,17 @@ def main() -> int:
         return selftest(cfg, ai)
     if "--serve-natural" in argv:
         return natural_serve()
+    if "--serve-qwen" in argv:
+        return qwen_serve()
+    if "--make-qwen-voices" in argv:
+        return make_qwen_voices("--force" in argv)
     if "--serve-piper" in argv:
         return piper_serve()
     if "--warm" in argv:
         # Velly woke up: bring the voices up now, not with the first sentence.
         # Piper first — it speaks whenever the natural voice cannot (a big
         # brain in the VRAM, a game), and loaded it answers in a blink.
-        natural_first = str(cfg.get("voiceEngine") or "auto").lower() in ("natural", "orpheus")
+        natural_first = str(cfg.get("voiceEngine") or "auto").lower() in ("natural", "orpheus", "qwen", "auto")
         spare = Piper(stand_in_cfg(cfg) if natural_first else cfg, ai)
         if spare.ok and piper_start(wait=6.0):
             try:
@@ -1203,14 +1610,15 @@ def main() -> int:
                 pass
         # The natural voice takes a few seconds more to load.
         eng = choose_engine(cfg, ai)
-        if eng.name == "natural" and eng.ok:
-            if not natural_health() and not eng.ready(wait=120):
+        if eng.name in ("natural", "qwen") and eng.ok:
+            up = natural_health if eng.name == "natural" else qwen_health
+            if not up() and not eng.ready(wait=120):
                 # The brain is still loading and the voice keeps its place
                 # free: it comes up right BEHIND the brain now. It used to stay
                 # away until a sentence asked — and that sentence then waited
                 # for the voice to load (or Piper spoke it).
                 if brain_reserve_mb() > 0 and wait_for_brain(120):
-                    eng = Natural(cfg, ai)
+                    eng = (Natural if eng.name == "natural" else Qwen)(cfg, ai)
                     if eng.ok and eng.ready(wait=120):
                         warm_phrases(eng)
                         return 0
@@ -1222,6 +1630,13 @@ def main() -> int:
                 return 1
         if eng.ok:
             warm_phrases(eng)
+        return 0
+    if "--stop-qwen" in argv:
+        state = read_json(QWEN_STATE, {})
+        try:
+            os.kill(int(state.get("keeper") or 0), signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
         return 0
     if "--stop-natural" in argv:
         state = read_json(NATURAL_STATE, {})
@@ -1283,7 +1698,7 @@ def main() -> int:
         # Only what is instant: a filler that has to be made first would come
         # after the answer it was meant to precede.
         eng = choose_engine(cfg, ai)
-        if eng.name == "natural" and not natural_health():
+        if (eng.name == "natural" and not natural_health()) or (eng.name == "qwen" and not qwen_health()):
             # The natural voice is not up — Piper will say it, from its cache
             # (with the voice that stands in for the natural one).
             eng = Piper(stand_in_cfg(cfg), ai)
@@ -1376,7 +1791,7 @@ def speak(cfg, ai, engine, chunks=None, follow_turn=None, streamed=True) -> int:
     next is still being made. `chunks` is the whole answer; with
     `follow_turn` the sentences arrive while the brain is still writing.
     The natural voice is streamed (speak_stream); the others make files."""
-    if streamed and engine.name == "natural" and os.environ.get("VELLY_VOICE_FILES") != "1":
+    if streamed and engine.name in ("natural", "qwen") and os.environ.get("VELLY_VOICE_FILES") != "1":
         return speak_stream(cfg, ai, engine, chunks, follow_turn)
     workdir = tempfile.mkdtemp(prefix="velvet-voice-")
     began = time.time()
@@ -1417,7 +1832,7 @@ def speak(cfg, ai, engine, chunks=None, follow_turn=None, streamed=True) -> int:
             path = os.path.join(workdir, f"say{i}.wav")
             eng = used["engine"]
             ok = cached_synth(eng, chunk, path)
-            if not ok and eng.name == "natural":
+            if not ok and eng.name in ("natural", "qwen"):
                 # The natural voice could not speak (a game holds the VRAM,
                 # the server did not come up): Piper takes over at once —
                 # with the BEST voice there is, not a "low" one picked once
@@ -1841,7 +2256,7 @@ def speak_stream(cfg, ai, engine, chunks=None, follow_turn=None) -> int:
                 pass
         shutil.rmtree(workdir, ignore_errors=True)
     first = marks[0][0] if marks else 0
-    log(f"natural (streamed): {player.total / NAT_RATE:.2f}s in {(time.time() - began):.2f}s, {len(marks)} sentence(s)"
+    log(f"{engine.name} (streamed): {player.total / NAT_RATE:.2f}s in {(time.time() - began):.2f}s, {len(marks)} sentence(s)"
         + (" (followed)" if follow_turn is not None else "") + (f" — {used['note']}" if used["note"] else ""))
     if not marks and follow_turn is None:
         return 1
@@ -2058,6 +2473,11 @@ def selftest(cfg, ai) -> int:
     nat = Natural(cfg, ai)
     if nat.ok and not (os.path.isfile(NATURAL_MODEL) and os.path.isfile(NATURAL_DECODER)):
         problems.append("natural voice claims ok without its files")
+    qw = Qwen(cfg, ai)
+    if qw.ok and not (os.path.isfile(QWEN_MODEL) and os.path.isfile(QWEN_CODEC) and qw.voice in qwen_voices()):
+        problems.append("qwen voice claims ok without its files or its voice")
+    if Qwen.expected_s("Hallo.") < 0.7 or Qwen.expected_s("x" * 150) > 11.5:
+        problems.append(f"qwen pace: {Qwen.expected_s('x' * 150):.2f}s for 150 characters")
     if len(set(FILLERS)) != len(FILLERS):
         problems.append("duplicate fillers")
     # the streamed path without a server: the limiter, the resampler and the
@@ -2121,6 +2541,7 @@ def selftest(cfg, ai) -> int:
     engine = choose_engine(cfg, ai)
     report = f"engine={engine.name or 'none'} ok={engine.ok} note={engine.note or '-'}"
     report += f"; natural={'bereit' if nat.ok else (nat.note or 'nein')}"
+    report += f"; qwen={'bereit · ' + qw.voice if qw.ok else (qw.note or 'nein')}"
     if engine.name == "animalese":
         report += " (blips — install piper-tts or espeak-ng for a real voice)"
     if problems:
