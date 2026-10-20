@@ -1101,8 +1101,14 @@ PanelWindow {
                                 anchors.fill: parent
 
                                 IconImage {
+                                    id: orbPic
+
+                                    // "" when no icon theme has it: the app glyph
+                                    // below, not Quickshell's magenta checkerboard
+                                    readonly property string found: orb.app?.kind === "app" && (orb.app.icon ?? "") !== "" ? Quickshell.iconPath(orb.app.icon, true) : ""
+
                                     anchors.centerIn: parent
-                                    visible: Config.launcher.showIcons && orb.app?.kind === "app"
+                                    visible: Config.launcher.showIcons && found !== ""
                                     implicitSize: 50
                                     scale: orb.sel ? 1 : 0.86
                                     Behavior on scale {
@@ -1112,14 +1118,14 @@ PanelWindow {
                                             easing.overshoot: 1.6
                                         }
                                     }
-                                    source: orb.app?.kind === "app" && (orb.app.icon ?? "") !== "" ? Quickshell.iconPath(orb.app.icon, "application-x-executable") : ""
+                                    source: found
                                     asynchronous: true
                                 }
 
                                 Icon {
                                     anchors.centerIn: parent
-                                    visible: orb.app !== null && orb.app.kind !== "app"
-                                    name: orb.app?.icon ?? "search"
+                                    visible: orb.app !== null && (orb.app.kind !== "app" || (Config.launcher.showIcons && orbPic.found === ""))
+                                    name: orb.app?.kind === "app" ? "apps" : (orb.app?.icon ?? "search")
                                     color: orb.sel ? Colours.accent : Colours.inkDim
                                     font.pixelSize: 42
                                     scale: orb.sel ? 1 : 0.86
@@ -1612,17 +1618,23 @@ PanelWindow {
                             }
 
                             IconImage {
+                                id: fieldPic
+
+                                readonly property string found: root.selected && root.selected.kind === "app" && root.selected.icon !== "" ? Quickshell.iconPath(root.selected.icon, true) : ""
+
                                 anchors.centerIn: parent
-                                visible: Config.launcher.showIcons && root.selected && root.selected.kind === "app" && root.selected.icon !== ""
+                                visible: Config.launcher.showIcons && found !== ""
                                 implicitSize: 32
-                                source: root.selected && root.selected.kind === "app" && root.selected.icon !== "" ? Quickshell.iconPath(root.selected.icon, "application-x-executable") : ""
+                                source: found
                                 asynchronous: true
                             }
 
+                            // an app's own icon name is no glyph: the app glyph
+                            // when its icon is off or no theme has it
                             Icon {
                                 anchors.centerIn: parent
-                                visible: !(Config.launcher.showIcons && root.selected && root.selected.kind === "app")
-                                name: root.selected ? root.selected.icon : "search"
+                                visible: !(Config.launcher.showIcons && fieldPic.found !== "")
+                                name: root.selected ? (root.selected.kind === "app" ? "apps" : root.selected.icon) : "search"
                                 color: Colours.accent
                                 font.pixelSize: 24
                             }

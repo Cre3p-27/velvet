@@ -1214,9 +1214,15 @@ PanelWindow {
                         }
 
                         Image {
+                            id: rowPic
+
+                            // "" when no icon theme has it: the app glyph below,
+                            // not Quickshell's magenta checkerboard
+                            readonly property string found: row.modelData.kind === "app" && (row.modelData.icon ?? "") !== "" ? Quickshell.iconPath(row.modelData.icon, true) : ""
+
                             anchors.fill: parent
-                            visible: row.modelData.kind === "app" && (row.modelData.icon ?? "") !== ""
-                            source: visible ? Quickshell.iconPath(row.modelData.icon, "application-x-executable") : ""
+                            visible: found !== ""
+                            source: visible ? found : ""
                             sourceSize.width: 64
                             sourceSize.height: 64
                             smooth: true
@@ -1224,7 +1230,7 @@ PanelWindow {
                         }
                         Icon {
                             anchors.centerIn: parent
-                            visible: !(row.modelData.kind === "app" && (row.modelData.icon ?? "") !== "")
+                            visible: rowPic.found === ""
                             name: row.modelData.kind === "app" ? "apps" : (row.modelData.icon || "bolt")
                             color: row.fg
                             font.pixelSize: parent.width * 0.75
@@ -1427,11 +1433,15 @@ PanelWindow {
                             visible: root.style !== "start" || !root.winOld
                         }
                         Image {
+                            id: previewPic
+
+                            readonly property string found: preview.it !== null && preview.it.kind === "app" && (preview.it.icon ?? "") !== "" ? Quickshell.iconPath(preview.it.icon, true) : ""
+
                             anchors.centerIn: parent
                             width: 72
                             height: 72
-                            visible: preview.it !== null && preview.it.kind === "app" && (preview.it.icon ?? "") !== ""
-                            source: visible ? Quickshell.iconPath(preview.it.icon, "application-x-executable") : ""
+                            visible: found !== ""
+                            source: visible ? found : ""
                             sourceSize.width: 128
                             sourceSize.height: 128
                             smooth: true
@@ -1439,7 +1449,7 @@ PanelWindow {
                         }
                         Icon {
                             anchors.centerIn: parent
-                            visible: preview.it !== null && !(preview.it.kind === "app" && (preview.it.icon ?? "") !== "")
+                            visible: preview.it !== null && previewPic.found === ""
                             name: preview.it ? (preview.it.kind === "app" ? "apps" : (preview.it.icon || "bolt")) : "search"
                             color: Colours.accent
                             font.pixelSize: 56

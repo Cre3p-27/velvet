@@ -881,16 +881,22 @@ FocusScope {
                                 visible: tile.modelData.kind !== "widget" && !tile.isCava
 
                                 IconImage {
+                                    id: tilePic
+
+                                    // "" when no icon theme has it: the glyph below,
+                                    // not Quickshell's magenta checkerboard
+                                    readonly property string found: Scenes.iconFor(tile.modelData) !== "" ? Quickshell.iconPath(Scenes.iconFor(tile.modelData), true) : ""
+
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    visible: Scenes.iconFor(tile.modelData) !== "" && tile.height > 46
+                                    visible: found !== "" && tile.height > 46
                                     implicitSize: Math.max(14, Math.min(40, Math.min(tile.width, tile.height) * 0.36))
-                                    source: Scenes.iconFor(tile.modelData) !== "" ? Quickshell.iconPath(Scenes.iconFor(tile.modelData), "application-x-executable") : ""
+                                    source: found
                                 }
 
                                 Icon {
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    visible: Scenes.iconFor(tile.modelData) === "" && tile.height > 46
-                                    name: (tile.modelData.kind === "term" || tile.modelData.kind === "tui") ? TermApps.iconOf(Scenes.moduleOf(tile.modelData)) : (tile.modelData.kind === "widget" ? (LockModules.find(tile.modelData.widget ?? "")?.glyph ?? "widgets") : "terminal")
+                                    visible: tilePic.found === "" && tile.height > 46
+                                    name: (tile.modelData.kind === "term" || tile.modelData.kind === "tui") ? TermApps.iconOf(Scenes.moduleOf(tile.modelData)) : (tile.modelData.kind === "widget" ? (LockModules.find(tile.modelData.widget ?? "")?.glyph ?? "widgets") : (tile.modelData.kind === "app" ? "apps" : "terminal"))
                                     color: Colours.accent
                                     font.pixelSize: Math.max(14, Math.min(34, Math.min(tile.width, tile.height) * 0.32))
                                 }
@@ -2590,15 +2596,20 @@ FocusScope {
             spacing: 8
 
             IconImage {
+                id: chipPic
+
+                // "" when no icon theme has it: the chip's glyph instead
+                readonly property string found: chip.iconName ? Quickshell.iconPath(chip.iconName, true) : ""
+
                 anchors.verticalCenter: parent.verticalCenter
-                visible: chip.iconName !== ""
+                visible: found !== ""
                 implicitSize: 20
-                source: chip.iconName ? Quickshell.iconPath(chip.iconName, "application-x-executable") : ""
+                source: found
             }
 
             Icon {
                 anchors.verticalCenter: parent.verticalCenter
-                visible: chip.iconName === ""
+                visible: chipPic.found === ""
                 name: chip.glyph
                 color: chip.missing ? Colours.alpha(Colours.inkDim, 0.6) : Colours.accent
                 font.pixelSize: 18

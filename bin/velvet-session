@@ -90,6 +90,16 @@ fi
 # has crashed" dialog and never exits — nothing could restart it. Off: a crash
 # ends the process, and this loop brings it back.
 export QS_DISABLE_CRASH_HANDLER=1
+# Qt has no icon theme of its own under Hyprland (no platform theme): it only
+# knew hicolor, so every generic icon — preferences-system, network-wired, a
+# tray's status icons — came out as Quickshell's magenta checkerboard. The
+# desktop's GTK icon theme it is (a QS_ICON_THEME set by hand wins).
+if [ -z "${QS_ICON_THEME:-}" ]; then
+    theme=$(gsettings get org.gnome.desktop.interface icon-theme 2>/dev/null | tr -d "'")
+    [ -n "$theme" ] || theme=$(sed -n 's/^[[:space:]]*gtk-icon-theme-name[[:space:]]*=[[:space:]]*//p' \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/settings.ini" 2>/dev/null | head -n 1)
+    [ -n "$theme" ] && [ "$theme" != hicolor ] && export QS_ICON_THEME="$theme"
+fi
 crashes=()
 while :; do
     say "starting the shell"
