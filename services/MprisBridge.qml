@@ -94,7 +94,9 @@ QtObject {
     readonly property string album: root.player?.trackAlbum ?? ""
     readonly property real length: root.player?.length ?? 0
     readonly property bool playing: root.player?.isPlaying ?? false
-    readonly property string artUrl: root.player?.artUrl ?? ""
+    // Quickshell's MprisPlayer calls it trackArtUrl (there is no artUrl: the
+    // island, the desk's media widget and the lyric card showed no cover)
+    readonly property string artUrl: root.player?.trackArtUrl ?? ""
 
     // Asked only of a player that can do it — Quickshell warns (and does
     // nothing) otherwise.
