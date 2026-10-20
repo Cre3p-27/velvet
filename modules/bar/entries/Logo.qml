@@ -89,6 +89,7 @@ BarButton {
                         anchors.verticalCenter: parent.verticalCenter
                         width: 18
                         height: 18
+                        mono: "#1a1a1a"
                     }
                     P5Text {
                         anchors.verticalCenter: parent.verticalCenter
@@ -267,6 +268,7 @@ BarButton {
                 anchors.centerIn: parent
                 width: 22
                 height: 22
+                mono: Colours.ink
                 scale: root.containsMouse ? 1.08 : 1
 
                 Behavior on scale {

@@ -6,6 +6,10 @@ A clock big enough to read across a room, drawn in blocks, with a slow band of
 light travelling through the digits and a ring of seconds underneath. When a
 digit changes it flares for a moment and settles — which is the only way a
 clock made of solid blocks can show you that something moved.
+
+`--face lcd` draws it as a seven-segment display instead: the segments that are
+off stay faintly there, the way an old LCD never quite goes dark, the colon
+blinks with the seconds and the date is written the way a machine writes it.
 """
 
 import os
@@ -13,7 +17,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _velvet import (BOLD, RESET, ease, fg, hbar, mix, opt_on, run, shade, wave)  # noqa: E402
+from _velvet import (BOLD, RESET, ease, fg, hbar, mix, opt, opt_on, run, shade, wave)  # noqa: E402
 
 # 3 wide, 5 tall. Small enough to scale cleanly, big enough to be legible at
 # one cell per pixel on a cramped terminal.
@@ -35,6 +39,39 @@ GLYPHS = {
 GLYPH_W = 3
 GLYPH_H = 5
 
+# The LCD face: 4 wide, 7 tall, seven segments that never share a corner (the
+# gaps at the corners are what makes it read as a display, not as blocks).
+SEGMENTS = {
+    "a": [(1, 0), (2, 0)],
+    "b": [(3, 1), (3, 2)],
+    "c": [(3, 4), (3, 5)],
+    "d": [(1, 6), (2, 6)],
+    "e": [(0, 4), (0, 5)],
+    "f": [(0, 1), (0, 2)],
+    "g": [(1, 3), (2, 3)],
+}
+LIT = {
+    "0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fgbc",
+    "5": "afgcd", "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg",
+}
+LCD_W = 4
+LCD_H = 7
+
+
+def lcd_glyph(ch, colon_on):
+    """Rows of '#' (lit), '-' (a segment that is off) and ' ' (nothing)."""
+    if ch == ":":
+        dot = "#" if colon_on else "-"
+        return [" ", " ", dot, " ", dot, " ", " "]
+    rows = [[" "] * LCD_W for _ in range(LCD_H)]
+    lit = LIT.get(ch)
+    if lit is None:
+        return ["".join(r) for r in rows]
+    for name, cells in SEGMENTS.items():
+        for x, y in cells:
+            rows[y][x] = "#" if name in lit else "-"
+    return ["".join(r) for r in rows]
+
 # When each character last changed, so a flare can decay from it.
 changed_at = {}
 
@@ -45,6 +82,7 @@ changed_at = {}
 #   --no-date       drop the date line
 #   --no-bar        drop the line of seconds under the digits
 #   --still         no travelling light, no flare — solid digits
+#   --face lcd      seven segments with their unlit ghosts, an ISO date
 def switches():
     """Read every frame — the designer can change them while it runs."""
     return {
@@ -53,6 +91,7 @@ def switches():
         "no_date": opt_on("no-date"),
         "no_bar": opt_on("no-bar"),
         "still": opt_on("still"),
+        "lcd": str(opt("face", "") or "").lower() == "lcd",
     }
 
 
@@ -68,10 +107,24 @@ def draw(scr, t):
     dim = pal.inkDim
 
     sw = switches()
-    STILL, NO_BAR, NO_DATE = sw["still"], sw["no_bar"], sw["no_date"]
+    STILL, NO_BAR, NO_DATE, LCD = sw["still"], sw["no_bar"], sw["no_date"], sw["lcd"]
     text = face(sw)
     now = time.localtime()
     secs = now.tm_sec + (time.time() % 1.0)
+    # the LCD colon blinks with the seconds (a still clock keeps it lit)
+    colon_on = STILL or (time.time() % 1.0) < 0.5
+
+    def glyph_of(ch):
+        if LCD:
+            return lcd_glyph(ch, colon_on)
+        return GLYPHS.get(ch, GLYPHS[" "])
+
+    def width_of(ch):
+        if LCD:
+            return 1 if ch == ":" else LCD_W
+        return GLYPH_W
+
+    gh = LCD_H if LCD else GLYPH_H
 
     for i, ch in enumerate(text):
         key = (i, ch)
@@ -87,15 +140,21 @@ def draw(scr, t):
     avail_h = max(1, scr.rows - pad_y * 2 - 4)          # 4 rows of chrome below
 
     gap = 1
-    cells_w = len(text) * GLYPH_W + (len(text) - 1) * gap
+    cells_w = sum(width_of(ch) for ch in text) + (len(text) - 1) * gap
     sx = max(1, avail_w // cells_w)
-    sy = max(1, avail_h // GLYPH_H)
+    sy = max(1, avail_h // gh)
     # Cells are about twice as tall as they are wide, so a glyph that is square
     # on screen needs roughly twice the horizontal scale.
     sy = max(1, min(sy, max(1, int(sx / 1.9) + 1)))
 
     art_w = cells_w * sx
-    art_h = GLYPH_H * sy
+    art_h = gh * sy
+    # where each character starts, in glyph pixels
+    starts = []
+    at = 0
+    for ch in text:
+        starts.append(at)
+        at += width_of(ch) + gap
     left = max(0, (scr.cols - art_w) // 2)
     top = max(0, (scr.rows - art_h - 4) // 2)
 
@@ -107,21 +166,26 @@ def draw(scr, t):
         colours = [None] * scr.cols
 
         for gi, ch in enumerate(text):
-            glyph = GLYPHS.get(ch, GLYPHS[" "])
-            base = left + gi * (GLYPH_W + gap) * sx
+            glyph = glyph_of(ch)
+            base = left + starts[gi] * sx
             flare = 1.0 - ease(min(1.0, (t - changed_at.get((gi, ch), t)) / 0.65))
 
-            for px in range(GLYPH_W):
-                if glyph[row][px] != "#":
+            for px in range(width_of(ch)):
+                cell = glyph[row][px]
+                if cell == " ":
                     continue
                 for k in range(sx):
                     x = base + px * sx + k
                     if 0 <= x < scr.cols:
                         buf[x] = "█"
+                        if cell == "-":
+                            # an unlit segment: there, but only just
+                            colours[x] = shade(accent, 0.17)
+                            continue
                         # A band of light drifting diagonally across the face.
                         band = 1.0 if STILL else wave(t, 1.1, -(x * 0.06 + gy * 0.22))
                         c = mix(shade(accent, 0.55), accent, band)
-                        if ch == ":" and not STILL:
+                        if ch == ":" and not STILL and not LCD:
                             c = mix(shade(accent, 0.3), accent, wave(t, 3.14))
                         if flare > 0 and not STILL:
                             c = mix(c, ink, flare * 0.85)
@@ -148,8 +212,10 @@ def draw(scr, t):
     # ── the date
     if not NO_DATE:
         stamp = time.strftime("%A  ·  %d %B %Y").upper()
+        if LCD:
+            stamp = time.strftime("%Y-%m-%d  ·  %a").upper()
         if len(stamp) > scr.cols - 2:
-            stamp = time.strftime("%a %d %b %Y").upper()
+            stamp = time.strftime("%Y-%m-%d" if LCD else "%a %d %b %Y").upper()
         dx = max(0, (scr.cols - len(stamp)) // 2)
         lines[min(scr.rows - 1, bar_row + (2 if not NO_BAR else 0))] = " " * dx + fg(dim) + BOLD + stamp + RESET
 

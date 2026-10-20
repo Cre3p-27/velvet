@@ -33,6 +33,22 @@ Item {
     readonly property real textW: Math.round(root.cell * (Appearance.skin === "console" ? 1.15 : 1.5))
     readonly property real textLen: root.shown * root.textW + (root.shown - 1) * Math.max(2, root.gap * 0.4)
     readonly property var roman: ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
+    readonly property var greek: ["α", "β", "γ", "δ", "ε", "ζ", "η", "θ", "ι", "κ", "λ", "μ"]
+
+    // TASKBAR → WORKSPACES → NAMES: what a slot is called. AUTO keeps numbers
+    // (Roman in the newspaper and the book), the others name every slot alike.
+    function nameOf(id: int): string {
+        const n = Config.bar.workspaces.names;
+        if (n === "roman" || (n === "auto" && root.textLook && Appearance.skin !== "console"))
+            return root.roman[id - 1] ?? `${id}`;
+        if (n === "greek")
+            return root.greek[id - 1] ?? `${id}`;
+        return `${id}`;
+    }
+    // a long name (VIII) gets a smaller face inside a round slot
+    function fitK(name: string): real {
+        return name.length >= 4 ? 0.62 : (name.length === 3 ? 0.72 : (name.length === 2 ? 0.88 : 1));
+    }
     readonly property int activeIndex: Hypr.activeWsId - root.groupStart
     // The round looks: a small slot per workspace, the active one longer.
     readonly property real small: root.look === "numbers" ? root.cell * 0.9 : Math.round(root.cell * 0.46)
@@ -123,8 +139,8 @@ Item {
                 anchors.centerIn: parent
                 display: true
                 visible: slot.isActive || Config.bar.workspaces.labelOccupied
-                text: `${slot.wsId}`
-                font.pixelSize: root.cell * 0.52
+                text: root.nameOf(slot.wsId)
+                font.pixelSize: root.cell * 0.52 * root.fitK(text)
                 color: slot.isActive ? Colours.on(Colours.accent) : (slot.occupied ? Colours.ink : Colours.alpha(Colours.inkDim, 0.5))
             }
 
@@ -202,7 +218,7 @@ Item {
             }
             P5Text {
                 anchors.centerIn: parent
-                text: Appearance.skin === "console" ? `${word.wsId}` : (root.roman[word.wsId - 1] ?? `${word.wsId}`)
+                text: root.nameOf(word.wsId)
                 color: word.isActive ? (Appearance.skin === "console" ? Colours.on(Colours.accent) : Colours.accent) : (word.occupied ? Colours.ink : Colours.alpha(Colours.inkDim, 0.7))
                 font.pixelSize: Math.round(root.span * 0.46)
                 font.weight: word.isActive ? Font.Black : Font.Medium
@@ -334,8 +350,8 @@ Item {
             P5Text {
                 anchors.centerIn: parent
                 visible: root.look === "numbers" || (root.look === "pills" && dot.isActive)
-                text: `${dot.wsId}`
-                font.pixelSize: Math.round(dot.thick * (root.look === "numbers" ? 0.56 : 0.72))
+                text: root.nameOf(dot.wsId)
+                font.pixelSize: Math.round(dot.thick * (root.look === "numbers" ? 0.56 : 0.72) * root.fitK(text))
                 font.weight: Font.Bold
                 font.italic: false
                 color: dot.isActive ? Colours.on(Colours.accent) : (dot.occupied ? Colours.ink : Colours.alpha(Colours.inkDim, 0.6))

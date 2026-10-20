@@ -15,6 +15,7 @@ Text {
             "power_settings_new": "⏻",
             "settings": "⚙",
             "search": "⌕",
+            "bookmark": "⚑",
             "close": "✕",
             "check": "✓",
             "chevron_right": "›",

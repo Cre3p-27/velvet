@@ -1,7 +1,7 @@
 //  VELVET  ·  config/TermApps.qml
 //  The module catalogue for the desktop.
 //
-//  Two families live here. The six Velvet modules are the stdlib-only
+//  Two families live here. The seven Velvet modules are the stdlib-only
 //  programs in bin/, each of which takes the shell's own palette and (for
 //  all of them) a `--tint` override — the same module can be INK, PAPER or
 //  the accent. The extra modules are classic terminal programs — peaclock,
@@ -36,7 +36,8 @@ Singleton {
                 { key: "seconds", label: "SECONDS", bool: true, arg: "--seconds", choices: [{ v: "", t: "HIDDEN" }, { v: "on", t: "SHOWN" }] },
                 { key: "no-date", label: "DATE", bool: true, arg: "--no-date", choices: [{ v: "", t: "SHOWN" }, { v: "on", t: "HIDDEN" }] },
                 { key: "no-bar", label: "SECONDS LINE", bool: true, arg: "--no-bar", choices: [{ v: "", t: "SHOWN" }, { v: "on", t: "HIDDEN" }] },
-                { key: "still", label: "LIGHT", note: "THE BAND THAT TRAVELS THROUGH THE DIGITS", bool: true, arg: "--still", choices: [{ v: "", t: "MOVING" }, { v: "on", t: "STILL" }] }
+                { key: "still", label: "LIGHT", note: "THE BAND THAT TRAVELS THROUGH THE DIGITS", bool: true, arg: "--still", choices: [{ v: "", t: "MOVING" }, { v: "on", t: "STILL" }] },
+                { key: "face", label: "FACE", note: "LCD: SEVEN SEGMENTS, THE UNLIT ONES FAINTLY THERE, A MACHINE DATE", arg: "--face", choices: [{ v: "", t: "BLOCKS" }, { v: "lcd", t: "LCD" }] }
             ],
             bin: "velvet-clock",
             name: "CLOCK",
@@ -97,6 +98,21 @@ Singleton {
             sub: "A QUIET FIELD THAT NEVER REPEATS",
             w: 0.34,
             h: 0.32
+        },
+        {
+            id: "sky",
+            options: [
+                { key: "names", label: "NAMES", note: "THE BRIGHTEST STARS, AT THEIR REAL PLACES", arg: "--names", choices: [{ v: "", t: "SHOWN" }, { v: "off", t: "HIDDEN" }] },
+                { key: "grid", label: "GRID", note: "THE EQUATOR AND THE HOUR CIRCLES OF THE SKY", bool: true, arg: "--grid", choices: [{ v: "", t: "HIDDEN" }, { v: "on", t: "SHOWN" }] },
+                { key: "spin", label: "SPIN", arg: "--spin", choices: [{ v: "slow", t: "SLOW" }, { v: "", t: "NORMAL" }, { v: "fast", t: "FAST" }] },
+                { key: "no-rim", label: "RIM", bool: true, arg: "--no-rim", choices: [{ v: "", t: "SHOWN" }, { v: "on", t: "HIDDEN" }] }
+            ],
+            bin: "velvet-sky",
+            name: "SKY",
+            icon: "public",
+            sub: "THE STARS ON A SLOWLY TURNING GLOBE",
+            w: 0.26,
+            h: 0.36
         }
     ]
 

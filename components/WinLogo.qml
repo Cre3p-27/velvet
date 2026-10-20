@@ -1,95 +1,90 @@
 //  VELVET  ·  components/WinLogo.qml
-//  Four panes in a window: a small flag that waves in the old editions
-//  (95, XP, 7) and sits flat in the new ones (10, 11). One colour per pane,
-//  or one colour for all.
+//  The VINDOWS mark: four panes in a window, parted by a V — wide on top,
+//  shut at the bottom. No colours: one ink for all four panes (white, or dark
+//  on a light ground). It waves in the old editions (95, XP, 7) and sits flat
+//  in the new ones (10, 11). Velvet's own drawing — not Microsoft's logo.
 import qs.config
 import QtQuick
+import QtQuick.Shapes
 
 Item {
     id: root
 
-    // "" = the four colours; any colour paints all four panes with it
-    property color mono: "transparent"
+    // the one ink of the mark
+    property color mono: "#ffffff"
     property bool wave: Appearance.winVer === "95" || Appearance.winVer === "xp" || Appearance.winVer === "7"
 
     implicitWidth: 22
     implicitHeight: 22
 
-    readonly property bool plain: root.mono.a > 0
-    readonly property var colours: root.plain ? [root.mono, root.mono, root.mono, root.mono] : ["#f25022", "#7fba00", "#00a4ef", "#ffb900"]
-
-    // the flat logo
-    Grid {
-        anchors.centerIn: parent
-        visible: !root.wave
-        columns: 2
-        spacing: Math.max(2, Math.round(root.width * 0.1))
-
-        Repeater {
-            model: 4
-
-            Rectangle {
-                required property int index
-
-                width: (root.width * 0.86 - Math.max(2, Math.round(root.width * 0.1))) / 2
-                height: width
-                color: root.colours[index]
+    // the four panes as point lists, top-left, bottom-left, top-right, bottom-right
+    readonly property var panes: {
+        const w = root.width;
+        const h = root.height;
+        const wave = root.wave;
+        const wob = x => wave ? 0.07 * Math.sin(x * Math.PI * 1.9 + 0.3) : 0;
+        const X0 = 0.08, X1 = 0.92, Y0 = 0.1, Y1 = 0.9, GH = 0.075;
+        // the V between the columns: 0.19 wide on top, closed at the bottom
+        const gv = y => 0.19 * (1 - (y - Y0) / (Y1 - Y0));
+        const P = (x, y) => Qt.point(x * w, (y + wob(x)) * h);
+        const n = wave ? 8 : 1;
+        const out = [];
+        for (let col = 0; col < 2; col++) {
+            for (let row = 0; row < 2; row++) {
+                const ya = row === 0 ? Y0 : 0.5 + GH / 2;
+                const yb = row === 0 ? 0.5 - GH / 2 : Y1;
+                const outer = col === 0 ? X0 : X1;
+                const inner = y => col === 0 ? 0.5 - gv(y) / 2 : 0.5 + gv(y) / 2;
+                const pts = [];
+                for (let k = 0; k <= n; k++)
+                    pts.push(P(outer + (inner(ya) - outer) * k / n, ya));
+                for (let k = 1; k < n; k++) {
+                    const y = ya + (yb - ya) * k / n;
+                    pts.push(P(inner(y), y));
+                }
+                for (let k = 0; k <= n; k++)
+                    pts.push(P(inner(yb) + (outer - inner(yb)) * k / n, yb));
+                pts.push(pts[0]);
+                out.push(pts);
             }
         }
+        return out;
     }
 
-    // the waving one
-    Canvas {
-        id: flag
-
+    Shape {
         anchors.fill: parent
-        visible: root.wave
-        antialiasing: true
+        preferredRendererType: Shape.CurveRenderer
 
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
-        onVisibleChanged: requestPaint()
-        Component.onCompleted: requestPaint()
+        ShapePath {
+            fillColor: root.mono
+            strokeColor: "transparent"
 
-        Connections {
-            target: root
-
-            function onColoursChanged(): void {
-                flag.requestPaint();
+            PathPolyline {
+                path: root.panes[0]
             }
         }
+        ShapePath {
+            fillColor: root.mono
+            strokeColor: "transparent"
 
-        onPaint: {
-            const c = getContext("2d");
-            c.clearRect(0, 0, width, height);
-            const w = width;
-            const h = height;
-            const wob = x => 0.07 * Math.sin(x * Math.PI * 1.9 + 0.3);
-            for (let i = 0; i < 4; i++) {
-                const col = i % 2;
-                const row = Math.floor(i / 2);
-                const x0 = 0.06 + col * 0.49;
-                const x1 = x0 + 0.43;
-                const y0 = 0.1 + row * 0.47;
-                const y1 = y0 + 0.4;
-                c.beginPath();
-                const steps = 6;
-                for (let k = 0; k <= steps; k++) {
-                    const x = x0 + (x1 - x0) * k / steps;
-                    const px = x * w;
-                    const py = (y0 + wob(x)) * h;
-                    if (k === 0)
-                        c.moveTo(px, py);
-                    else
-                        c.lineTo(px, py);
-                }
-                for (let k = steps; k >= 0; k--) {
-                    const x = x0 + (x1 - x0) * k / steps;
-                    c.lineTo(x * w, (y1 + wob(x)) * h);
-                }
-                c.closePath();
-                c.fillStyle = `${root.colours[i]}`;
-                c.fill();
+            PathPolyline {
+                path: root.panes[1]
+            }
+        }
+        ShapePath {
+            fillColor: root.mono
+            strokeColor: "transparent"
+
+            PathPolyline {
+                path: root.panes[2]
+            }
+        }
+        ShapePath {
+            fillColor: root.mono
+            strokeColor: "transparent"
+
+            PathPolyline {
+                path: root.panes[3]
             }
         }
     }

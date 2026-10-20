@@ -242,6 +242,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 width: 16
                 height: 16
+                mono: "#1b1b1b"
             }
             Item {
                 anchors.verticalCenter: parent.verticalCenter

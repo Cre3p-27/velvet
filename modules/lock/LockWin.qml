@@ -4,7 +4,8 @@
 //  green arrow, 7's glass avatar and white field, 10's big clock and flat box,
 //  11's centred circle and rounded field. Same input underneath; only the
 //  drawing is theirs. (Written from memory of how they looked, not from any
-//  Microsoft artwork.)
+//  Microsoft artwork — and no Microsoft names or marks: the system on these
+//  screens is VINDOWS, its mark Velvet's own components/WinLogo.qml.)
 import qs.config
 import qs.services
 import qs.components
@@ -159,7 +160,7 @@ Item {
                     P5Text {
                         x: 6
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "Welcome to Windows"
+                        text: "Welcome to Vindows"
                         color: "#ffffff"
                         font.family: root.face
                         font.pixelSize: 13 * root.u * 1.1
@@ -172,13 +173,14 @@ Item {
                     y: 52 * root.u * 1.1
                     width: 44 * root.u * 1.1
                     height: width
+                    mono: "#1a1a1a"
                 }
                 P5Text {
                     x: 84 * root.u * 1.1
                     y: 50 * root.u * 1.1
                     width: parent.width - 100 * root.u * 1.1
                     wrapMode: Text.WordWrap
-                    text: "Type a user name and password to log on to Windows."
+                    text: "Type a user name and password to log on to Vindows."
                     color: "#000000"
                     font.family: root.face
                     font.pixelSize: 13 * root.u * 1.1
@@ -377,7 +379,7 @@ Item {
                     anchors.right: parent.right
                     anchors.rightMargin: root.width * 0.06
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "After you log on, you can add or change accounts.\nJust go to Control Panel and click User Accounts."
+                    text: "After you log on, you can change how everything looks.\nJust open Settings and click LOOKS."
                     color: "#ffffff"
                     font.family: root.face
                     font.pixelSize: 15 * root.u
@@ -403,7 +405,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
 
                     P5Text {
-                        text: "Microsoft"
+                        text: "Velvet"
                         color: "#ffffff"
                         font.family: root.face
                         font.pixelSize: 24 * root.u
@@ -412,7 +414,7 @@ Item {
                         spacing: 8 * root.u
 
                         P5Text {
-                            text: "Windows"
+                            text: "Vindows"
                             color: "#ffffff"
                             font.family: root.face
                             font.pixelSize: 58 * root.u

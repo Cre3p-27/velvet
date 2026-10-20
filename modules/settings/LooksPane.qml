@@ -1,12 +1,15 @@
 //  VELVET  ·  modules/settings/LooksPane.qml
 //  SETTINGS → LOOKS: the look store. Every look of the shell on one shelf —
-//  searchable, sorted, sorted into VIBES · CLASSIC · WINDOWS · YOURS — as
-//  small cards that each draw the look in miniature. FEATURED turns through
-//  the house favourites on top; a card opens the look's own page (it grows
-//  out of the card), where it is put on, tuned, renamed or deleted.
+//  searchable, sorted, sorted into SAVED · YOURS · VIBES · CLASSIC · VINDOWS
+//  — as small cards that each draw the look in miniature. YOUR SHELF on the
+//  front keeps what you wear, saved, made and wore last one click away; the
+//  bookmark on every card saves a look for later. FEATURED turns through the
+//  house favourites; a card opens the look's own page (it grows out of the
+//  card), where it is put on, saved, tuned, renamed or deleted.
 //
 //  Keyboard: arrows walk the shelf, Enter opens a look, Enter again puts it
-//  on, Esc closes it, / searches, Backspace takes the look off again.
+//  on, Esc closes it, just typing (or /) searches, Ctrl+D saves the look,
+//  Ctrl+1 … 6 pick a shelf, Backspace takes the look off again.
 //  The looks themselves live in services/Presets.qml.
 import qs.config
 import qs.services
@@ -21,7 +24,7 @@ FocusScope {
     focus: true
 
     // ── what the shelf shows
-    property string cat: "all"              // all | vibes | classic | windows | yours
+    property string cat: "all"              // all | saved | yours | vibes | classic | windows
     property string sortBy: "featured"      // featured | az | recent
     property string query: ""
     // the card the keys are on (a look id)
@@ -48,6 +51,14 @@ FocusScope {
             name: "ALL"
         },
         {
+            id: "saved",
+            name: "SAVED"
+        },
+        {
+            id: "yours",
+            name: "YOURS"
+        },
+        {
             id: "vibes",
             name: "VIBES"
         },
@@ -57,17 +68,14 @@ FocusScope {
         },
         {
             id: "windows",
-            name: "WINDOWS"
-        },
-        {
-            id: "yours",
-            name: "YOURS"
+            name: "VINDOWS"
         }
     ]
 
     readonly property var counts: {
         const c = {
             all: 0,
+            saved: 0,
             vibes: 0,
             classic: 0,
             windows: 0,
@@ -76,20 +84,46 @@ FocusScope {
         for (let i = 0; i < root.everyLook.length; i++) {
             c.all++;
             c[root.catOf(root.everyLook[i])]++;
+            if (Presets.isSaved(root.everyLook[i].id))
+                c.saved++;
         }
         return c;
     }
 
+    // whether a look sits on a shelf (SAVED is a list of yours, not a kind)
+    function inCat(l: var, cat: string): bool {
+        if (cat === "all")
+            return true;
+        if (cat === "saved")
+            return Presets.isSaved(l.id);
+        return root.catOf(l) === cat;
+    }
+
     function hay(l: var): string {
-        return [Presets.nameOf(l), l.name ?? "", l.by ?? "", l.blurb ?? "", (l.parts ?? []).join(" "), l.mood ?? "", root.catOf(l), l.custom === true ? "mine my own saved" : ""].join(" ").toLowerCase();
+        return [Presets.nameOf(l), l.name ?? "", l.by ?? "", l.blurb ?? "", (l.parts ?? []).join(" "), l.mood ?? "", root.catOf(l), l.custom === true ? "mine my own yours" : "", Presets.isSaved(l.id) ? "saved bookmarked mine" : "", l.family === "windows" ? "vindows windows" : ""].join(" ").toLowerCase();
+    }
+
+    // how well a look's NAME answers the search: the start of the name, the
+    // start of a word in it, anywhere in it — the rest only matched elsewhere
+    function fit(l: var, q: string): int {
+        const name = Presets.nameOf(l).toLowerCase();
+        if (q === "")
+            return 0;
+        if (name.startsWith(q))
+            return 3;
+        const first = q.split(/\s+/)[0];
+        if (name.split(/[\s·\-]+/).some(w => w.startsWith(first)))
+            return 2;
+        return name.indexOf(q) >= 0 ? 1 : 0;
     }
 
     readonly property var shown: {
         const words = root.query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+        const q = words.join(" ");
         const list = [];
         for (let i = 0; i < root.everyLook.length; i++) {
             const l = root.everyLook[i];
-            if (root.cat !== "all" && root.catOf(l) !== root.cat)
+            if (!root.inCat(l, root.cat))
                 continue;
             if (words.length > 0) {
                 const h = root.hay(l);
@@ -102,7 +136,15 @@ FocusScope {
                 order: l.original === true ? -1000 : (l.isNew === true ? -500 + i : i)
             });
         }
-        if (root.sortBy === "featured")
+        if (root.sortBy === "featured" && words.length > 0) {
+            // BEST MATCH: the name first, then what is yours, then as designed
+            const mine = l => Presets.isSaved(l.id) || l.custom === true ? 1 : 0;
+            list.sort((a, b) => root.fit(b.look, q) - root.fit(a.look, q) || mine(b.look) - mine(a.look) || a.order - b.order);
+        } else if (root.sortBy === "featured" && root.cat === "saved") {
+            // LAST SAVED: what you saved last comes first
+            const at = Presets.saved;
+            list.sort((a, b) => (at[b.look.id] ?? 0) - (at[a.look.id] ?? 0) || a.order - b.order);
+        } else if (root.sortBy === "featured")
             list.sort((a, b) => a.order - b.order);
         else if (root.sortBy === "az")
             list.sort((a, b) => Presets.nameOf(a.look).localeCompare(Presets.nameOf(b.look)) || a.order - b.order);
@@ -115,6 +157,7 @@ FocusScope {
         return list.map(e => e.look);
     }
     readonly property var shownIds: root.shown.map(l => l.id)
+    readonly property string firstSort: root.query.trim() !== "" ? "BEST MATCH" : (root.cat === "saved" ? "LAST SAVED" : "AS DESIGNED")
 
     // ── the shelf's grid
     readonly property real gap: 18
@@ -145,6 +188,59 @@ FocusScope {
             Sfx.select();
             Toast.ok(look.original === true ? "BACK TO VELVET — THE ORIGINAL" : `LOOK · ${Presets.nameOf(look)} IS ON — BACK TO YOUR OWN LOOK SITS ON TOP OF THIS PAGE`);
         }
+    }
+
+    // the bookmark: save a look for later, or unsave it
+    function toggleSave(id: string): void {
+        const look = Presets.find(id);
+        if (!look)
+            return;
+        if (Presets.toggleSaved(look.id)) {
+            Sfx.select();
+            Toast.ok(`SAVED · ${Presets.nameOf(look)} — IT WAITS UNDER SAVED AND ON YOUR SHELF`);
+        } else {
+            Sfx.back();
+            Toast.ok(`${Presets.nameOf(look)} IS NO LONGER SAVED`);
+        }
+    }
+
+    // YOUR SHELF: the look you wear, then what you saved (the newest first),
+    // the looks you made, and what you wore lately — each look once
+    readonly property var mine: {
+        const out = [];
+        const seen = {};
+        const add = (id, why) => {
+            const l = Presets.find(id);
+            if (!l || seen[l.id])
+                return;
+            seen[l.id] = true;
+            out.push({
+                look: l,
+                why: why
+            });
+        };
+        add(Presets.applied !== "" ? Presets.applied : "velvet", "on");
+        for (const id of Presets.savedIds)
+            add(id, "saved");
+        for (let i = Presets.custom.length - 1; i >= 0; i--)
+            add(Presets.custom[i].id, "yours");
+        const w = Presets.wornAt ?? ({});
+        for (const id of Object.keys(w).sort((a, b) => w[b] - w[a]))
+            add(id, "worn");
+        return out;
+    }
+
+    function ago(ms: real): string {
+        const s = (Date.now() - ms) / 1000;
+        if (!(ms > 0))
+            return "WORN";
+        if (s < 120)
+            return "WORN JUST NOW";
+        if (s < 3600)
+            return `WORN ${Math.round(s / 60)} MIN AGO`;
+        if (s < 86400)
+            return `WORN ${Math.round(s / 3600)} H AGO`;
+        return `WORN ${Math.round(s / 86400)} D AGO`;
     }
 
     function step(dx: int, dy: int): void {
@@ -274,6 +370,20 @@ FocusScope {
             Presets.undo();
             Sfx.back();
             event.accepted = true;
+        } else if (event.key === Qt.Key_D && (event.modifiers & Qt.ControlModifier)) {
+            root.toggleSave(root.selected);
+            event.accepted = true;
+        } else if ((event.modifiers & Qt.ControlModifier) && event.key >= Qt.Key_1 && event.key <= Qt.Key_6) {
+            const c = root.cats[event.key - Qt.Key_1];
+            if (c && root.cat !== c.id) {
+                root.cat = c.id;
+                Sfx.toggle();
+            }
+            event.accepted = true;
+        } else if (event.text.length === 1 && /[A-Za-z0-9ÄÖÜäöüß]/.test(event.text) && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
+            // just typing searches
+            search.typeIn(event.text);
+            event.accepted = true;
         }
     }
 
@@ -311,7 +421,7 @@ FocusScope {
                         font.pixelSize: Appearance.font.size.title
                     }
                     P5Text {
-                        text: `THE LOOK STORE · ${root.counts.all} LOOKS · ${root.counts.vibes} VIBES · ${root.counts.windows} WINDOWS · ${root.counts.classic} CLASSIC · ${root.counts.yours} YOURS`
+                        text: `THE LOOK STORE · ${root.counts.all} LOOKS · ${root.counts.saved} SAVED · ${root.counts.yours} YOURS · ${root.counts.vibes} VIBES · ${root.counts.classic} CLASSIC · ${root.counts.windows} VINDOWS`
                         color: Colours.inkDim
                         font.pixelSize: Appearance.font.size.small
                         tracking: 1
@@ -412,6 +522,12 @@ FocusScope {
                         }
                     }
                 }
+            }
+
+            // ── YOUR SHELF: your own things first, one click away
+            MyShelf {
+                width: parent.width
+                visible: root.query === "" && root.cat === "all"
             }
 
             // ── FEATURED: the house favourites, turning
@@ -603,7 +719,7 @@ FocusScope {
                                 id: sortText
 
                                 anchors.centerIn: parent
-                                text: sortChip.modelData.name
+                                text: sortChip.modelData.id === "featured" ? root.firstSort : sortChip.modelData.name
                                 color: sortChip.on ? Colours.accentInk : Colours.inkDim
                                 font.pixelSize: Appearance.font.size.tiny
                                 tracking: 1.5
@@ -667,13 +783,13 @@ FocusScope {
 
                     Icon {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        name: "search_off"
+                        name: root.query === "" && root.cat === "saved" ? "bookmark" : "search_off"
                         color: Colours.inkDim
                         font.pixelSize: 34
                     }
                     P5Text {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: root.query !== "" ? `NO LOOK SAYS “${root.query.toUpperCase()}”` : "NOTHING HERE YET — SAVE MINE AS A LOOK PUTS YOUR SETUP ON THIS SHELF"
+                        text: root.query !== "" ? `NO LOOK SAYS “${root.query.toUpperCase()}”` : (root.cat === "saved" ? "NOTHING SAVED YET — THE BOOKMARK ON ANY CARD (OR CTRL+D) KEEPS A LOOK HERE" : "NOTHING HERE YET — SAVE MINE AS A LOOK PUTS YOUR SETUP ON THIS SHELF")
                         color: Colours.inkDim
                         font.pixelSize: Appearance.font.size.small
                         tracking: 1.5
@@ -723,6 +839,10 @@ FocusScope {
             } else if (event.key === Qt.Key_Left) {
                 root.detailStep(-1);
                 event.accepted = true;
+            } else if (event.key === Qt.Key_D && (event.modifiers & Qt.ControlModifier)) {
+                if (root.detailLook)
+                    root.toggleSave(root.detailLook.id);
+                event.accepted = true;
             }
         }
 
@@ -767,6 +887,7 @@ FocusScope {
 
         property string text: ""
         property string icon: ""
+        property bool iconFilled: false
         property bool strong: false
         property bool danger: false
 
@@ -806,6 +927,9 @@ FocusScope {
                 name: bb.icon
                 color: bb.strong || bb.danger && bbHover.hovered ? Colours.on(bb.danger ? Colours.danger : Colours.accent) : (bb.danger ? Colours.danger : Colours.ink)
                 font.pixelSize: 17
+                font.variableAxes: ({
+                        "FILL": bb.iconFilled ? 1 : 0
+                    })
             }
             P5Text {
                 anchors.verticalCenter: parent.verticalCenter
@@ -904,6 +1028,12 @@ FocusScope {
         function blur(): void {
             field.focus = false;
         }
+        // a letter typed on the shelf starts a search
+        function typeIn(t: string): void {
+            field.text = t;
+            field.forceActiveFocus();
+            field.cursorPosition = field.text.length;
+        }
 
         height: 38
         radius: Appearance.r(19)
@@ -963,7 +1093,7 @@ FocusScope {
             P5Text {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: field.text === ""
-                text: field.activeFocus ? "NAME, VIBE, PART …" : "SEARCH LOOKS  ·  /"
+                text: field.activeFocus ? "NAME, VIBE, PART, SAVED …" : "SEARCH LOOKS  ·  JUST TYPE"
                 color: Colours.alpha(Colours.inkDim, 0.8)
                 font.pixelSize: Appearance.font.size.small
                 tracking: 1
@@ -977,7 +1107,8 @@ FocusScope {
             anchors.rightMargin: 12
             anchors.verticalCenter: parent.verticalCenter
             visible: field.text !== ""
-            width: visible ? implicitWidth : 0
+            // a fixed width: implicitWidth here looped with the visible flip
+            width: field.text !== "" ? 18 : 0
             name: "close"
             color: clearHover.hovered ? Colours.ink : Colours.inkDim
             font.pixelSize: 16
@@ -1184,6 +1315,15 @@ FocusScope {
                     }
                 }
 
+                // the bookmark: shows under the pointer, stays once a look is saved
+                SaveMark {
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 8
+                    lookId: tile.look?.id ?? ""
+                    shown: tile.lift > 0.05 || isSaved
+                }
+
                 // ON · YOURS
                 Row {
                     anchors.left: parent.left
@@ -1246,7 +1386,7 @@ FocusScope {
                         text: ({
                                 vibes: "VIBE",
                                 classic: tile.look?.original === true ? "HOUSE" : "CLASSIC",
-                                windows: "WINDOWS",
+                                windows: "VINDOWS",
                                 yours: "MINE"
                             })[root.catOf(tile.look)] ?? ""
                         color: root.readable(tile.accent)
@@ -1393,6 +1533,398 @@ FocusScope {
         }
     }
 
+    // ── the bookmark in a card's corner: save a look for later
+    component SaveMark: Plate {
+        id: sm
+
+        property string lookId: ""
+        property bool shown: true
+        readonly property bool isSaved: Presets.isSaved(sm.lookId)
+        // the little jump when it is pressed (a transform of its own: a
+        // Behavior on scale could not follow a value that moves every frame)
+        property real pop: 1
+
+        width: 32
+        height: 32
+        radius: Appearance.r(16)
+        color: sm.isSaved ? (smHover.hovered ? Colours.accentHot : Colours.accent) : (smHover.hovered ? Colours.alpha(Colours.surface, 0.98) : Colours.alpha(Colours.surface, 0.82))
+        opacity: sm.shown ? 1 : 0
+        visible: opacity > 0.01
+        scale: smTap.pressed ? 0.88 : (smHover.hovered ? 1.08 : 1)
+        antialiasing: true
+        transform: Scale {
+            origin.x: sm.width / 2
+            origin.y: sm.height / 2
+            xScale: sm.pop
+            yScale: sm.pop
+        }
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Appearance.anim.fast
+            }
+        }
+        Behavior on color {
+            ColorAnimation {
+                duration: Appearance.anim.fast
+            }
+        }
+        Behavior on scale {
+            SpringAnimation {
+                spring: 7
+                damping: 0.38
+                epsilon: 0.002
+            }
+        }
+
+        Icon {
+            anchors.centerIn: parent
+            name: "bookmark"
+            color: sm.isSaved ? Colours.on(Colours.accent) : Colours.ink
+            font.pixelSize: 18
+            font.variableAxes: ({
+                    "FILL": sm.isSaved ? 1 : 0
+                })
+        }
+
+        HoverHandler {
+            id: smHover
+
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            id: smTap
+
+            // the card under it must not take the same click
+            gesturePolicy: TapHandler.WithinBounds
+            onTapped: {
+                root.toggleSave(sm.lookId);
+                smPop.restart();
+            }
+        }
+        SequentialAnimation {
+            id: smPop
+
+            NumberAnimation {
+                target: sm
+                property: "pop"
+                to: 1.3
+                duration: 90
+                easing.type: Easing.OutQuad
+            }
+            NumberAnimation {
+                target: sm
+                property: "pop"
+                to: 1
+                duration: 280
+                easing.type: Easing.OutBack
+            }
+        }
+    }
+
+    // ── YOUR SHELF: the look you wear, what you saved, made and wore last
+    component MyShelf: Item {
+        id: shelfRow
+
+        readonly property real chipW: 212
+        readonly property real chipH: 138
+        readonly property real chipGap: 14
+        readonly property int fits: Math.max(1, Math.min(8, Math.floor((shelfRow.width + shelfRow.chipGap) / (shelfRow.chipW + shelfRow.chipGap))))
+        // at most two rows of it
+        readonly property var items: root.mine.slice(0, 2 * shelfRow.fits - 1)
+        readonly property bool more: shelfRow.items.length > shelfRow.fits
+        // +N opens the second row, LESS folds it away again
+        property bool open: false
+        readonly property var showing: shelfRow.open ? shelfRow.items : shelfRow.items.slice(0, shelfRow.more ? shelfRow.fits - 1 : shelfRow.fits)
+        // the place of the +N / LESS chip
+        readonly property int moreAt: shelfRow.showing.length
+        readonly property int rows: Math.ceil((shelfRow.showing.length + (shelfRow.more ? 1 : 0)) / shelfRow.fits)
+        // spread the chips over the whole width
+        readonly property real slotW: shelfRow.fits > 0 ? (shelfRow.width - shelfRow.chipGap * (shelfRow.fits - 1)) / shelfRow.fits : shelfRow.chipW
+
+        function slotX(i: int): real {
+            return (i % shelfRow.fits) * (shelfRow.slotW + shelfRow.chipGap);
+        }
+        function slotY(i: int): real {
+            return 36 + Math.floor(i / shelfRow.fits) * (shelfRow.chipH + shelfRow.chipGap);
+        }
+
+        height: 36 + shelfRow.rows * shelfRow.chipH + (shelfRow.rows - 1) * shelfRow.chipGap
+
+        Behavior on height {
+            NumberAnimation {
+                duration: Appearance.anim.slow
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Row {
+            height: 26
+            spacing: 12
+
+            P5Text {
+                anchors.verticalCenter: parent.verticalCenter
+                display: true
+                text: "YOUR SHELF"
+                color: Colours.ink
+                font.pixelSize: Appearance.font.size.large
+            }
+            P5Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "WHAT YOU WEAR, SAVED, MADE AND WORE LAST"
+                color: Colours.inkDim
+                font.pixelSize: Appearance.font.size.tiny
+                tracking: 1.5
+            }
+        }
+
+        // straight to everything saved
+        P5Text {
+            anchors.right: parent.right
+            height: 26
+            verticalAlignment: Text.AlignVCenter
+            visible: Presets.savedIds.length > 0
+            text: `ALL SAVED · ${Presets.savedIds.length}  ›`
+            color: allSavedHover.hovered ? Colours.accentInk : Colours.inkDim
+            font.pixelSize: Appearance.font.size.tiny
+            tracking: 1.5
+
+            HoverHandler {
+                id: allSavedHover
+
+                cursorShape: Qt.PointingHandCursor
+            }
+            TapHandler {
+                onTapped: {
+                    root.cat = "saved";
+                    Sfx.toggle();
+                    root.focusShelf();
+                }
+            }
+        }
+
+        // a fixed set of places: a chip changes its look in place, so saving
+        // one never rebuilds the row
+        Repeater {
+            model: 16
+
+            ShelfChip {
+                required property int index
+
+                x: shelfRow.slotX(index)
+                y: shelfRow.slotY(index)
+                width: shelfRow.slotW
+                height: shelfRow.chipH
+                order: index
+                entry: index < shelfRow.showing.length ? shelfRow.showing[index] : null
+            }
+        }
+
+        // +N: the second row of your shelf; LESS folds it away
+        Plate {
+            id: moreChip
+
+            objectName: "shelfMore"
+            visible: shelfRow.more
+            x: shelfRow.slotX(shelfRow.moreAt)
+            y: shelfRow.slotY(shelfRow.moreAt)
+            width: shelfRow.slotW
+            height: shelfRow.chipH
+            radius: Appearance.r(18)
+            color: moreHover.hovered ? Colours.alpha(Colours.ink, 0.1) : Colours.alpha(Colours.ink, 0.05)
+            border.width: 1
+            border.color: Colours.alpha(Colours.ink, moreHover.hovered ? 0.2 : 0.1)
+            antialiasing: true
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: Appearance.anim.fast
+                }
+            }
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 6
+
+                Icon {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: shelfRow.open
+                    name: "expand_less"
+                    color: Colours.ink
+                    font.pixelSize: 30
+                }
+                P5Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    visible: !shelfRow.open
+                    display: true
+                    text: `+${shelfRow.items.length - shelfRow.showing.length}`
+                    color: Colours.ink
+                    font.pixelSize: Appearance.font.size.title
+                }
+                P5Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: shelfRow.open ? "LESS" : "MORE OF YOURS"
+                    color: Colours.inkDim
+                    font.pixelSize: Appearance.font.size.tiny
+                    tracking: 1.5
+                }
+            }
+
+            HoverHandler {
+                id: moreHover
+
+                cursorShape: Qt.PointingHandCursor
+            }
+            TapHandler {
+                onTapped: {
+                    shelfRow.open = !shelfRow.open;
+                    Sfx.toggle();
+                    root.focusShelf();
+                }
+            }
+        }
+
+        // nothing but the look you wear yet: how the shelf fills up
+        Row {
+            visible: shelfRow.items.length <= 1
+            x: shelfRow.slotW + shelfRow.chipGap + 10
+            y: 36 + (shelfRow.chipH - height) / 2
+            spacing: 12
+
+            Icon {
+                anchors.verticalCenter: parent.verticalCenter
+                name: "bookmark"
+                color: Colours.accent
+                font.pixelSize: 24
+            }
+            P5Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "THE BOOKMARK ON ANY CARD SAVES A LOOK — IT WAITS HERE, NEXT TO THE LOOKS YOU MADE AND WORE"
+                color: Colours.inkDim
+                font.pixelSize: Appearance.font.size.small
+                tracking: 1
+            }
+        }
+    }
+
+    // ── one look on YOUR SHELF
+    component ShelfChip: Item {
+        id: chip
+
+        property var entry: null
+        property int order: 0
+        readonly property var look: chip.entry?.look ?? null
+        readonly property bool hot: chipHover.hovered && !root.detailOpen
+        readonly property bool on: chip.entry?.why === "on"
+        readonly property color accent: root.accentOf(chip.look)
+        property real lift: chip.hot ? 1 : 0
+
+        enabled: chip.look !== null
+        opacity: chip.look !== null ? 1 : 0
+        visible: opacity > 0.01
+        z: chip.hot ? 2 : 1
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: Appearance.anim.normal
+                easing.type: Easing.OutCubic
+            }
+        }
+        Behavior on lift {
+            SpringAnimation {
+                spring: 4.4
+                damping: 0.38
+                epsilon: 0.004
+            }
+        }
+
+        // the shadow under a lifted chip
+        Rectangle {
+            x: 5
+            width: parent.width - 10
+            y: 10 + 5 * chip.lift
+            height: parent.height - 8
+            radius: Appearance.r(18)
+            color: Qt.rgba(0, 0, 0, 0.3 * chip.lift)
+            visible: chip.lift > 0.02
+        }
+
+        Item {
+            width: parent.width
+            height: parent.height
+            y: -5 * chip.lift
+
+            Slash {
+                anchors.fill: parent
+                shear: 0
+                color: chip.hot ? Colours.alpha(Colours.surfaceHigh, 0.98) : Colours.alpha(Colours.surfaceHigh, 0.86)
+                borderColor: chip.on ? Colours.accent : (chip.hot ? Colours.alpha(chip.accent, 0.75) : Colours.alpha(Colours.ink, 0.08))
+                borderWidth: chip.on || chip.hot ? 2 : 1
+            }
+
+            Item {
+                id: chipArt
+
+                x: 6
+                y: 6
+                width: parent.width - 12
+                height: parent.height - 44
+                clip: true
+
+                LookArt {
+                    width: chipArt.width
+                    height: chipArt.height
+                    look: chip.look
+                    scale: 1 + 0.05 * chip.lift
+                    transformOrigin: Item.Center
+                }
+            }
+
+            P5Text {
+                x: 12
+                y: chipArt.y + chipArt.height + 9
+                width: parent.width - 24 - chipWhy.implicitWidth - 8
+                display: true
+                text: Presets.nameOf(chip.look)
+                color: Colours.ink
+                font.pixelSize: Appearance.font.size.normal
+                elide: Text.ElideRight
+            }
+            P5Text {
+                id: chipWhy
+
+                anchors.right: parent.right
+                anchors.rightMargin: 12
+                y: chipArt.y + chipArt.height + 12
+                text: ({
+                        on: "ON",
+                        saved: "SAVED",
+                        yours: "YOURS",
+                        worn: root.ago((Presets.wornAt ?? ({}))[chip.look?.id ?? ""] ?? 0)
+                    })[chip.entry?.why ?? ""] ?? ""
+                color: chip.on || chip.entry?.why === "saved" ? root.readable(chip.accent) : Colours.inkDim
+                font.pixelSize: Appearance.font.size.tiny
+                tracking: 1.5
+            }
+        }
+
+        HoverHandler {
+            id: chipHover
+
+            cursorShape: Qt.PointingHandCursor
+        }
+        TapHandler {
+            onTapped: {
+                if (chip.look)
+                    root.openDetail(chip.look.id, chip.mapToItem(root, 0, 0, chip.width, chip.height));
+            }
+            onDoubleTapped: {
+                if (chip.look)
+                    root.put(chip.look.id);
+            }
+        }
+    }
+
     // ── FEATURED: one big card, turning every few seconds
     component Hero: Item {
         id: heroRoot
@@ -1514,7 +2046,7 @@ FocusScope {
                                 text: `${slide.modelData.isNew === true ? "NEW" : "FEATURED"} · ${({
                                         vibes: "VIBE",
                                         classic: slide.modelData.original === true ? "THE ORIGINAL" : "CLASSIC",
-                                        windows: "WINDOWS",
+                                        windows: "VINDOWS",
                                         yours: "YOURS"
                                     })[root.catOf(slide.modelData)] ?? ""}`
                                 color: root.readable(root.accentOf(slide.modelData))
@@ -1593,6 +2125,13 @@ FocusScope {
                                         const p = heroArt.mapToItem(root, 0, 0);
                                         root.openDetail(slide.modelData.id, Qt.rect(p.x, p.y, heroArt.width, heroArt.height));
                                     }
+                                }
+                                BandButton {
+                                    readonly property bool isSaved: Presets.isSaved(slide.modelData.id)
+                                    icon: "bookmark"
+                                    iconFilled: isSaved
+                                    text: isSaved ? "SAVED" : "SAVE"
+                                    onClicked: root.toggleSave(slide.modelData.id)
                                 }
                             }
                         }
@@ -1808,7 +2347,7 @@ FocusScope {
                     P5Text {
                         anchors.bottom: parent.bottom
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: String(ed.modelData.name ?? "").replace("WINDOWS ", "")
+                        text: String(ed.modelData.name ?? "").replace(/^[VW]INDOWS /, "")
                         color: ed.here ? Colours.accentInk : Colours.inkDim
                         font.pixelSize: Appearance.font.size.tiny
                         tracking: 1.5
@@ -1855,7 +2394,7 @@ FocusScope {
                     text: `${({
                             vibes: "VIBE",
                             classic: ds.look?.original === true ? "THE ORIGINAL" : "CLASSIC LOOK",
-                            windows: "WINDOWS",
+                            windows: "VINDOWS",
                             yours: "YOUR OWN LOOK"
                         })[root.catOf(ds.look)] ?? ""} · ${String(ds.look?.by ?? "").toUpperCase()}`
                     width: parent.width
@@ -1979,6 +2518,16 @@ FocusScope {
                 }
             }
             BandButton {
+                readonly property bool isSaved: ds.look !== null && Presets.isSaved(ds.look.id)
+                icon: "bookmark"
+                iconFilled: isSaved
+                text: isSaved ? "SAVED" : "SAVE"
+                onClicked: {
+                    if (ds.look)
+                        root.toggleSave(ds.look.id);
+                }
+            }
+            BandButton {
                 visible: ds.look?.custom === true
                 danger: true
                 icon: "delete"
@@ -1998,7 +2547,7 @@ FocusScope {
             }
             P5Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: "ENTER PUTS IT ON · ← → THE NEXT ONE · ESC BACK TO THE SHELF"
+                text: "ENTER PUTS IT ON · CTRL+D SAVES IT · ← → THE NEXT ONE · ESC BACK"
                 color: Colours.alpha(Colours.inkDim, 0.75)
                 font.pixelSize: Appearance.font.size.tiny
                 tracking: 1

@@ -1406,8 +1406,8 @@ Singleton {
             kind: "choice",
             key: "appearance.skin",
             name: "SETTINGS LAYOUT",
-            help: "How this settings window itself is built — not just dressed. PERSONA is the house: big cards, the category rail on the left. CONSOLE is a terminal, ARCADE a game's level select, HUD a sci-fi panel, LEDGER a newspaper, GLASS floating panes, TOME a book, POSTER stacked blocks, CLEAN a quiet single column, WINDOWS a window of the version you pick below. Each comes with the matching vibe on the LOOKS tab.",
-            sub: "PERSONA · CONSOLE · ARCADE · HUD · LEDGER · GLASS · TOME · POSTER · CLEAN · WINDOWS",
+            help: "How this settings window itself is built — not just dressed. PERSONA is the house: big cards, the category rail on the left. CONSOLE is a terminal, ARCADE a game's level select, HUD a sci-fi panel, LEDGER a newspaper, GLASS floating panes, TOME a book, POSTER stacked blocks, CLEAN a quiet single column, VINDOWS a window of the edition you pick below. Each comes with the matching vibe on the LOOKS tab.",
+            sub: "PERSONA · CONSOLE · ARCADE · HUD · LEDGER · GLASS · TOME · POSTER · CLEAN · VINDOWS",
             options: [
                 { value: "persona", label: "PERSONA · THE HOUSE" },
                 { value: "console", label: "CONSOLE · A TERMINAL" },
@@ -1418,21 +1418,22 @@ Singleton {
                 { value: "tome", label: "TOME · A BOOK" },
                 { value: "poster", label: "POSTER · STACKED BLOCKS" },
                 { value: "clean", label: "CLEAN · A QUIET COLUMN" },
-                { value: "win", label: "WINDOWS · YOUR VERSION" }
+                { value: "win", label: "VINDOWS · YOUR EDITION" }
             ]
         },
         {
             kind: "choice",
             key: "appearance.winVersion",
-            name: "WINDOWS VERSION",
-            help: "Which Windows the WINDOWS look wears. 95 is grey bevelled boxes and a navy title bar; XP a blue title bar, round buttons and a green Start; 7 is Aero glass with a glossy orb; 10 is flat and sharp; 11 is rounded mica cards. Picking one while the WINDOWS look is on turns the whole shell — settings, taskbar, windows, sounds — into that edition. Otherwise it is remembered for the next time you put the WINDOWS look on.",
+            name: "VINDOWS EDITION",
+            aka: "WINDOWS VERSION · WINDOWS EDITION",
+            help: "Which edition the VINDOWS look wears — Velvet's homage to the classic desktops. 95 is grey bevelled boxes and a navy title bar; XP a blue title bar, round buttons and a green Start; 7 is glass with a glossy orb; 10 is flat and sharp; 11 is soft rounded cards. Picking one while the VINDOWS look is on turns the whole shell — settings, taskbar, windows, sounds — into that edition. Otherwise it is remembered for the next time you put the VINDOWS look on.",
             sub: "95 · XP · 7 · 10 · 11 — THE WHOLE SHELL FOLLOWS",
             options: [
-                { value: "95", label: "WINDOWS 95 · GREY AND BEVELLED" },
-                { value: "xp", label: "WINDOWS XP · LUNA BLUE" },
-                { value: "7", label: "WINDOWS 7 · AERO GLASS" },
-                { value: "10", label: "WINDOWS 10 · FLAT AND SHARP" },
-                { value: "11", label: "WINDOWS 11 · MICA AND ROUNDED" }
+                { value: "95", label: "VINDOWS 95 · GREY AND BEVELLED" },
+                { value: "xp", label: "VINDOWS XP · BLUE AND GREEN" },
+                { value: "7", label: "VINDOWS 7 · GLASS AND SHINE" },
+                { value: "10", label: "VINDOWS 10 · FLAT AND SHARP" },
+                { value: "11", label: "VINDOWS 11 · SOFT AND ROUNDED" }
             ]
         },
         {
@@ -1533,8 +1534,8 @@ Singleton {
             kind: "choice",
             key: "appearance.typeStyle",
             name: "TYPE",
-            help: "The voice of all text. PERSONA is heavy italic; SOFT is round and upright; MONO is a terminal; SERIF is a printed page; BLOCK is a poster; ARCADE is a pixel game; TECH is a wide, light HUD; CLEAN is a calm neutral sans; WINDOWS is the face of the Windows version you chose.",
-            sub: "PERSONA · SOFT · MONO · SERIF · BLOCK · ARCADE · TECH · CLEAN · WINDOWS",
+            help: "The voice of all text. PERSONA is heavy italic; SOFT is round and upright; MONO is a terminal; SERIF is a printed page; BLOCK is a poster; ARCADE is a pixel game; TECH is a wide, light HUD; CLEAN is a calm neutral sans; VINDOWS is the face of the Vindows edition you chose.",
+            sub: "PERSONA · SOFT · MONO · SERIF · BLOCK · ARCADE · TECH · CLEAN · VINDOWS",
             options: [
                 { value: "persona", label: "PERSONA" },
                 { value: "soft", label: "SOFT" },
@@ -1544,7 +1545,7 @@ Singleton {
                 { value: "arcade", label: "ARCADE" },
                 { value: "tech", label: "TECH" },
                 { value: "clean", label: "CLEAN" },
-                { value: "win", label: "WINDOWS" }
+                { value: "win", label: "VINDOWS" }
             ]
         },
         {
@@ -1611,7 +1612,7 @@ Singleton {
                 { value: "rpg", label: "RPG" },
                 { value: "brutal", label: "BRUTAL" },
                 { value: "clean", label: "CLEAN" },
-                { value: "windows", label: "WINDOWS" }
+                { value: "windows", label: "VINDOWS" }
             ]
         }
     ]
@@ -1926,7 +1927,7 @@ Singleton {
             ]
         },
         {
-            kind: "choice", key: "launcher.side", name: "SIDE", help: "Whether the launcher opens in the middle or towards the left or right of the screen. The Windows start menu keeps its corner and the terminal line its full width.", sub: "LEFT, MIDDLE OR RIGHT",
+            kind: "choice", key: "launcher.side", name: "SIDE", help: "Whether the launcher opens in the middle or towards the left or right of the screen. The Vindows start menu keeps its corner and the terminal line its full width.", sub: "LEFT, MIDDLE OR RIGHT",
             options: [
                 { value: "left", label: "LEFT" },
                 { value: "centre", label: "MIDDLE" },
@@ -2027,12 +2028,12 @@ Singleton {
                 help: "Forgets what you tuned on the look you wear and puts it back exactly as it was designed. Other looks keep their own tuning.",
                 sub: "BACK TO HOW IT WAS DESIGNED"
             },
-            { kind: "info", name: "SHELL PARTS", sub: "THE LAUNCHER, THE NOTIFICATIONS, THE VOLUME POP-UP, THE POWER MENU", help: "Every look builds these parts its own way. Pick another look's way for any of them — a terminal launcher on the glass look, Windows toasts on the arcade — and this look remembers it." },
+            { kind: "info", name: "SHELL PARTS", sub: "THE LAUNCHER, THE NOTIFICATIONS, THE VOLUME POP-UP, THE POWER MENU", help: "Every look builds these parts its own way. Pick another look's way for any of them — a terminal launcher on the glass look, Vindows toasts on the arcade — and this look remembers it." },
             {
                 kind: "choice",
                 key: "appearance.launcherStyle",
                 name: "LAUNCHER",
-                help: "How the launcher (Super+Space) is built: the look's own, or any look's — Velvet's orbit, a terminal prompt, a game menu, a HUD, a newspaper index, a glass spotlight, a grimoire, a poster, a quiet list or a Windows start menu.",
+                help: "How the launcher (Super+Space) is built: the look's own, or any look's — Velvet's orbit, a terminal prompt, a game menu, a HUD, a newspaper index, a glass spotlight, a grimoire, a poster, a quiet list or a Vindows start menu.",
                 sub: "THE LOOK'S OWN OR ANY LOOK'S",
                 options: [
                     { value: "auto", label: "THE LOOK'S OWN" },
@@ -2045,7 +2046,7 @@ Singleton {
                     { value: "grimoire", label: "GRIMOIRE" },
                     { value: "poster", label: "POSTER" },
                     { value: "raycast", label: "QUIET" },
-                    { value: "start", label: "WINDOWS" }
+                    { value: "start", label: "VINDOWS" }
                 ]
             },
             {
@@ -2065,7 +2066,7 @@ Singleton {
                     { value: "grimoire", label: "GRIMOIRE" },
                     { value: "poster", label: "POSTER" },
                     { value: "raycast", label: "QUIET" },
-                    { value: "start", label: "WINDOWS" }
+                    { value: "start", label: "VINDOWS" }
                 ]
             },
             {
@@ -2085,7 +2086,7 @@ Singleton {
                     { value: "grimoire", label: "GRIMOIRE" },
                     { value: "poster", label: "POSTER" },
                     { value: "raycast", label: "QUIET" },
-                    { value: "start", label: "WINDOWS" }
+                    { value: "start", label: "VINDOWS" }
                 ]
             },
             {
@@ -2105,7 +2106,7 @@ Singleton {
                     { value: "grimoire", label: "GRIMOIRE" },
                     { value: "poster", label: "POSTER" },
                     { value: "raycast", label: "QUIET" },
-                    { value: "start", label: "WINDOWS" }
+                    { value: "start", label: "VINDOWS" }
                 ]
             },
             { kind: "info", name: "COLOURS", sub: "FROM THE WALLPAPER OR THE LOOK'S OWN", help: "Every look can take its colours from your wallpaper: the accent and the hue of its ground follow the picture, and change with it. Or it keeps the colours it was designed in." },
@@ -2630,6 +2631,32 @@ Singleton {
                         {
                             value: "numbers",
                             label: "NUMBERS"
+                        }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "bar.workspaces.names",
+                    name: "NAMES",
+                    aka: "WORKSPACE NAMES · GREEK LETTERS · ROMAN NUMERALS",
+                    help: "What the workspace slots are called wherever the bar writes them — in the active slash, the pills, the numbers and the text looks. AUTO keeps numbers (Roman in the newspaper and book looks); 1 2 3, I II III and α β γ name every slot the same way.",
+                    sub: "AUTO · 1 2 3 · I II III · α β γ",
+                    options: [
+                        {
+                            value: "auto",
+                            label: "AUTO"
+                        },
+                        {
+                            value: "numbers",
+                            label: "1 2 3"
+                        },
+                        {
+                            value: "roman",
+                            label: "I II III"
+                        },
+                        {
+                            value: "greek",
+                            label: "α β γ"
                         }
                     ]
                 },
@@ -4444,7 +4471,7 @@ Singleton {
             kind: "choice",
             key: "lock.look",
             name: "LOCK STYLE",
-            help: "The lock's face. FLUID is the welcoming card with side columns of modules; SOFT is no card — a big clock and a few round pills; VELVET is the original hard-edged lock; VIBE draws the lock that belongs to the look you wear — a terminal login, a game's title screen, a newspaper front page, frosted glass, a book, a poster, a quiet clock, or the logon screen of the Windows edition you picked. Each of the first three has its own page below (the one you wear says IN USE); CLOCK, BACKGROUND & MUSIC and PASSWORD & HINTS apply to FLUID and SOFT. PAM and all safety rules are the same for all of them.",
+            help: "The lock's face. FLUID is the welcoming card with side columns of modules; SOFT is no card — a big clock and a few round pills; VELVET is the original hard-edged lock; VIBE draws the lock that belongs to the look you wear — a terminal login, a game's title screen, a newspaper front page, frosted glass, a book, a poster, a quiet clock, or the logon screen of the Vindows edition you picked. Each of the first three has its own page below (the one you wear says IN USE); CLOCK, BACKGROUND & MUSIC and PASSWORD & HINTS apply to FLUID and SOFT. PAM and all safety rules are the same for all of them.",
             sub: "FLUID · SOFT · VELVET — OR THE LOCK OF THE VIBE YOU WEAR",
             options: [
                 {
@@ -5078,7 +5105,7 @@ Singleton {
         {
             kind: "page",
             name: "VIBE FACES",
-            help: "The lock of the look you wear — the terminal, the game, the HUD, the newspaper, the glass, the book, the poster, the quiet clock, the Windows logon — and everything you can change about it: the clock, how the date is written, how typing looks, what is shown, how the wallpaper sits behind and how the lock arrives.",
+            help: "The lock of the look you wear — the terminal, the game, the HUD, the newspaper, the glass, the book, the poster, the quiet clock, the Vindows logon — and everything you can change about it: the clock, how the date is written, how typing looks, what is shown, how the wallpaper sits behind and how the lock arrives.",
             sub: "REMEMBERED PER LOOK · CLOCK · TYPING · EFFECTS · MUSIC · ENTRANCE",
             icon: "palette",
             style: "vibe",
@@ -5086,7 +5113,7 @@ Singleton {
                 {
                     kind: "info",
                     name: "THE LOCK OF YOUR LOOK",
-                    help: "Every look has its own lock screen — a terminal login, a game's PRESS START, a HUD, a newspaper, frosted glass, a book, a poster, a quiet clock, the logon screen of a Windows edition. Every switch here belongs to the look you wear: each look remembers its own lock — its clock, typing, effect, music and entrance — and RESET THIS LOOK (VISUALS → THIS LOOK) brings back its design. The picture beside the list updates as you change them.",
+                    help: "Every look has its own lock screen — a terminal login, a game's PRESS START, a HUD, a newspaper, frosted glass, a book, a poster, a quiet clock, the logon screen of a Vindows edition. Every switch here belongs to the look you wear: each look remembers its own lock — its clock, typing, effect, music and entrance — and RESET THIS LOOK (VISUALS → THIS LOOK) brings back its design. The picture beside the list updates as you change them.",
                     sub: "EACH LOOK REMEMBERS ITS OWN LOCK · THE PICTURE BESIDE THE LIST SHOWS IT LIVE"
                 },
                 {

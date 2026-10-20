@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-sky
+
+The night sky on a slowly turning globe: the brightest stars at their real
+places with their names beside them, a field of faint ones behind, the far
+side of the sphere shining through dimly so it reads as a ball and not as a
+disc. It is a desk ornament, not a planetarium — the sky turns about its pole
+once every minute or so, whatever the time of day.
+
+Everything is computed; it opens no files and reads no state.
+"""
+
+import math
+import os
+import random
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _velvet import RESET, fg, mix, opt, opt_on, run, shade  # noqa: E402
+
+# The bright stars: name, right ascension (hours), declination (degrees) and
+# apparent magnitude — rounded catalogue values (J2000), plenty for a picture.
+STARS = [
+    ("Sirius", 6.752, -16.72, -1.46), ("Canopus", 6.399, -52.70, -0.74),
+    ("Arcturus", 14.261, 19.18, -0.05), ("Rigil Kentaurus", 14.660, -60.83, -0.27),
+    ("Vega", 18.616, 38.78, 0.03), ("Capella", 5.278, 46.00, 0.08),
+    ("Rigel", 5.242, -8.20, 0.13), ("Procyon", 7.655, 5.22, 0.34),
+    ("Achernar", 1.629, -57.24, 0.46), ("Betelgeuse", 5.919, 7.41, 0.50),
+    ("Hadar", 14.064, -60.37, 0.61), ("Altair", 19.846, 8.87, 0.77),
+    ("Acrux", 12.443, -63.10, 0.77), ("Aldebaran", 4.599, 16.51, 0.85),
+    ("Antares", 16.490, -26.43, 0.96), ("Spica", 13.420, -11.16, 0.97),
+    ("Pollux", 7.755, 28.03, 1.14), ("Fomalhaut", 22.961, -29.62, 1.16),
+    ("Deneb", 20.690, 45.28, 1.25), ("Mimosa", 12.795, -59.69, 1.25),
+    ("Regulus", 10.140, 11.97, 1.35), ("Adhara", 6.977, -28.97, 1.50),
+    ("Castor", 7.577, 31.89, 1.58), ("Shaula", 17.560, -37.10, 1.62),
+    ("Gacrux", 12.519, -57.11, 1.63), ("Bellatrix", 5.419, 6.35, 1.64),
+    ("Elnath", 5.438, 28.61, 1.65), ("Miaplacidus", 9.220, -69.72, 1.67),
+    ("Alnilam", 5.604, -1.20, 1.69), ("Alnair", 22.137, -46.96, 1.73),
+    ("Alnitak", 5.679, -1.94, 1.74), ("Alioth", 12.900, 55.96, 1.77),
+    ("Dubhe", 11.062, 61.75, 1.79), ("Mirfak", 3.405, 49.86, 1.79),
+    ("Wezen", 7.140, -26.39, 1.83), ("Kaus Australis", 18.403, -34.38, 1.85),
+    ("Avior", 8.375, -59.51, 1.86), ("Alkaid", 13.792, 49.31, 1.86),
+    ("Sargas", 17.622, -43.00, 1.86), ("Menkalinan", 5.992, 44.95, 1.90),
+    ("Atria", 16.811, -69.03, 1.91), ("Alhena", 6.629, 16.40, 1.93),
+    ("Peacock", 20.427, -56.74, 1.94), ("Polaris", 2.530, 89.26, 1.98),
+    ("Mirzam", 6.378, -17.96, 1.98), ("Alphard", 9.460, -8.66, 1.99),
+    ("Hamal", 2.120, 23.46, 2.00), ("Algieba", 10.333, 19.84, 2.01),
+    ("Diphda", 0.727, -17.99, 2.04), ("Mirach", 1.162, 35.62, 2.05),
+    ("Nunki", 18.921, -26.30, 2.05), ("Menkent", 14.111, -36.37, 2.06),
+    ("Alpheratz", 0.140, 29.09, 2.06), ("Saiph", 5.796, -9.67, 2.07),
+    ("Kochab", 14.845, 74.16, 2.08), ("Rasalhague", 17.582, 12.56, 2.08),
+    ("Algol", 3.136, 40.96, 2.12), ("Denebola", 11.818, 14.57, 2.14),
+    ("Schedar", 0.675, 56.54, 2.24), ("Caph", 0.153, 59.15, 2.27),
+    ("Alcyone", 3.791, 24.11, 2.87), ("Mira", 2.322, -2.98, 3.00),
+    ("Albireo", 19.512, 27.96, 3.05), ("Thuban", 14.073, 64.38, 3.65),
+]
+
+# how long one turn of the sky takes, in seconds
+SPINS = {"slow": 180.0, "normal": 75.0, "fast": 32.0}
+TILT = math.radians(24.0)       # the pole leans towards you a little
+ASPECT = 0.5                    # a cell is about twice as tall as it is wide
+
+
+def unit(ra_h, dec_d):
+    a = ra_h / 24.0 * math.tau
+    d = math.radians(dec_d)
+    return (math.cos(d) * math.cos(a), math.sin(d), math.cos(d) * math.sin(a))
+
+
+BRIGHT = [(n, unit(ra, dec), mag) for n, ra, dec, mag in STARS]
+
+state = {"count": 0, "field": []}
+
+
+def field(count):
+    """The faint stars: the same sky every time (a fixed seed), spread evenly
+    over the sphere, nearly all of them near the edge of seeing."""
+    if state["count"] == count:
+        return state["field"]
+    rnd = random.Random(1609)
+    out = []
+    for _ in range(count):
+        z = rnd.uniform(-1.0, 1.0)
+        a = rnd.uniform(0.0, math.tau)
+        r = math.sqrt(1.0 - z * z)
+        mag = 3.2 + 3.3 * math.sqrt(rnd.random())
+        out.append(((r * math.cos(a), z, r * math.sin(a)), mag, rnd.random() * math.tau))
+    state["count"], state["field"] = count, out
+    return out
+
+
+def turn(v, cos_t, sin_t):
+    """Turn about the pole, then lean the pole towards the viewer."""
+    x, y, z = v
+    x1 = x * cos_t + z * sin_t
+    z1 = -x * sin_t + z * cos_t
+    y2 = y * math.cos(TILT) - z1 * math.sin(TILT)
+    z2 = y * math.sin(TILT) + z1 * math.cos(TILT)
+    return x1, y2, z2
+
+
+# Its own switches:
+#   --names off       no star names, only the stars
+#   --grid            the celestial equator and the hour circles, faintly
+#   --spin slow|normal|fast
+#   --no-rim          no circle round the globe
+def draw(scr, t):
+    pal = scr.palette
+    accent, alt, ink, dim = pal.accent, pal.accentAlt, pal.ink, pal.inkDim
+    names = str(opt("names", "on")).lower() not in ("off", "0", "no", "false")
+    grid = opt_on("grid")
+    rim = not opt_on("no-rim")
+    period = SPINS.get(str(opt("spin", "normal")), SPINS["normal"])
+
+    cols, rows = scr.cols, scr.rows
+    chars = [[" "] * cols for _ in range(rows)]
+    colours = [[None] * cols for _ in range(rows)]
+    depth = [[-9.0] * cols for _ in range(rows)]
+
+    R = max(2.0, min((cols - 2) / 2.0, (rows - 1) / (2.0 * ASPECT)))
+    cx, cy = cols / 2.0, rows / 2.0
+    ang = (t / period) * math.tau
+    ct, st = math.cos(ang), math.sin(ang)
+
+    def at(x, y):
+        return int(round(cx + x * R)), int(round(cy - y * R * ASPECT))
+
+    def put(c, r, ch, colour, z):
+        if 0 <= c < cols and 0 <= r < rows and z >= depth[r][c]:
+            chars[r][c], colours[r][c], depth[r][c] = ch, colour, z
+
+    deep = shade(accent, 0.18)
+
+    # ── the rim: the edge of the ball
+    if rim:
+        steps = int(R * 7)
+        for i in range(steps):
+            a = i / steps * math.tau
+            c, r = at(math.cos(a), math.sin(a))
+            put(c, r, "·", mix(deep, alt, 0.25), -2.0)
+
+    # ── the equator and the hour circles, faintly
+    if grid:
+        for k in range(180):
+            a = k / 180.0 * math.tau
+            for v in ((math.cos(a), 0.0, math.sin(a)),):
+                x, y, z = turn(v, ct, st)
+                if z > 0:
+                    c, r = at(x, y)
+                    put(c, r, "·", mix(deep, accent, 0.35 * z), -1.0)
+        for hour in range(0, 24, 3):
+            for k in range(-80, 81, 2):
+                x, y, z = turn(unit(hour, k), ct, st)
+                if z > 0:
+                    c, r = at(x, y)
+                    put(c, r, "·", mix(deep, alt, 0.3 * z), -1.0)
+
+    # ── the faint field; the far side glimmers through
+    count = max(80, min(900, (cols * rows) // 5))
+    for v, mag, phase in field(count):
+        x, y, z = turn(v, ct, st)
+        c, r = at(x, y)
+        twinkle = 0.82 + 0.18 * math.sin(t * 1.7 + phase)
+        if z < 0:
+            if mag < 4.4:
+                put(c, r, "·", mix(shade(dim, 0.25), deep, 0.5), z - 1.0)
+            continue
+        b = max(0.0, min(1.0, (6.6 - mag) / 3.4)) * (0.45 + 0.55 * z) * twinkle
+        ch = "∙" if b > 0.55 else "·"
+        put(c, r, ch, mix(deep, ink, 0.25 + 0.6 * b), z)
+
+    # ── the bright ones, and their names
+    shown = []
+    for name, v, mag in BRIGHT:
+        x, y, z = turn(v, ct, st)
+        c, r = at(x, y)
+        if z < -0.05:
+            if mag < 1.0:
+                put(c, r, "·", mix(shade(dim, 0.3), deep, 0.4), z - 1.0)
+            continue
+        twinkle = 0.9 + 0.1 * math.sin(t * 2.3 + c * 0.7 + r)
+        b = max(0.25, min(1.0, (2.6 - mag) / 3.6)) * (0.55 + 0.45 * max(0.0, z)) * twinkle
+        ch = "✦" if mag < 0.6 else ("•" if mag < 1.6 else "∙")
+        put(c, r, ch, mix(accent, ink, 0.25 * b) if mag < 1.6 else mix(deep, accent, 0.4 + 0.6 * b), 2.0 + z)
+        shown.append((mag, name, c, r, z))
+
+    if names and cols >= 24:
+        taken = set()
+        # a few names, the brightest first — a name cloud would hide the sky
+        room = max(4, (cols * rows) // 110)
+        for mag, name, c, r, z in sorted(shown):
+            if room <= 0:
+                break
+            if mag > 1.75 or z < 0.3 or not (0 <= r < rows):
+                continue
+            label = name
+            # to the right if there is room, else to the left
+            for x0 in (c + 2, c - len(label) - 1):
+                cells = [(x0 + i, r) for i in range(-1, len(label) + 1)]
+                if x0 < 0 or x0 + len(label) > cols:
+                    continue
+                if any(p in taken for p in cells):
+                    continue
+                if any(0 <= px < cols and chars[r][px] in "✦•" for px, _ in cells[1:-1]):
+                    continue
+                colour = mix(dim, ink, 0.25 + 0.55 * z)
+                for i, chx in enumerate(label):
+                    chars[r][x0 + i], colours[r][x0 + i] = chx, colour
+                taken.update(cells)
+                # one row above and below stay clear too, so names never touch
+                taken.update((px, r - 1) for px, _ in cells)
+                taken.update((px, r + 1) for px, _ in cells)
+                room -= 1
+                break
+
+    lines = []
+    for r in range(rows):
+        out = []
+        last = None
+        for c in range(cols):
+            colour = colours[r][c]
+            if colour is None:
+                if last is not None:
+                    out.append(RESET)
+                    last = None
+                out.append(" ")
+                continue
+            if colour != last:
+                out.append(fg(colour))
+                last = colour
+            out.append(chars[r][c])
+        lines.append("".join(out).rstrip() + RESET)
+    return lines
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(draw, fps=20, title="velvet-sky"))

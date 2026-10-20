@@ -127,6 +127,29 @@ Singleton {
     property var names: ({})
     // When each look was last put on ({ id: ms }) — the store's RECENT order.
     property var wornAt: ({})
+    // The looks you SAVED in the store — the bookmark on every card: { id: ms }.
+    // The SAVED shelf and YOUR SHELF on the store's front read it.
+    property var saved: ({})
+    // the saved looks that still exist, the newest first
+    readonly property var savedIds: Object.keys(root.saved).filter(id => root.find(id) !== null).sort((a, b) => root.saved[b] - root.saved[a])
+
+    function isSaved(id: string): bool {
+        return id !== "" && root.saved[id] !== undefined;
+    }
+
+    // save or unsave a look; answers whether it is saved now
+    function toggleSaved(id: string): bool {
+        if (!root.find(id))
+            return false;
+        const next = Object.assign({}, root.saved);
+        if (next[id] !== undefined)
+            delete next[id];
+        else
+            next[id] = Date.now();
+        root.saved = next;
+        root.persist();
+        return next[id] !== undefined;
+    }
 
     function nameOf(look: var): string {
         if (!look)
@@ -182,6 +205,9 @@ Singleton {
     readonly property var colourKeys: ["appearance.accentSource", "appearance.accentColour", "appearance.accentSaturation", "appearance.surfaceTint", "appearance.surfaceLift", "appearance.transparency", "appearance.groundColour"]
 
     // ────────────────────────────────────────────────── the WINDOWS look
+    //  On screen it is VINDOWS — Velvet's homage to the classic desktops,
+    //  with its own colourless mark (components/WinLogo.qml) and no
+    //  Microsoft names. The ids (win95 … win11, vibe "windows") stay.
     //  One vibe in five editions (SETTINGS → VISUALS → VIBE → WINDOWS VERSION,
     //  or the strip under the vibes on the LOOKS tab). Each edition is a
     //  look of its own — a different shape, ground, accent, taskbar and
@@ -222,7 +248,7 @@ Singleton {
 
     readonly property var winSpecs: ({
             "95": {
-                name: "WINDOWS 95",
+                name: "VINDOWS 95",
                 by: "grey, bevelled and square",
                 blurb: "1995: grey boxes with a raised bevel, a navy title bar, a Start button in the corner and a plain teal desktop. Chunky, flat colours, nothing soft.",
                 accent: "#000080",
@@ -267,8 +293,8 @@ Singleton {
                 }
             },
             "xp": {
-                name: "WINDOWS XP",
-                by: "luna blue and green",
+                name: "VINDOWS XP",
+                by: "blue and green, round and friendly",
                 blurb: "2001: a bright blue title bar, round buttons, a green Start button, a cream window face and the green hill behind it. Friendly and colourful.",
                 accent: "#2a5fd3",
                 parts: ["LUNA BLUE TITLE BAR", "GREEN START BUTTON", "ROUND BUTTONS", "CREAM WINDOW FACE", "BLISS BACKDROP"],
@@ -311,8 +337,8 @@ Singleton {
                 }
             },
             "7": {
-                name: "WINDOWS 7",
-                by: "aero glass",
+                name: "VINDOWS 7",
+                by: "glass and shine",
                 blurb: "2009: glass frames with a soft shine, a glossy blue Start orb, a dark glass taskbar, a light-blue hover on everything and big soft shadows. Shiny, but friendly.",
                 accent: "#3a8ee6",
                 parts: ["AERO GLASS FRAMES", "START ORB", "GLASS TASKBAR", "BLUE HOVER GLOW", "SOFT SHADOWS"],
@@ -355,7 +381,7 @@ Singleton {
                 }
             },
             "10": {
-                name: "WINDOWS 10",
+                name: "VINDOWS 10",
                 by: "flat and sharp",
                 blurb: "2015: flat panels with sharp corners, a dark taskbar, the accent only on what is active, light thin type and a home of plain tiles.",
                 accent: "#0078d7",
@@ -400,9 +426,9 @@ Singleton {
                 }
             },
             "11": {
-                name: "WINDOWS 11",
-                by: "mica and rounded",
-                blurb: "2021: soft rounded cards on a light mica ground, hairline edges, gentle shadows, a calm taskbar with room around it and a pill-shaped switch for everything.",
+                name: "VINDOWS 11",
+                by: "soft and rounded",
+                blurb: "2021: soft rounded cards on a light, frosted ground, hairline edges, gentle shadows, a calm taskbar with room around it and a pill-shaped switch for everything.",
                 accent: "#0067c0",
                 parts: ["ROUNDED CARDS", "MICA GROUND", "HAIRLINE EDGES", "SOFT SHADOWS", "PILL SWITCHES"],
                 mood: "win",
@@ -2180,6 +2206,11 @@ Singleton {
         if (next.length === root.custom.length)
             return false;
         root.custom = next;
+        if (root.saved[id] !== undefined) {
+            const s = Object.assign({}, root.saved);
+            delete s[id];
+            root.saved = s;
+        }
         if (root.applied === id) {
             // you deleted the look you wear: what was pending is filed with
             // it first, then Velvet's own setup and desk come back
@@ -2222,7 +2253,8 @@ Singleton {
             withColours: root.withColours,
             tunes: root.tunes,
             names: root.names,
-            wornAt: root.wornAt
+            wornAt: root.wornAt,
+            saved: root.saved
         }, null, 1));
     }
 
@@ -2241,6 +2273,7 @@ Singleton {
                 root.tunes = root.sane(d.tunes ?? ({}));
                 root.names = d.names ?? ({});
                 root.wornAt = d.wornAt ?? ({});
+                root.saved = d.saved ?? ({});
             } catch (e) {}
             root.loaded = true;
         }
@@ -2270,12 +2303,21 @@ Singleton {
         function remove(id: string): string {
             return root.removeCustom(id) ? `removed ${id}` : `no custom look ${id}`;
         }
+        // the store's bookmark: save a look for later, or unsave it
+        function bookmark(id: string): string {
+            if (!root.find(id))
+                return `unknown look: ${id}`;
+            return root.toggleSaved(id) ? `saved ${id}` : `unsaved ${id}`;
+        }
+        function saved(): string {
+            return root.savedIds.join("\n");
+        }
         // for Velly: every look with its name, one line about it and whether it is on
         function describe(): string {
-            const out = [{ id: "velvet", name: "VELVET", about: "the original: slanted cards, print dots, the house look", on: root.wearing("velvet") }];
+            const out = [{ id: "velvet", name: "VELVET", about: "the original: slanted cards, print dots, the house look", on: root.wearing("velvet"), saved: root.isSaved("velvet") }];
             for (let i = 0; i < root.looks.length; i++) {
                 const l = root.looks[i];
-                out.push({ id: l.id, name: root.nameOf(l), about: `${l.by ?? ""}`, on: root.wearing(l.id) });
+                out.push({ id: l.id, name: root.nameOf(l), about: `${l.by ?? ""}`, on: root.wearing(l.id), saved: root.isSaved(l.id) });
             }
             return JSON.stringify(out);
         }

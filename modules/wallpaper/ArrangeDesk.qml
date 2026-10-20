@@ -758,10 +758,13 @@ FocusScope {
             TapHandler {
                 gesturePolicy: TapHandler.WithinBounds
                 onTapped: {
-                    Scenes.removeLive(ai.iid);
-                    if (root.picked === ai.iid)
+                    // the removal rebuilds every card, this one too: finish
+                    // first, remove last (after it, this handler's scope is gone)
+                    const id = ai.iid;
+                    if (root.picked === id)
                         root.picked = "";
                     Sfx.back();
+                    Scenes.removeLive(id);
                 }
             }
         }

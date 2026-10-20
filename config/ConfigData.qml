@@ -195,6 +195,9 @@ JsonAdapter {
             // one stretches into a pill with its number), "dots",
             // "numbers".
             property string style: "slash"
+            // what a slot is called: "auto" (numbers; Roman in the newspaper
+            // and the book), "numbers", "roman", "greek"
+            property string names: "auto"
             property int shown: 5
             property bool showWindows: true
             property bool activeIndicator: true

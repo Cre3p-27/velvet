@@ -1,10 +1,13 @@
 # VELVET
 
 **Many desktops in one.** A Quickshell desktop for Hyprland: arcade, glass,
-terminal, newspaper, neumorph, clay, Windows 95 to 11 — every look changes the
+terminal, newspaper, neumorph, clay, manga ink, Y2K chrome, Vindows 95 to 11 — every look changes the
 bar, the settings, the launcher, the notifications, the lock screen and the
 sounds, and every part can be tuned. An infinite desktop with a real zoom-out
 comes with it.
+
+**Support Velvet:** [patreon.com/Velvet_Shell](https://www.patreon.com/Velvet_Shell) — and a ⭐ on GitHub helps
+more people find it.
 
 ## New to Linux? Three steps
 
@@ -341,7 +344,7 @@ the window as it opens — the version with no flicker — and then, once the
 window really exists, the same geometry is applied again through ordinary
 dispatches, and measured a beat later in case it did not take.
 
-**The programs Velvet ships** — six of them, in `bin/`, each a single
+**The programs Velvet ships** — seven of them, in `bin/`, each a single
 stdlib-only Python file. They are terminal programs on purpose: a terminal
 window is something Hyprland already knows how to float, size, pin and rule, so
 a clock you drop on the desktop behaves like every other window rather than
@@ -355,6 +358,9 @@ like a widget with its own set of problems.
 | `velvet-traffic` | up and down on your busiest interface, on a shared easing scale |
 | `velvet-space` | where the disk went |
 | `velvet-drift` | a quiet particle field that never repeats |
+| `velvet-sky` | the stars on a slowly turning globe — the brightest ones named, at their real places |
+
+`velvet-clock --face lcd` draws the clock as a seven-segment display whose unlit segments stay faintly there.
 
 They read the shell's own accent out of `~/.config/velvet/palette.json`, which
 the shell rewrites whenever the palette changes — so changing wallpaper
@@ -440,38 +446,47 @@ it stands. Games that run without Steam Input read the pad over hidraw; for thos
 **COPY LAUNCH OPTION** gives `velvet-pad launch -- %command%`, and apps started from the
 shell get `SDL_JOYSTICK_HIDAPI=0` automatically while P2 is on.
 
-**Vibes** — SETTINGS → LOOKS (top), or QUICK SETTINGS → *VIBE*. Ten completely different
-shells, not recolours — and none of them shouts: every card, chip and panel changes its **shape**
-(slash, round, square, notch, bracket, pixel, bevel), **outline**, **shadow**, **ground** (dark or a
-light page), **type**, **motion**, backdrop pattern and **sounds**; the bar, the island, the windows'
-borders and the lyrics follow. ARCADE (pixel headings, yellow on navy), CYBER (notched panels, hairline
-cyan), TERMINAL (lowercase mint on near-black), PAPER (ink on cream, serif), GLASS (frosted round panes),
-RPG (gold line on leather), BRUTAL (warm paper, black outlines, one coral), GLASSMORPHISM (frosted glass over an aurora), NEUMORPH (soft extruded surfaces), CLAY (pillowy pastel), FLAT (solid colour blocks), MINIMAL (black on warm white), STREET (dirty concrete, tape, tags in caution yellow), **CLEAN** (a soft white sheet,
-one blue accent, hairlines, calm motion), **WILDSTYLE** (a painted brick wall: the headlines are real
-graffiti pieces — outlined, two-tone, with a swept 3D block, arrows, glints and drips; sticker cards, a
-paint colour for every row and category, spray-can sounds) and **WINDOWS** — in five editions: **95** (grey bevels, navy
-title bar, Start button), **XP** (Luna blue, green Start), **7** (Aero glass, orb), **10** (flat, sharp),
-**11** (mica, rounded). Pick the edition under the vibes on the LOOKS tab or in VISUALS → VIBE → WINDOWS
-VERSION; while the look is on, the whole shell follows — settings window, taskbar, Start button, windows,
-sounds. Each vibe also builds the **settings window itself** differently — a terminal with a path prompt
-and `key = value` lines, a game's level-select menu, a HUD with sectors, a newspaper with a table of
-contents, floating frosted panes, a book with chapters, a poster with outlined labels, one quiet sheet,
-a painted wall, or a Windows window (`appearance.skin`, VISUALS → VIBE → SETTINGS LAYOUT) — and wipes the
-screen briefly in its own way when you put it on (WILDSTYLE rolls seven stripes of paint across it). Each is only settings — tune any of them one by one in VISUALS → VIBE,
-save the result as a look of your own, or let a wallpaper keep its own vibe. From a terminal:
-`qs -c velvet ipc call looks apply clean` (`windows` is the edition you chose last; `win95 winxp win7
-win10 win11` name one). The sound packs and the pixel typeface are made by `assets/make-sfx-packs.py`
-and `assets/make-font.py` (the installer runs them if missing).
+**Vibes** — SETTINGS → LOOKS, or QUICK SETTINGS → *VIBE*. Completely different shells, not recolours —
+and none of them shouts: every card, chip and panel changes its **shape** (slash, round, square, notch,
+bracket, pixel, bevel), **outline**, **shadow**, **ground** (dark or a light page), **type**, **motion**,
+backdrop pattern and **sounds**; the bar, the island, the windows' borders and the lyrics follow. ARCADE
+(pixel headings, yellow on navy), CYBER (notched panels, hairline cyan), TERMINAL (lowercase mint on
+near-black), PAPER (ink on cream, serif), GLASSMORPHISM (frosted glass over an aurora), RPG (gold line on
+leather), BRUTAL (warm paper, black outlines, one coral), **CLEAN** (a soft white sheet, one blue accent,
+hairlines, calm motion), MINIMAL (black on warm white), FLAT (solid colour blocks), NEUMORPH (soft extruded
+surfaces), CLAY (pillowy pastel), **INK** (a manga page: screentone dots, two-pixel ink outlines, one red
+seal), **CHROME** (Y2K liquid silver and frosted panes under a cobalt sky) and **VINDOWS** — Velvet's homage
+to the classic desktops, in five editions: **95** (grey bevels, navy title bar, Start button), **XP** (blue
+title bar, green Start), **7** (glass, glossy orb), **10** (flat, sharp), **11** (soft, rounded). VINDOWS
+draws its own colourless mark and uses no Microsoft names or logos. Pick the edition on the look's page in
+the LOOKS store or in VISUALS → VIBE → VINDOWS EDITION; while the look is on, the whole shell follows —
+settings window, taskbar, Start button, windows, sounds. Each vibe also builds the **settings window
+itself** differently — a terminal with a path prompt and `key = value` lines, a game's level-select menu, a
+HUD with sectors, a newspaper with a table of contents, floating frosted panes, a book with chapters, a
+poster with outlined labels, one quiet sheet, or a Vindows window (`appearance.skin`, VISUALS → VIBE →
+SETTINGS LAYOUT) — and wipes the screen briefly in its own way when you put it on. Each is only settings —
+tune any of them one by one in VISUALS → VIBE, save the result as a look of your own, or let a wallpaper
+keep its own vibe. From a terminal: `qs -c velvet ipc call looks apply clean` (`windows` is the edition you
+chose last; `win95 winxp win7 win10 win11` name one). The sound packs and the pixel typeface are made by
+`assets/make-sfx-packs.py` and `assets/make-font.py` (the installer runs them if missing).
+
+**The LOOKS store** — every look as a small live picture on one shelf: search by just typing, shelves
+ALL · SAVED · YOURS · VIBES · CLASSIC · VINDOWS (Ctrl+1 … 6), sorted as designed, by when you last wore
+them, or A–Z. The **bookmark** on every card (or Ctrl+D) **saves** a look for later; **YOUR SHELF** at the
+top keeps what you wear, what you saved, the looks you made yourself and the ones you wore lately one click
+away — +N folds out a second row. A card opens the look's page, where it is put on, saved, renamed, tuned or
+(your own) deleted. `qs -c velvet ipc call looks bookmark ink` saves one from a terminal, `looks saved`
+lists them.
 
 **Lock screens of the vibes** — SETTINGS → LOCK SCREEN → LOCK STYLE → *VIBE* (every vibe sets it). The lock
 wears the look: a **terminal** login (boot log, block-pixel clock, `velvet login:` and `Login incorrect`), an
 **arcade** title screen (pixel clock, a row of boxes for the password), a **HUD** (ring dial, telemetry, a
 notched access bar), a **newspaper** front page (masthead, "THE DESK IS LOCKED", a subscriber's box), **glass**
 (frosted wallpaper, a hairline-thin clock), a **tome** (gold frame, "speak the word", diamonds), a **poster**
-(black block time, one hard shadow), **clean** (the time and one pill), the **logon screens of Windows 95, XP,
-7, 10 and 11**, and the **wall** (the time painted as a piece, a sticker to type into where every key sprays a
-blob of paint). All of them share one input core (`modules/lock/LockKit.qml` → `Locker`); a face that fails to
-load leaves a plain one, so you can always type. The LOCK SCREEN tab shows a live picture of the one you wear.
+(black block time, one hard shadow), **clean** (the time and one pill) and the **logon screens of Vindows 95,
+XP, 7, 10 and 11**. All of them share one input core (`modules/lock/LockKit.qml` → `Locker`); a face that
+fails to load leaves a plain one, so you can always type. The LOCK SCREEN tab shows a live picture of the one
+you wear.
 
 **Credits** — SETTINGS → CREDITS: Sug & Sane (SnS) · 27, what the shell stands on, and their tag as a piece of
 graffiti.

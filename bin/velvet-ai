@@ -2547,7 +2547,8 @@ def t_settings_set(key="", value=""):
 LOOK_ALIASES = {
     "windows 11": "win11", "windows11": "win11", "win 11": "win11", "windows 10": "win10", "win 10": "win10",
     "windows 7": "win7", "win 7": "win7", "windows xp": "winxp", "xp": "winxp", "windows 95": "win95",
-    "win 95": "win95", "windows": "windows", "glas": "glass", "glassmorphism": "glass", "papier": "paper",
+    "win 95": "win95", "windows": "windows", "vindows 11": "win11", "vindows 10": "win10", "vindows 7": "win7",
+    "vindows xp": "winxp", "vindows 95": "win95", "vindows": "windows", "glas": "glass", "glassmorphism": "glass", "papier": "paper",
     "zeitung": "paper", "retro": "arcade", "spiel": "arcade", "konsole": "terminal", "hacker": "terminal",
     "fantasy": "rpg", "rollenspiel": "rpg", "poster": "brutal", "brutalismus": "brutal", "neumorphism": "neu",
     "neumorphismus": "neu", "claymorphism": "clay", "knete": "clay", "kirschblüte": "sakura", "rosa": "sakura",
@@ -2596,7 +2597,7 @@ def t_look_apply(look=""):
         if close:
             pick = ids.get(close[0]) or next((r for r in rows if str(r.get("name", "")).lower() == close[0]), None)
     if pick is None and LOOK_ALIASES.get(want) == "windows":
-        pick = {"id": "windows", "name": "WINDOWS"}
+        pick = {"id": "windows", "name": "VINDOWS"}
     if pick is None:
         return {"ok": False, "error": f"no look called '{look}'",
                 "looks": [{"id": r.get("id"), "name": r.get("name"), "about": r.get("about")} for r in rows]}
@@ -3715,7 +3716,7 @@ def quick_looks(low: str) -> str:
     rest = [r for r in rows if r not in wins and r not in own]
     parts = [spoken(r) + (" (das Original)" if r.get("id") == "velvet" else "") for r in rest]
     if wins:
-        parts.append("Windows " + ", ".join(spoken(r).replace("Windows ", "") for r in wins).replace("Xp", "XP"))
+        parts.append("Vindows " + ", ".join(spoken(r).replace("Vindows ", "").replace("Windows ", "") for r in wins).replace("Xp", "XP"))
     line = ", ".join(parts)
     if own:
         line += f" — und {len(own)} eigene{'n' if len(own) == 1 else ''}"
@@ -4345,7 +4346,7 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
   you: (call {t("settings.find")} with query "island position edge") → (call {t("settings.set")} with key "map.islandSide", value "right") → Erledigt — die Island sitzt jetzt am rechten Rand. Sag Bescheid, wenn ich's zurückstellen soll.
 
   user: mach mal alles wie windows 11
-  you: (call {t("look.apply")} with look "win11") → Erledigt — Velvet trägt jetzt den Windows-11-Look. Gefällt er dir nicht, sag einfach „zurück“.
+  you: (call {t("look.apply")} with look "win11") → Erledigt — Velvet trägt jetzt den Vindows-11-Look. Gefällt er dir nicht, sag einfach „zurück“.
 
   user: wie ändere ich die akzentfarbe
   you: (call {t("settings.find")} with query "accent colour") → Mit Super+Tab in die Einstellungen, dann VISUALS, THIS LOOK, ACCENT COLOUR. Soll ich sie dir gleich umstellen?
