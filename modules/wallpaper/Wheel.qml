@@ -13,6 +13,7 @@ import qs.services
 import qs.components
 import Quickshell
 import Quickshell.Wayland
+import Quickshell.Io
 import QtQuick
 
 PanelWindow {
@@ -401,6 +402,41 @@ PanelWindow {
                 readonly property real cardW: Math.min(parent.width * 0.4, 840)
                 readonly property real cardH: cardW * 0.5625
                 property string curInfo: ""
+                // the picture's real size, read from the file's header: the
+                // card decodes it at most 1280 wide, so its own sourceSize
+                // only ever said "1280 × 1280"
+                property var sizes: ({})
+                property string asked: ""
+
+                function askSize(path: string): void {
+                    if (!path)
+                        return;
+                    if (view.sizes[path] !== undefined) {
+                        view.curInfo = view.sizes[path];
+                        return;
+                    }
+                    view.asked = path;
+                    sizeProbe.running = false;
+                    sizeProbe.command = ["file", "-b", "--", path];
+                    sizeProbe.running = true;
+                }
+
+                Process {
+                    id: sizeProbe
+
+                    stdout: StdioCollector {
+                        onStreamFinished: {
+                            const m = /(\d{2,5})\s*x\s*(\d{2,5})/.exec(text);
+                            const info = m ? `${m[1]} × ${m[2]}` : "";
+                            const next = Object.assign({}, view.sizes);
+                            next[view.asked] = info;
+                            view.sizes = next;
+                            const cur = view.currentItem?.modelData ?? "";
+                            if (cur === view.asked)
+                                view.curInfo = info;
+                        }
+                    }
+                }
 
                 transform: Translate {
                     y: root.bumpY
@@ -463,8 +499,8 @@ PanelWindow {
                     rotation: PathView.pvRot ?? 0
 
                     onIsCurrentChanged: {
-                        if (card.isCurrent && img.status === Image.Ready)
-                            view.curInfo = `${img.sourceSize.width} × ${img.sourceSize.height}`;
+                        if (card.isCurrent)
+                            view.askSize(card.modelData);
                     }
 
                     // -------------------------------------------- the card
@@ -539,7 +575,7 @@ PanelWindow {
 
                                 onStatusChanged: {
                                     if (status === Image.Ready && card.isCurrent)
-                                        view.curInfo = `${sourceSize.width} × ${sourceSize.height}`;
+                                        view.askSize(card.modelData);
                                 }
                             }
                         }

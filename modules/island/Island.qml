@@ -1632,7 +1632,7 @@ PanelWindow {
                         x: 48
                         width: Math.max(10, parent.width - 48 - 10 - (root.onSide ? 0 : dots.width + dots.anchors.rightMargin))
                         visible: root.showText
-                        text: root.arming ? "VELLY  ·  HALTEN…" : root.pillText(root.shownIdx)
+                        text: root.arming ? "VELLY  ·  HOLD…" : root.pillText(root.shownIdx)
                         color: root.arming ? Colours.accentInk : Colours.alpha(Colours.ink, 0.92)
                         font.pixelSize: Appearance.font.size.small
                         elide: Text.ElideRight

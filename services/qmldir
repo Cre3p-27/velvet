@@ -43,3 +43,4 @@ singleton ZoomPlugin 1.0 ZoomPlugin.qml
 singleton WorkspaceModes 1.0 WorkspaceModes.qml
 singleton Updates 1.0 Updates.qml
 singleton Monitors 1.0 Monitors.qml
+singleton DrawTerm 1.0 DrawTerm.qml

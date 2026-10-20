@@ -483,139 +483,150 @@ Singleton {
             // setup, test, wake, and the two ways to deal with her memory.
             kind: "page",
             name: "VELLY",
-            help: "Velly, die Assistentin in der Insel. Lang auf die Pille drücken weckt sie; hier stellst du ein, womit sie denkt, wie sie spricht, ob sie zuhört und was sie sich merkt.",
-            sub: "DER ASSISTENT IN DER INSEL · LANGES DRÜCKEN WECKT SIE",
+            aka: "ASSISTENT · ASSISTENTIN · KI",
+            help: "Velly, the assistant in the island. A long press on the pill wakes her; here you set what she thinks with, how she speaks, whether she listens and what she remembers. She speaks German.",
+            sub: "THE ASSISTANT IN THE ISLAND · A LONG PRESS WAKES HER",
             icon: "auto_awesome",
             items: [
                 {
                     kind: "toggle",
                     key: "velly.enabled",
                     name: "VELLY",
-                    help: "Schaltet Velly als Modul der Insel an oder aus. Aus: Das lange Drücken auf die Pille macht nichts, und nichts von ihr läuft im Hintergrund.",
-                    sub: "IHR MODUL IM SWIPE-ZYKLUS · OHNE SIE TUT DAS LANGE DRÜCKEN NICHTS"
+                    help: "Turns Velly on or off as a module of the island. Off: a long press on the pill does nothing, and nothing of her runs in the background.",
+                    sub: "HER MODULE IN THE SWIPE CYCLE · WITHOUT HER A LONG PRESS DOES NOTHING"
                 },
                 {
                     kind: "action",
                     fn: "vellySetup",
                     name: "SETUP",
-                    help: "Öffnet Vellys Einrichtung: lokales Gehirn herunterladen oder auswählen, Stimme wählen, und nur für Cloud-Anbieter einen API-Schlüssel hinterlegen. Der Schlüssel liegt in ~/.config/velvet/ai.json (nur für dich lesbar, 0600).",
-                    sub: "LOKALES GEHIRN LADEN, STIMME WÄHLEN · EIN SCHLÜSSEL NUR FÜR WOLKEN (AI.JSON, 0600)"
+                    help: "Opens Velly's setup: download or pick a local brain, choose a voice, and — only for cloud providers — store an API key. The key lives in ~/.config/velvet/ai.json (readable by you only, 0600).",
+                    sub: "LOAD A LOCAL BRAIN, PICK A VOICE · A KEY ONLY FOR CLOUDS (AI.JSON, 0600)"
                 },
                 {
                     kind: "choice",
                     key: "velly.provider",
-                    name: "GEHIRN",
-                    help: "Womit Velly denkt. AUTO nimmt zuerst das lokale Gehirn (kostenlos, nichts verlässt den Rechner), dann ein lokales Ollama, dann einen gespeicherten Cloud-Schlüssel. Die anderen Einträge erzwingen genau diesen Anbieter.",
-                    sub: "AUTO NIMMT ERST DAS LOKALE GEHIRN, DANN OLLAMA, DANN EINEN SCHLÜSSEL",
+                    name: "BRAIN",
+                    aka: "GEHIRN · PROVIDER · ANBIETER",
+                    help: "What Velly thinks with. AUTO takes the local brain first (free, nothing leaves the PC), then a local Ollama, then a stored cloud key. The other entries force exactly that provider.",
+                    sub: "AUTO TAKES THE LOCAL BRAIN FIRST, THEN OLLAMA, THEN A KEY",
                     options: [
                         { value: "auto", label: "AUTO" },
-                        { value: "local", label: "LOKAL · GRATIS" },
+                        { value: "local", label: "LOCAL · FREE" },
                         { value: "openai", label: "OPENAI" },
                         { value: "deepseek", label: "DEEPSEEK" },
                         { value: "anthropic", label: "ANTHROPIC" },
-                        { value: "ollama", label: "OLLAMA (LOKAL)" }
+                        { value: "ollama", label: "OLLAMA (LOCAL)" }
                     ]
                 },
                 {
                     kind: "toggle",
                     key: "velly.forceTier",
-                    name: "TROTZDEM-MODUS",
-                    help: "Lässt die gewählte Modellgröße auch laufen, wenn sie weit davon entfernt ist, in den freien Grafikspeicher zu passen (etwa während ein Spiel die Karte belegt). Dann liegt ein großer Teil im Arbeitsspeicher und sie antwortet langsam. Fehlt nur ein wenig, läuft deine Größe immer — dann wandern nur ein paar Experten-Schichten in den RAM. Aus: Es läuft die größte Größe, die gerade passt.",
-                    sub: "DEINE GRÖSSE AUCH OHNE PLATZ · KNAPP PASST SIE OHNEHIN"
+                    name: "ANYWAY MODE",
+                    aka: "TROTZDEM-MODUS · FORCE SIZE",
+                    help: "Runs the chosen model size even when it is far from fitting into free graphics memory (say, while a game holds the card). Much of it then sits in system RAM and she answers slowly. If only a little is missing, your size always runs — just a few expert layers move to RAM. Off: the biggest size that fits right now runs.",
+                    sub: "YOUR SIZE EVEN WITHOUT ROOM · A NEAR FIT RUNS ANYWAY"
                 },
                 {
                     kind: "choice",
                     key: "velly.keepWarm",
-                    name: "WACH BLEIBEN",
-                    help: "Wie lange das Gehirn nach einer Sitzung geladen bleibt. Weckst du Velly in dieser Zeit wieder, antwortet sie sofort, statt das Modell (beim großen 12 GB) neu zu laden. SOFORT gibt die Grafikkarte direkt nach der Sitzung frei. Startet ein Vollbild-Spiel, wird sie in jedem Fall sofort freigegeben.",
-                    sub: "NACH DER SITZUNG GELADEN BLEIBEN · EIN SPIEL BEKOMMT DIE KARTE SOFORT",
+                    name: "STAY WARM",
+                    aka: "WACH BLEIBEN · KEEP LOADED",
+                    help: "How long the brain stays loaded after a session. Wake Velly again within that time and she answers at once instead of loading the model again (12 GB for the big one). AT ONCE frees the graphics card right after the session. A fullscreen game always gets the card back immediately.",
+                    sub: "STAYS LOADED AFTER A SESSION · A GAME GETS THE CARD AT ONCE",
                     options: [
-                        { value: 0, label: "SOFORT ENTLADEN" },
-                        { value: 2, label: "2 MINUTEN" },
-                        { value: 5, label: "5 MINUTEN" },
-                        { value: 15, label: "15 MINUTEN" },
-                        { value: 60, label: "1 STUNDE" }
+                        { value: 0, label: "UNLOAD AT ONCE" },
+                        { value: 2, label: "2 MINUTES" },
+                        { value: 5, label: "5 MINUTES" },
+                        { value: 15, label: "15 MINUTES" },
+                        { value: 60, label: "1 HOUR" }
                     ]
                 },
                 {
                     kind: "choice",
                     key: "velly.model",
-                    name: "MODELL",
-                    help: "Welches Modell beim gewählten Anbieter benutzt wird. Leer lässt den Anbieter entscheiden; das lokale Gehirn wählst du in SETUP.",
-                    sub: "LEER LÄSST DEN ANBIETER ENTSCHEIDEN · SETUP KANN FREIE NAMEN SETZEN",
+                    name: "MODEL",
+                    aka: "MODELL",
+                    help: "Which model the chosen provider uses. Empty lets the provider decide; the local brain is picked in SETUP.",
+                    sub: "EMPTY LETS THE PROVIDER DECIDE · SETUP CAN SET ANY NAME",
                     options: [
-                        { value: "", label: "ANBIETER-STANDARD" },
+                        { value: "", label: "PROVIDER DEFAULT" },
                         { value: "gpt-4o-mini", label: "GPT-4O-MINI" },
                         { value: "gpt-4.1-mini", label: "GPT-4.1-MINI" },
                         { value: "deepseek-chat", label: "DEEPSEEK-CHAT" },
-                        { value: "claude-haiku-4-5-20251001", label: "CLAUDE HAIKU 4.5 · SCHNELL" },
+                        { value: "claude-haiku-4-5-20251001", label: "CLAUDE HAIKU 4.5 · FAST" },
                         { value: "claude-sonnet-5", label: "CLAUDE SONNET 5" },
-                        { value: "llama3.2", label: "LLAMA 3.2 (LOKAL)" }
+                        { value: "llama3.2", label: "LLAMA 3.2 (LOCAL)" }
                     ]
                 },
                 {
                     kind: "info",
                     live: "vellyFacts",
-                    name: "GEDÄCHTNIS",
-                    help: "Zeigt, was Velly sich über Sitzungen hinweg gemerkt hat (Fakten über dich, Vorlieben). Löschen kannst du es weiter unten.",
-                    sub: "WAS SIE ÜBER SESSIONS HINWEG BEHÄLT"
+                    name: "MEMORY",
+                    aka: "GEDÄCHTNIS · FACTS",
+                    help: "Shows what Velly has remembered across sessions (facts about you, what you like). You can erase it further down.",
+                    sub: "WHAT SHE KEEPS FROM ONE SESSION TO THE NEXT"
                 },
                 {
                     kind: "slider",
                     key: "velly.longPress",
-                    name: "HALTEDAUER",
-                    help: "So lange musst du die Pille gedrückt halten, bis Velly aufwacht, in Millisekunden. Kürzer weckt schneller, aber auch versehentlich.",
-                    sub: "SO LANGE HÄLTST DU DIE PILLE, BEVOR SIE AUFWACHT",
+                    name: "HOLD TIME",
+                    aka: "HALTEDAUER · LONG PRESS",
+                    help: "How long you hold the pill before Velly wakes, in milliseconds. Shorter wakes her faster — and by accident more often.",
+                    sub: "HOW LONG YOU HOLD THE PILL BEFORE SHE WAKES",
                     min: 250, max: 1500, step: 10, fmt: "int", unit: "ms"
                 },
                 {
                     kind: "toggle",
                     key: "velly.voice",
-                    name: "STIMME",
-                    help: "Velly liest ihre Antworten laut vor. Aus: Sie antwortet nur als Text in der Insel.",
-                    sub: "SIE SPRICHT IHRE ANTWORTEN · OHNE ENGINE REDEN DIE BLIPS BIS EINE ECHTE STIMME DA IST"
+                    name: "VOICE",
+                    aka: "STIMME · SPEAK",
+                    help: "Velly reads her answers aloud. Off: she answers as text in the island only.",
+                    sub: "SHE SPEAKS HER ANSWERS · WITHOUT AN ENGINE THE BLIPS TALK UNTIL A REAL VOICE IS THERE"
                 },
                 {
                     kind: "choice",
                     key: "velly.voiceEngine",
-                    name: "STIMM-ENGINE",
-                    help: "Womit sie spricht. QWEN3 ist die neue Stimme (Qwen3-TTS 1.7B auf der Grafikkarte, ~2,5 GB): in den Tests wurde jedes Wort richtig verstanden, gestreamt, eine feste Stimme Satz für Satz. NATÜRLICH ist die ältere Orpheus-Stimme (~3 GB). Beide sprechen nicht während eines Vollbild-Spiels — dann übernimmt Piper. PIPER ist schnell und läuft auf der CPU; ESPEAK-NG ist robotisch, aber immer da; CLOUD braucht einen Schlüssel; ANIMALESE sind nur Pieptöne; STILL schweigt. AUTO nimmt die beste, die gerade geht.",
-                    sub: "QWEN3: DIE KLARSTE STIMME, GESTREAMT (GRAFIKKARTE) · NATÜRLICH: ORPHEUS · AUTO NIMMT DIE BESTE, DIE GERADE GEHT",
+                    name: "VOICE ENGINE",
+                    aka: "STIMM-ENGINE · TTS",
+                    help: "What she speaks with. QWEN3 is the new voice (Qwen3-TTS 1.7B on the graphics card, ~2.5 GB): in the tests every word was understood, streamed, one fixed voice sentence by sentence. NATURAL is the older Orpheus voice (~3 GB). Neither speaks during a fullscreen game — then Piper takes over. PIPER is fast and runs on the CPU; ESPEAK-NG sounds robotic but is always there; CLOUD needs a key; ANIMALESE is only blips; SILENT says nothing. AUTO takes the best that works right now.",
+                    sub: "QWEN3: THE CLEAREST VOICE, STREAMED (GRAPHICS CARD) · NATURAL: ORPHEUS · AUTO TAKES THE BEST THAT WORKS",
                     options: [
                         { value: "auto", label: "AUTO" },
-                        { value: "qwen", label: "QWEN3 · AM KLARSTEN" },
-                        { value: "natural", label: "NATÜRLICH (ORPHEUS)" },
+                        { value: "qwen", label: "QWEN3 · THE CLEAREST" },
+                        { value: "natural", label: "NATURAL (ORPHEUS)" },
                         { value: "piper", label: "PIPER" },
                         { value: "espeak", label: "ESPEAK-NG" },
                         { value: "cloud", label: "CLOUD" },
                         { value: "animalese", label: "ANIMALESE (BLIPS)" },
-                        { value: "none", label: "STILL" }
+                        { value: "none", label: "SILENT" }
                     ]
                 },
                 {
                     kind: "choice",
                     key: "velly.qwenVoice",
-                    name: "QWEN-STIMME",
-                    help: "Wer Velly mit der Qwen3-Stimme ist. Jede ist eine feste Vorlage, aus der jeder Satz geklont wird — so bleibt es dieselbe Stimme. NOVA: hell, lebendig (die gleichmäßigste über fünf Testsätze); MIRA: ruhiger; ELLA: etwas höher; THEO: männlich. Gilt, wenn die Stimm-Engine QWEN3 ist (oder AUTO sie wählt).",
-                    sub: "WER VELLY SPRICHT · NOVA · MIRA · ELLA · THEO",
+                    name: "QWEN VOICE",
+                    aka: "QWEN-STIMME",
+                    help: "Who Velly is with the Qwen3 voice. Each is a fixed sample every sentence is cloned from — so it stays the same voice. NOVA: bright, lively (the most even over five test sentences); MIRA: calmer; ELLA: a little higher; THEO: male. Applies when the voice engine is QWEN3 (or AUTO picks it).",
+                    sub: "WHO SPEAKS AS VELLY · NOVA · MIRA · ELLA · THEO",
                     options: [
-                        { value: "Nova", label: "NOVA · LEBENDIG" },
-                        { value: "Mira", label: "MIRA · RUHIG" },
-                        { value: "Ella", label: "ELLA · HELL" },
-                        { value: "Theo", label: "THEO · MÄNNLICH" }
+                        { value: "Nova", label: "NOVA · LIVELY" },
+                        { value: "Mira", label: "MIRA · CALM" },
+                        { value: "Ella", label: "ELLA · BRIGHT" },
+                        { value: "Theo", label: "THEO · MALE" }
                     ]
                 },
                 {
                     kind: "choice",
                     key: "velly.naturalVoice",
-                    name: "NATÜRLICHE STIMME",
-                    help: "Welche Sprecherin oder welcher Sprecher die natürliche Stimme ist. Gemessen (Spracherkennung über sieben Sätze): LEA wird am klarsten verstanden, dann LINA und MARIE; MARIA spricht am ruhigsten. Gilt nur, wenn die Stimm-Engine NATÜRLICH ist (oder AUTO sie wählt).",
-                    sub: "WER VELLY SPRICHT — ECHTE SPRECHERINNEN UND SPRECHER",
+                    name: "NATURAL VOICE",
+                    aka: "NATÜRLICHE STIMME · ORPHEUS",
+                    help: "Which speaker the natural voice is. Measured (speech recognition over seven sentences): LEA is understood most clearly, then LINA and MARIE; MARIA speaks the calmest. Only applies when the voice engine is NATURAL (or AUTO picks it).",
+                    sub: "WHO SPEAKS AS VELLY — REAL VOICES",
                     options: [
-                        { value: "Lea", label: "LEA · AM KLARSTEN" },
+                        { value: "Lea", label: "LEA · THE CLEAREST" },
                         { value: "Lina", label: "LINA" },
                         { value: "Marie", label: "MARIE" },
-                        { value: "Maria", label: "MARIA · RUHIG" },
+                        { value: "Maria", label: "MARIA · CALM" },
                         { value: "Sophie", label: "SOPHIE" },
                         { value: "Mia", label: "MIA" },
                         { value: "Sophia", label: "SOPHIA" },
@@ -629,23 +640,25 @@ Singleton {
                 {
                     kind: "toggle",
                     key: "velly.fillers",
-                    name: "LAUT DENKEN",
-                    help: "Wenn sie länger nachdenkt, sagt sie nach gut einer Sekunde ein kurzes „Hm, Moment …“ — damit du weißt, dass sie dich gehört hat.",
-                    sub: "EIN KURZES „HM, MOMENT …“, WENN SIE LÄNGER ÜBERLEGT — WIE EIN MENSCH"
+                    name: "THINKING ALOUD",
+                    aka: "LAUT DENKEN · FILLERS",
+                    help: "When she thinks for longer, she says a short „Hm, Moment …“ after a second or so — so you know she heard you.",
+                    sub: "A SHORT „HM, MOMENT …“ WHEN SHE THINKS LONGER — LIKE A PERSON"
                 },
                 {
                     kind: "toggle",
                     key: "velly.wakeWord",
                     name: "HEY VELLY",
-                    help: "Weckt Velly ohne Drücken, wenn du „Hey Velly, …“ sagst. Dafür hört das Mikrofon dauerhaft mit; erkannt wird nur hier auf dem Rechner, nichts wird hochgeladen.",
-                    sub: "OHNE DRÜCKEN WECKEN: „HEY VELLY, …“ · DAS MIKRO HÖRT DANN IMMER MIT, ERKANNT WIRD NUR HIER AUF DEM RECHNER"
+                    help: "Wakes Velly without a press when you say „Hey Velly, …“. For that the microphone listens all the time; it is recognised here on the PC only, nothing is uploaded.",
+                    sub: "WAKE HER WITHOUT A PRESS: „HEY VELLY, …“ · THE MIC THEN ALWAYS LISTENS, RECOGNISED ON THIS PC ONLY"
                 },
                 {
                     kind: "choice",
                     key: "velly.voiceName",
-                    name: "STIMME",
-                    help: "Welche Piper-Stimme sie benutzt (deutsch). Eine Stimme, die noch fehlt, wird beim ersten Satz automatisch heruntergeladen.",
-                    sub: "PIPERS DEUTSCHE STIMMEN · EINE, DIE NOCH FEHLT, LÄDT SICH BEIM ERSTEN SATZ SELBST",
+                    name: "PIPER VOICE",
+                    aka: "STIMME · PIPER",
+                    help: "Which Piper voice she uses (German). A voice that is missing downloads itself with the first sentence.",
+                    sub: "PIPER'S GERMAN VOICES · A MISSING ONE DOWNLOADS WITH THE FIRST SENTENCE",
                     options: [
                         { value: "", label: "AUTO" },
                         { value: "de_DE-thorsten-medium", label: "THORSTEN · MEDIUM" },
@@ -663,113 +676,128 @@ Singleton {
                 {
                     kind: "slider",
                     key: "velly.voiceSpeed",
-                    name: "STIMM-TEMPO",
-                    help: "Sprechtempo. 100% ist das eigene Tempo der Stimme; höher spricht schneller, niedriger langsamer.",
-                    sub: "100% IST DAS EIGENE TEMPO DER STIMME · DARÜBER SPRICHT SIE SCHNELLER",
+                    name: "VOICE SPEED",
+                    aka: "STIMM-TEMPO · SPEECH RATE",
+                    help: "How fast she speaks. 100% is the voice's own pace; higher is faster, lower is slower.",
+                    sub: "100% IS THE VOICE'S OWN PACE · ABOVE IT SHE SPEAKS FASTER",
                     min: 0.6, max: 1.5, step: 0.05, fmt: "percent"
                 },
                 {
                     kind: "slider",
                     key: "velly.voiceVolume",
-                    name: "STIMM-LAUTSTÄRKE",
-                    help: "Lautstärke nur für Vellys Stimme, unabhängig von der Systemlautstärke. Die Klänge der Shell haben einen eigenen Regler (SHELL → SOUND).",
-                    sub: "NUR IHRE STIMME — DIE SCHALE-KLÄNGE HABEN EIGENEN REGLER",
+                    name: "VOICE VOLUME",
+                    aka: "STIMM-LAUTSTÄRKE",
+                    help: "The volume of Velly's voice only, apart from the system volume. The shell's own sounds have their own slider (SHELL → SOUND).",
+                    sub: "HER VOICE ONLY — THE SHELL'S SOUNDS HAVE THEIR OWN SLIDER",
                     min: 0, max: 1.2, step: 0.05, fmt: "percent"
                 },
                 {
                     kind: "toggle",
                     key: "velly.ears",
-                    name: "OHREN",
-                    help: "Velly hört zu, solange eine Sitzung offen ist. Das Mikrofon läuft nur dann — schläft sie, ist der Prozess beendet (außer HEY VELLY ist an).",
-                    sub: "MIKROFON NUR WÄHREND EINER SESSION · SCHLAFEND LÄUFT NICHTS"
+                    name: "EARS",
+                    aka: "OHREN · MICROPHONE · MIKROFON",
+                    help: "Velly listens while a session is open. The microphone runs only then — when she sleeps, the process is gone (unless HEY VELLY is on).",
+                    sub: "THE MIC ONLY DURING A SESSION · NOTHING RUNS WHILE SHE SLEEPS"
                 },
                 {
                     kind: "toggle",
                     key: "velly.autoListen",
-                    name: "SOFORT ZUHÖREN",
-                    help: "Das Mikrofon öffnet sich sofort, wenn sie aufwacht, du kannst direkt losreden. Aus: Du startest das Zuhören selbst.",
-                    sub: "DAS MIKROFON GEHT MIT DEM AUFWECKEN AN"
+                    name: "LISTEN AT ONCE",
+                    aka: "SOFORT ZUHÖREN",
+                    help: "The microphone opens the moment she wakes, so you can just start talking. Off: you start the listening yourself.",
+                    sub: "THE MIC GOES ON AS SHE WAKES"
                 },
                 {
                     kind: "toggle",
                     key: "velly.duckMedia",
-                    name: "MUSIK LEISER",
-                    help: "Solange Velly wach ist, wird laufende Musik leiser gedreht (oder pausiert, wenn der Player keine eigene Lautstärke hat) und danach wiederhergestellt. So hört das Mikrofon dich statt des Songs — vorher wurden Liedzeilen als Fragen erkannt — und du verstehst ihre Antwort.",
-                    sub: "WÄHREND SIE WACH IST · DANACH WIE VORHER"
+                    name: "MUSIC DOWN",
+                    aka: "MUSIK LEISER · DUCK",
+                    help: "While Velly is awake, music that is playing is turned down (or paused when the player has no volume of its own) and restored afterwards. So the microphone hears you instead of the song — lyrics used to be taken for questions — and you understand her answer.",
+                    sub: "WHILE SHE IS AWAKE · AFTERWARDS AS BEFORE"
                 },
                 {
                     kind: "slider",
                     key: "velly.earsSensitivity",
-                    name: "EMPFINDLICHKEIT",
-                    help: "Wie laut du sein musst, damit sie reagiert. Höher, wenn sie dich in einer lauten Umgebung nicht hört; niedriger, wenn sie auf Hintergrundgeräusche anspringt.",
-                    sub: "WIE LAUT DU SEIN MUSST · HOCH IN LAUTER UMGEBUNG",
+                    name: "SENSITIVITY",
+                    aka: "EMPFINDLICHKEIT",
+                    help: "How loud you have to be for her to react. Higher if she does not hear you in a loud room; lower if she jumps at background noise.",
+                    sub: "HOW LOUD YOU HAVE TO BE · HIGH IN A LOUD ROOM",
                     min: 0.4, max: 3, step: 0.1, fmt: "float1", unit: "×"
                 },
                 {
                     kind: "toggle",
                     key: "velly.learn",
-                    name: "LERNEN",
-                    help: "Am Ende jeder Sitzung fasst sie zusammen, was sie über dich gelernt hat, und merkt es sich für das nächste Mal.",
-                    sub: "JEDE SESSION WIRD AM ENDE ZU ERINNERUNGEN VERDICHTET"
+                    name: "LEARN",
+                    aka: "LERNEN",
+                    help: "At the end of every session she sums up what she learned about you and keeps it for next time.",
+                    sub: "EVERY SESSION ENDS AS A FEW MEMORIES"
                 },
                 {
                     kind: "toggle",
                     key: "velly.greet",
-                    name: "BEGRÜSSUNG",
-                    help: "Ein kurzes, gesprochenes Hallo, wenn sie aufwacht (mit deinem Namen, wenn sie ihn kennt).",
-                    sub: "EIN KURZES WORT, WENN SIE AUFWACHT"
+                    name: "GREETING",
+                    aka: "BEGRÜSSUNG",
+                    help: "A short spoken hello when she wakes (with your name, if she knows it).",
+                    sub: "A SHORT WORD WHEN SHE WAKES"
                 },
                 {
                     kind: "toggle",
                     key: "velly.confirmDanger",
-                    name: "NACHFRAGEN",
-                    help: "Vor Sperren, Abmelden, Neustart, Herunterfahren und dem Neustart der Shell fragt sie einmal nach, bevor sie es tut.",
-                    sub: "SPERREN, ABMELDEN, NEUSTART · SIE FRAGT EINMAL, BEVOR SIE ES TUT"
+                    name: "ASK FIRST",
+                    aka: "NACHFRAGEN · CONFIRM",
+                    help: "Before locking, logging out, restarting, shutting down and restarting the shell she asks once before she does it.",
+                    sub: "LOCK, LOG OUT, RESTART · SHE ASKS ONCE BEFORE SHE DOES IT"
                 },
                 {
                     kind: "slider",
                     key: "velly.temperature",
-                    name: "TEMPERATUR",
-                    help: "Wie frei sie formuliert. Niedrig ist sachlich und vorhersehbar, hoch ist lockerer und abwechslungsreicher (und irrt sich eher).",
-                    sub: "WIE FREI SIE FORMULIERT",
+                    name: "TEMPERATURE",
+                    aka: "TEMPERATUR",
+                    help: "How freely she words things. Low is matter-of-fact and predictable, high is looser and more varied (and wrong more often).",
+                    sub: "HOW FREELY SHE WORDS THINGS",
                     min: 0, max: 1.2, step: 0.1, fmt: "float1"
                 },
                 {
                     kind: "slider",
                     key: "velly.maxTokens",
-                    name: "ANTWORTLÄNGE",
-                    help: "Höchstlänge einer Antwort in Tokens (etwa Wortteile). Sie antwortet meist kürzer; der Deckel verhindert Romane.",
-                    sub: "DECKEL FÜR EINE ANTWORT · DIE KAPSEL IST 462 PX BREIT",
+                    name: "ANSWER LENGTH",
+                    aka: "ANTWORTLÄNGE · MAX TOKENS",
+                    help: "The longest an answer may be, in tokens (roughly parts of words). She usually answers shorter; the cap stops novels.",
+                    sub: "A CAP FOR ONE ANSWER · THE CAPSULE IS 462 PX WIDE",
                     min: 64, max: 1024, step: 16, fmt: "int", unit: " tok"
                 },
                 {
                     kind: "action",
                     fn: "vellyWake",
-                    name: "JETZT WECKEN",
-                    help: "Öffnet die Insel und eine Sitzung mit Velly, genau wie das lange Drücken.",
-                    sub: "ÖFFNET DIE INSEL UND DIE SESSION — WIE DAS LANGE DRÜCKEN"
+                    name: "WAKE HER NOW",
+                    aka: "JETZT WECKEN",
+                    help: "Opens the island and a session with Velly, just like the long press.",
+                    sub: "OPENS THE ISLAND AND A SESSION — LIKE THE LONG PRESS"
                 },
                 {
                     kind: "action",
                     fn: "vellyTest",
-                    name: "VERBINDUNG TESTEN",
-                    help: "Schickt eine echte Anfrage an den eingestellten Anbieter und zeigt, ob eine Antwort zurückkommt — prüft Schlüssel, Netz und Modell.",
-                    sub: "EIN ECHTER ROUND TRIP ZUM ANBIETER, KEIN GEFÜHL"
+                    name: "TEST THE LINK",
+                    aka: "VERBINDUNG TESTEN",
+                    help: "Sends a real request to the chosen provider and shows whether an answer comes back — checks the key, the network and the model.",
+                    sub: "A REAL ROUND TRIP TO THE PROVIDER, NOT A GUESS"
                 },
                 {
                     kind: "action",
                     fn: "vellyForgetFacts",
-                    name: "GEDÄCHTNIS LÖSCHEN",
-                    help: "Löscht alles, was Velly sich über dich gemerkt hat. Kann nicht rückgängig gemacht werden.",
-                    sub: "ALLES VERGESSEN, WAS SIE SICH GEMERKT HAT",
+                    name: "ERASE MEMORY",
+                    aka: "GEDÄCHTNIS LÖSCHEN · FORGET",
+                    help: "Erases everything Velly remembered about you. This cannot be undone.",
+                    sub: "FORGET EVERYTHING SHE REMEMBERED",
                     danger: true
                 },
                 {
                     kind: "action",
                     fn: "vellyPrune",
-                    name: "SPEICHER FREIGEBEN",
-                    help: "Löscht die Modellgrößen, die du nicht benutzt. Es bleiben die gewählte Größe und KLEIN, auf die Velly ausweicht, solange ein Spiel die Grafikkarte belegt. Eine gelöschte Größe wird neu geladen, wenn du sie wieder wählst.",
-                    sub: "UNBENUTZTE MODELLE VON DER PLATTE LÖSCHEN",
+                    name: "FREE THE DISK",
+                    aka: "SPEICHER FREIGEBEN · PRUNE",
+                    help: "Deletes the model sizes you do not use. The chosen size stays, and SMALL, which Velly falls back to while a game holds the graphics card. A deleted size downloads again when you pick it.",
+                    sub: "DELETE UNUSED MODELS FROM THE DISK",
                     danger: true
                 }
             ]
@@ -1086,6 +1114,14 @@ Singleton {
                     name: "DESKTOP RIGHT-CLICK MENU",
                     help: "Right-click on a free spot of the desktop: edit widgets, add one right there, change the wallpaper, save its look, jump to any desktop or the infinite canvas. Off leaves the bare desktop alone.",
                     sub: "RIGHT-CLICK THE BARE DESKTOP TO EDIT IT"
+                },
+                {
+                    kind: "toggle",
+                    key: "wallpaper.drawTerminal",
+                    name: "DRAW A TERMINAL",
+                    aka: "RIGHT DRAG · DRAG A TERMINAL · OPEN KITTY HERE",
+                    help: "Hold the right mouse button on a free spot of the desktop and pull a frame: a terminal opens in it, exactly there and that big. A plain right-click still opens the desktop menu.",
+                    sub: "RIGHT-DRAG ON THE DESKTOP: A TERMINAL IN THAT FRAME"
                 },
                 {
                     kind: "toggle",

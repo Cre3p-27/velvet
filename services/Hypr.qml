@@ -348,6 +348,28 @@ Singleton {
         }
     }
 
+    // One desktop switch is a burst of events (workspace, focusedmon,
+    // activewindow …) and each used to ask Hyprland for every workspace or
+    // every window again — three full refreshes, all landing on the shell's
+    // main thread in the very frames the switch animates. They are gathered
+    // now: whatever a burst asked for is refreshed once, a moment later.
+    property bool wantWorkspaces: false
+    property bool wantToplevels: false
+
+    Timer {
+        id: refreshSoon
+
+        interval: 30
+        onTriggered: {
+            if (root.wantWorkspaces)
+                Hyprland.refreshWorkspaces();
+            if (root.wantToplevels)
+                Hyprland.refreshToplevels();
+            root.wantWorkspaces = false;
+            root.wantToplevels = false;
+        }
+    }
+
     Connections {
         target: Hyprland
 
@@ -356,9 +378,11 @@ Singleton {
             if (n.endsWith("v2"))
                 return;
             if (n.includes("workspace") || n.includes("monitor") || n === "configreloaded" || n === "fullscreen" || n === "closewindow")
-                Hyprland.refreshWorkspaces();
+                root.wantWorkspaces = true;
             if (n.includes("window") || n.includes("mon") || n === "openwindow" || n === "closewindow")
-                Hyprland.refreshToplevels();
+                root.wantToplevels = true;
+            if ((root.wantWorkspaces || root.wantToplevels) && !refreshSoon.running)
+                refreshSoon.start();
             if (n === "openwindow")
                 root.windowOpened();
             if (n === "activelayout")

@@ -590,7 +590,11 @@ the panel behind the clock. Critical ones get a torn edge instead of a clean one
    there: edit the desktop, drop a widget right under the pointer, change the
    wallpaper, save its look, and jump to any desktop or the infinite canvas
    (WALLPAPER CHANGER → DESKTOP RIGHT-CLICK MENU turns it off, and bare desktop
-   is click-through again). The DESKTOP tab carries the same desktop strip.
+   is click-through again). Hold the right button and *drag* instead, and you
+   draw a terminal: a frame in the look's accent shows its size as it grows,
+   and on release the terminal opens exactly there, that big — floating, on
+   the desktop you are on (WALLPAPER CHANGER → DRAW A TERMINAL). The DESKTOP
+   tab carries the same desktop strip.
    Pick a widget in DESKTOP and every choice it has is laid out at once:
    frame, silhouette, tone, colour, opacity, details, size (S · M · L · XL),
    nine spots to send it to, and what only it has — 12/24 hours for the

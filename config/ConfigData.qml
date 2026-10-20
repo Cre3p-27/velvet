@@ -522,6 +522,9 @@ JsonAdapter {
         // Right-click on a free spot of the desktop opens the quick
         // desktop menu (widgets, wallpaper, look, desktops, canvas).
         property bool deskMenu: true
+        // Hold the right button on the bare desktop and pull a frame: a
+        // terminal opens in it (services/DrawTerm.qml).
+        property bool drawTerminal: true
         // ── THE LIVING DESKTOP ─────────────────────────────────────
         // Widgets and living light layered onto the wallpaper itself,
         // so a wallpaper is a place rather than a picture. Master

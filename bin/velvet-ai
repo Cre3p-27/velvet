@@ -2090,6 +2090,13 @@ def t_apps_launch(name="", args=""):
     needle = (name or "").lower().strip()
     if not needle:
         return {"ok": False, "error": "no app named"}
+    # "und jetzt Chrome" a moment after a look went on is the CHROME look, not Google's browser — the
+    # brain took it for the app once and opened a browser on its first-run screen
+    if fold(needle) == "chrome" and not args and time.time() - LAST_LOOK_AT[0] < 300:
+        res = t_look_apply("chrome")
+        if res.get("ok"):
+            res["note"] = "put the CHROME look on (looks were just being changed); for the browser say 'Google Chrome'"
+            return res
     best = None
     for app in app_entries():
         if app["key"] == needle:
@@ -2553,7 +2560,23 @@ LOOK_ALIASES = {
     "fantasy": "rpg", "rollenspiel": "rpg", "poster": "brutal", "brutalismus": "brutal", "neumorphism": "neu",
     "neumorphismus": "neu", "claymorphism": "clay", "knete": "clay", "kirschblüte": "sakura", "rosa": "sakura",
     "flach": "flat", "minimal": "minimal", "schlicht": "clean", "original": "velvet", "standard": "velvet",
+    "manga": "ink", "tinte": "ink", "comic": "ink", "y2k": "chrome", "silber": "chrome", "neon": "cyber",
+    "pink": "sakura", "glut": "ember", "feuer": "ember",
 }
+
+
+def fold(text: str) -> str:
+    """lower case, umlauts as their two-letter spelling (ue = ü), punctuation gone — so "Kirschblueten",
+    "Kirschblüten" and "kirschblüte," all meet"""
+    t = str(text or "").lower()
+    for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        t = t.replace(a, b)
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", t)).strip()
+
+
+FOLDED_ALIASES = {fold(k): v for k, v in LOOK_ALIASES.items()}
+# when she last put a look on: "und jetzt Chrome" right after that means the look, not the browser
+LAST_LOOK_AT = [0.0]
 
 
 def look_rows() -> list:
@@ -2577,7 +2600,8 @@ def t_look_list():
 
 @tool("look.apply", '{"look": "win11"}', "write",
       "Put one of Velvet's looks on — the whole shell changes style at once. look: an id or name from "
-      "look.list ('velvet' is the original). look.undo takes it off again.")
+      "look.list ('velvet' is the original). look.undo takes it off again. Some looks share a name with an "
+      "app (CHROME): while the talk is about looks or the desktop's style, that name means the LOOK.")
 def t_look_apply(look=""):
     want = re.sub(r"\s+", " ", str(look or "").strip().lower().replace("-look", "").replace(" look", ""))
     if not want:
@@ -2587,6 +2611,18 @@ def t_look_apply(look=""):
         return {"ok": False, "error": "the shell is not answering"}
     ids = {str(r.get("id", "")).lower(): r for r in rows}
     pick = ids.get(LOOK_ALIASES.get(want, want))
+    if pick is None:
+        # spelt without umlauts, inflected, or inside a whole wish ("rosa, mit Kirschblueten"): the
+        # longest alias or look id found in it wins
+        f = fold(want)
+        words = f.split()
+        cands = [(k, v) for k, v in FOLDED_ALIASES.items()] + [(fold(i), i) for i in ids]
+        cands.sort(key=lambda kv: -len(kv[0]))
+        for k, v in cands:
+            if k and (f == k or (" " in k and k in f) or any(w == k or (len(k) >= 5 and w.startswith(k)) for w in words)):
+                pick = ids.get(v)
+                if pick is not None or v == "windows":
+                    break
     if pick is None:
         for r in rows:
             if want == str(r.get("name", "")).lower() or want in str(r.get("name", "")).lower():
@@ -2604,6 +2640,7 @@ def t_look_apply(look=""):
     out = shell_ipc("looks", "apply", pick["id"], timeout=8.0)
     if not out.startswith("applied"):
         return {"ok": False, "error": out or "the shell is not answering"}
+    LAST_LOOK_AT[0] = time.time()
     return {"ok": True, "look": pick["id"], "name": pick.get("name"), "about": pick.get("about", ""),
             "undo": "look.undo puts the look from before back"}
 
@@ -5226,13 +5263,13 @@ def short_note(result: dict) -> str:
         if "site" in result:
             return str(result["site"]).upper()[:60]
         if "due" in result:
-            return f"UM {result['due']}"[:60]
+            return f"AT {result['due']}"[:60]
         if "result" in result and "expr" in result:
             return f"= {result['result']}"[:60]
         if "summary" in result:
             return f"CPU {result.get('cpu_percent', '?')} %"[:60]
         if "timers" in result:
-            return f"{len(result['timers'])} OFFEN"
+            return f"{len(result['timers'])} OPEN"
         # a setting she changed: what it was, so "mach das rückgängig" knows
         if "old" in result and "now" in result:
             return f"{result.get('name') or result.get('key')}: {result['old']} → {result['now']}"[:60]

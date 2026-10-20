@@ -73,7 +73,7 @@ Singleton {
             case "tasksPill":
                 return Tasks.pill;
             case "vellyFacts":
-                return `${Velly.facts} FAKTEN  ·  ${Velly.sessions} SESSIONS  ·  ${(Velly.brain || "—").toUpperCase()}`;
+                return `${Velly.facts} FACTS  ·  ${Velly.sessions} SESSIONS  ·  ${(Velly.brain || "—").toUpperCase()}`;
             }
             return 0;
         }

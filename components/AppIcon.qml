@@ -35,6 +35,11 @@ Item {
             add(`steam_icon_${steam[1]}`);
             add("steam");
         }
+        // a class that is only an architecture (some native games report
+        // "x86_64") names no app at all: nothing to look up, the letter it is
+        const arch = /^(x86_64|x86|x64|amd64|i386|arm64|aarch64|exe|bin|appimage)$/;
+        if (arch.test(c.toLowerCase()))
+            return out;
         add(c);
         add(c.toLowerCase());
         // reverse-DNS names end in the app (org.gnome.Nautilus); a game's
@@ -42,7 +47,7 @@ Item {
         // there the name is in front
         const parts = c.split(".");
         const last = parts[parts.length - 1].toLowerCase();
-        add(/^(x86_64|x86|x64|amd64|i386|arm64|aarch64|exe|bin|appimage)$/.test(last) && parts.length > 1 ? parts[0].toLowerCase() : last);
+        add(arch.test(last) && parts.length > 1 ? parts[0].toLowerCase() : last);
         if (/claude/i.test(c))
             add("claude-desktop");
         return out;

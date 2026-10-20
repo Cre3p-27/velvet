@@ -214,14 +214,14 @@ Singleton {
     readonly property string errorShort: {
         const e = root.errorText;
         if (/did not come up|not come up|connection refused|urlopen error|timed out|timeout/i.test(e))
-            return "GEHIRN KOMMT NICHT HOCH";
+            return "THE BRAIN WON'T START";
         if (/out of memory|vram|oom/i.test(e))
             return "ZU WENIG GRAFIKSPEICHER";
         if (/401|403|unauthori|key/i.test(e))
-            return "SCHLÜSSEL ABGELEHNT";
+            return "KEY REJECTED";
         if (/429|rate limit|quota/i.test(e))
             return "ANBIETER BREMST";
-        return (e || "FEHLER").toUpperCase().slice(0, 40);
+        return (e || "ERROR").toUpperCase().slice(0, 40);
     }
     readonly property string answer: `${root.state.answer ?? ""}`
     readonly property string askLine: `${root.state.user ?? ""}`
@@ -254,28 +254,28 @@ Singleton {
         // She speaks German; so does her one-word status.
         switch (root.phase) {
         case "speaking":
-            return "SPRICHT";
+            return "SPEAKING";
         case "thinking":
-            return root.state.state === "acting" ? "HANDELT" : "DENKT NACH";
+            return root.state.state === "acting" ? "ACTING" : "THINKING";
         case "error":
-            return "FEHLER";
+            return "ERROR";
         case "listening":
-            return "HÖRT ZU";
+            return "LISTENING";
         case "hearing":
-            return "HÖRT DICH";
+            return "HEARS YOU";
         case "ready":
-            return root.brainOk ? "BEREIT" : (root.brainSkills ? "NUR SKILLS" : "KEIN GEHIRN");
+            return root.brainOk ? "READY" : (root.brainSkills ? "SKILLS ONLY" : "NO BRAIN");
         default:
-            return "SCHLÄFT";
+            return "ASLEEP";
         }
     }
 
     // The island pill's one-glance line.
     readonly property string pill: {
         if (root.installing)
-            return `VELLY  ·  LÄDT ${root.installPct}%  ·  ${root.installLabel}`;
+            return `VELLY  ·  LOADING ${root.installPct}%  ·  ${root.installLabel}`;
         if (root.phase === "off")
-            return root.brainOk ? `VELLY  ·  ${root.nextLabel || root.model || "BEREIT"}` : "VELLY  ·  HALTEN ZUM WECKEN";
+            return root.brainOk ? `VELLY  ·  ${root.nextLabel || root.model || "READY"}` : "VELLY  ·  HOLD TO WAKE";
         if (root.phase === "error")
             return "VELLY  ·  " + root.errorShort;
         return `VELLY  ·  ${root.phaseLabel}`;
@@ -367,7 +367,7 @@ Singleton {
     function forgetAll(): void {
         forgetProc.running = false;
         forgetProc.running = true;
-        root.toast("GEDÄCHTNIS GELEERT", "warn");
+        root.toast("MEMORY CLEARED", "warn");
     }
 
     Process {
@@ -983,10 +983,10 @@ Singleton {
     // The engine room's four sizes. velvet-local owns the files and the URLs;
     // this is the label and the bill the user sees while choosing.
     readonly property var brainTiers: [
-        { key: "klein", label: "QWEN3-4B", mb: 2382, note: "SCHNELL UND GENÜGSAM · LÄUFT IMMER" },
-        { key: "mittel", label: "QWEN3-8B", mb: 5000, note: "DEUTLICH KLÜGER · PASST NEBEN DEN DESKTOP" },
-        { key: "gross", label: "QWEN3-14B", mb: 9000, note: "DIE KLÜGSTE OPTION HIER · WILL DIE GPU" },
-        { key: "max", label: "GPT-OSS-20B", mb: 11600, note: "MoE · SEHR KLUG · TEILT DIE GPU MIT DIR" }
+        { key: "klein", label: "QWEN3-4B", mb: 2382, note: "FAST AND FRUGAL · ALWAYS RUNS" },
+        { key: "mittel", label: "QWEN3-8B", mb: 5000, note: "MUCH SMARTER · FITS NEXT TO THE DESKTOP" },
+        { key: "gross", label: "QWEN3-14B", mb: 9000, note: "THE SMARTEST HERE · WANTS THE GPU" },
+        { key: "max", label: "GPT-OSS-20B", mb: 11600, note: "MoE · VERY SMART · SHARES THE GPU WITH YOU" }
     ]
 
     readonly property string activeTier: `${root.local.tier ?? ""}`
@@ -1040,11 +1040,11 @@ Singleton {
     // room says plain how much landed where.
     function setForce(on: bool): void {
         root.setKey("velly.forceTier", on ? "true" : "false");
-        root.setupNote = on ? "TROTZDEM  ·  DEINE GRÖSSE LÄUFT, AUCH WENN SIE LANGSAM IST" : "AUTOMATIK  ·  DIE GRÖSSTE GRÖSSE, DIE PASST";
+        root.setupNote = on ? "ANYWAY  ·  YOUR SIZE RUNS, EVEN WHEN IT IS SLOW" : "AUTOMATIC  ·  THE BIGGEST SIZE THAT FITS";
         // A server that is already up was started by the old rule: take it
         // down, and the next wake brings it back under the new one.
         root.runLocal(["stop"]);
-        root.toast(on ? "TROTZDEM-MODUS AN" : "AUTOMATIK AN", "ok");
+        root.toast(on ? "ANYWAY MODE ON" : "AUTOMATIC ON", "ok");
     }
 
     // The note under the size buttons: the running tier's own line — or, when
@@ -1060,18 +1060,18 @@ Singleton {
     readonly property string tierNote: {
         const run = root.brainTiers.find(t => t.key === root.activeTier);
         const want = root.brainTiers.find(t => t.key === root.chosenTier);
-        const free = root.vramFreeMb > 0 ? `${Math.round(root.vramFreeMb / 1024)}G FREI` : "";
+        const free = root.vramFreeMb > 0 ? `${Math.round(root.vramFreeMb / 1024)}G FREE` : "";
         const up = `${root.local.state ?? ""}` === "up";
         const note = root.forcedNote;
         // What is running right now, with the engine room's own words for it.
         if (want && up && note.length > 0 && `${root.local.tier ?? ""}` === want.key)
-            return `${want.label} LÄUFT  ·  ${note}`;
+            return `${want.label} RUNNING  ·  ${note}`;
         if (want && root.forceTier)
-            return `${want.label}  ·  TROTZDEM-MODUS AN  ·  DEINE GRÖSSE LÄUFT BEIM WECKEN`;
+            return `${want.label}  ·  ANYWAY MODE ON  ·  YOUR SIZE RUNS ON WAKE`;
         if (want && root.nextTier && root.nextTier.key !== want.key)
-            return `${want.label} IST FERTIG  ·  BRAUCHT ~${Math.round(want.mb / 1024 + 1.4)}G VRAM${free ? `  ·  ${free}` : ""}  ·  BEIM WECKEN: ${root.nextTier.label}`;
+            return `${want.label} IS READY  ·  NEEDS ~${Math.round(want.mb / 1024 + 1.4)}G VRAM${free ? `  ·  ${free}` : ""}  ·  ON WAKE: ${root.nextTier.label}`;
         if (run && want && run.key !== want.key)
-            return `${want.label} IST FERTIG  ·  BRAUCHT ~${Math.round(want.mb / 1024 + 1.4)}G VRAM${free ? `  ·  ${free}` : ""}  ·  BEIM WECKEN: ${root.nextLabel}`;
+            return `${want.label} IS READY  ·  NEEDS ~${Math.round(want.mb / 1024 + 1.4)}G VRAM${free ? `  ·  ${free}` : ""}  ·  ON WAKE: ${root.nextLabel}`;
         return run ? run.note : "";
     }
 
@@ -1083,27 +1083,27 @@ Singleton {
     // One honest line about what is thinking: provider, size, context, speed.
     readonly property string brainLine: {
         if (root.installing)
-            return `${root.installLabel || "LADEN"}  ${root.installPct}%`;
+            return `${root.installLabel || "LOADING"}  ${root.installPct}%`;
         const bits = [];
         if (root.brain === "local" || root.activeTier.length > 0) {
-            bits.push("LOKAL", root.localTierLabel);
+            bits.push("LOCAL", root.localTierLabel);
             if (root.local.ctx)
-                bits.push(`${root.local.ctx} KONTEXT`);
+                bits.push(`${root.local.ctx} CONTEXT`);
             if (root.local.ngl === 0)
                 bits.push("CPU");
             else if (root.local.ngl)
                 bits.push(`GPU ${root.local.ngl} LAYER`);
             else if (`${root.local.state ?? ""}` === "up")
-                bits.push(root.forcedNote.length > 0 ? root.forcedNote : "GANZ AUF DER GPU");
+                bits.push(root.forcedNote.length > 0 ? root.forcedNote : "ALL ON THE GPU");
             if (root.local.vram_free_mb)
-                bits.push(`${Math.round(root.local.vram_free_mb / 1024)}G VRAM FREI`);
+                bits.push(`${Math.round(root.local.vram_free_mb / 1024)}G VRAM FREE`);
             return bits.join("  ·  ");
         }
         if (root.brainOk)
             return `${(root.provider || "").toUpperCase()}  ·  ${(root.model || "STANDARD").toUpperCase()}`;
         if (root.brainSkills)
-            return "NOCH KEIN GEHIRN  ·  LOKAL LADEN ODER EIN SCHLÜSSEL";
-        return "KEIN GEHIRN";
+            return "NO BRAIN YET  ·  LOAD ONE HERE OR ADD A KEY";
+        return "NO BRAIN";
     }
     readonly property bool installing: {
         if ((root.install.running ?? false) !== true)
@@ -1131,13 +1131,13 @@ Singleton {
     }
 
     function installLocal(): void {
-        root.setupNote = "ENGINE WIRD GELADEN — EINMALIG EIN PAAR MINUTEN, DANN FÜR IMMER LOKAL";
+        root.setupNote = "LOADING THE ENGINE — A FEW MINUTES ONCE, THEN LOCAL FOR GOOD";
         root.runLocal(["ensure"]);
     }
 
     function brainTier(name: string): void {
         const tier = root.brainTiers.find(t => t.key === name);
-        root.setupNote = `MODELL-GRÖSSE  ·  ${tier ? tier.label : name}  ·  ${tier ? tier.mb / 1024 + " GB" : ""}`;
+        root.setupNote = `MODEL SIZE  ·  ${tier ? tier.label : name}  ·  ${tier ? tier.mb / 1024 + " GB" : ""}`;
         root.runLocal(["brain", name]);
     }
 
@@ -1157,7 +1157,7 @@ Singleton {
             root.setupNote = `${name.toUpperCase()} GESPEICHERT  ·  TESTE…`;
             root.probe();
         } else {
-            root.setupNote = `${name.toUpperCase()} BRAUCHT EINEN SCHLÜSSEL — FELD UNTEN, DANN ENTER`;
+            root.setupNote = `${name.toUpperCase()} NEEDS A KEY — THE FIELD BELOW, THEN ENTER`;
         }
     }
 
@@ -1166,14 +1166,14 @@ Singleton {
             return;
         root.installSettled = true;
         if (root.install.ok ?? false) {
-            root.setupNote = "LOKAL BEREIT  ·  OHNE SCHLÜSSEL";
-            root.toast("LOKALES GEHIRN BEREIT", "ok");
+            root.setupNote = "LOCAL AND READY  ·  NO KEY NEEDED";
+            root.toast("LOCAL BRAIN READY", "ok");
             root.writeAi({
                 provider: "local"
             });
             root.probe();
         } else {
-            root.setupNote = `FEHLER  ·  ${root.installError || "DOWNLOAD ABGEBROCHEN"}`;
+            root.setupNote = `ERROR  ·  ${root.installError || "DOWNLOAD STOPPED"}`;
             root.toast("DOWNLOAD FEHLGESCHLAGEN", "error");
         }
     }
@@ -1247,7 +1247,7 @@ Singleton {
         if (cur.startsWith("qwen:"))
             return `QWEN3 · ${cur.slice(5).toUpperCase()}`;
         if (cur.startsWith("natural:"))
-            return `NATÜRLICH · ${cur.slice(8).toUpperCase()}`;
+            return `NATURAL · ${cur.slice(8).toUpperCase()}`;
         const name = cur.slice(6);
         return name.length === 0 ? "PIPER · AUTO" : "PIPER · " + name.replace(/^de_DE-/, "").toUpperCase();
     }
@@ -1298,7 +1298,7 @@ Singleton {
     function setupCommit(text: string): void {
         const value = `${text ?? ""}`.trim();
         if (value.length === 0) {
-            root.setupNote = "NICHTS EINGETIPPT";
+            root.setupNote = "NOTHING TYPED";
             return;
         }
         if (root.setupField === "key") {
@@ -1312,12 +1312,12 @@ Singleton {
                 provider: provider,
                 apiKey: value
             });
-            root.setupNote = "SCHLÜSSEL GESPEICHERT  ·  RECHTE 600";
+            root.setupNote = "KEY SAVED  ·  PERMISSIONS 600";
         } else {
             root.writeAi({
                 model: value
             });
-            root.setupNote = `MODELL  ·  ${value.toUpperCase()}`;
+            root.setupNote = `MODEL  ·  ${value.toUpperCase()}`;
         }
         root.probe();
     }
@@ -1555,7 +1555,7 @@ Singleton {
         if (data.ok) {
             root.toast(`${(data.provider ?? "").toUpperCase()}  ·  ${data.model ?? ""} ANTWORTET`, "ok");
         } else {
-            root.toast(`KEINE ANTWORT  ·  ${`${data.error ?? "?"}`.toUpperCase().slice(0, 80)}`, "error");
+            root.toast(`NO ANSWER  ·  ${`${data.error ?? "?"}`.toUpperCase().slice(0, 80)}`, "error");
         }
     }
 

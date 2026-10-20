@@ -955,7 +955,7 @@ FocusScope {
                     id: chipVibe
 
                     width: (parent.width - Appearance.spacing.small) / 2
-                    label: Config.appearance.vibe === "windows" ? `VIBE · WINDOWS ${String(Config.appearance.winVersion).toUpperCase()}` : (Config.appearance.vibe !== "" ? `VIBE · ${String(Config.appearance.vibe).toUpperCase()}` : "VIBE · TRY ONE")
+                    label: Config.appearance.vibe === "windows" ? `VIBE · VINDOWS ${String(Config.appearance.winVersion).toUpperCase()}` : (Config.appearance.vibe !== "" ? `VIBE · ${String(Config.appearance.vibe).toUpperCase()}` : "VIBE · TRY ONE")
                     icon: "deployed_code"
                     on: Config.appearance.vibe !== ""
                     onToggled: Presets.cycleVibe(1)

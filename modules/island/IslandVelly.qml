@@ -129,13 +129,13 @@ Item {
         width: parent.width - root.pad * 2
         text: {
             if (!Velly.brainOk)
-                return Velly.brainSkills ? "SKILLS  ·  LOKALES GEHIRN FEHLT  ·  HALTEN → SETUP" : "KEIN GEHIRN  ·  HALTEN → SETUP";
-            const ears = Velly.listening ? (Velly.micSource ? `MIC ${Velly.micSource.toUpperCase()}` : "MIC AN") : "MIC AUS";
-            const voice = !Config.velly.voice ? "STIMME AUS" : (Velly.voiceAvailable && Velly.voiceEngine.length > 0 ? Velly.voiceEngine.toUpperCase() : "KEINE STIMME");
+                return Velly.brainSkills ? "SKILLS  ·  NO LOCAL BRAIN  ·  HOLD → SETUP" : "NO BRAIN  ·  HOLD → SETUP";
+            const ears = Velly.listening ? (Velly.micSource ? `MIC ${Velly.micSource.toUpperCase()}` : "MIC ON") : "MIC OFF";
+            const voice = !Config.velly.voice ? "VOICE OFF" : (Velly.voiceAvailable && Velly.voiceEngine.length > 0 ? Velly.voiceEngine.toUpperCase() : "NO VOICE");
             // The local server calls every model "velvet" — the size is what
             // tells you which brain is thinking.
             const brain = Velly.provider === "local" ? ((Velly.localTierLabel && Velly.localTierLabel !== "—") ? Velly.localTierLabel : "LOKAL") : (Velly.model || Velly.provider || "").toUpperCase();
-            const mem = Velly.facts === 1 ? "1 ERINNERUNG" : `${Velly.facts} ERINNERUNGEN`;
+            const mem = Velly.facts === 1 ? "1 MEMORY" : `${Velly.facts} MEMORIES`;
             return `${brain}  ·  ${voice}  ·  ${ears}  ·  ${mem}`;
         }
         color: Colours.inkDim
@@ -609,7 +609,7 @@ Item {
 
                 P5Text {
                     width: parent.width
-                    text: root.phase === "off" ? "SCHLAFEND  ·  HALTEN ZUM WECKEN" : (Velly.brainOk ? "FRAG MICH  ·  ODER SPRICH" : "ERST DAS GEHIRN  ·  SETUP UNTEN")
+                    text: root.phase === "off" ? "ASLEEP  ·  HOLD TO WAKE" : (Velly.brainOk ? "ASK ME  ·  OR SPEAK" : "A BRAIN FIRST  ·  SETUP BELOW")
                     color: Colours.alpha(Colours.ink, 0.75)
                     font.pixelSize: Appearance.font.size.large
                     wrapMode: Text.Wrap
@@ -618,8 +618,8 @@ Item {
                 P5Text {
                     width: parent.width
                     text: Velly.brainOk
-                        ? `TIPPE ODER REDE — ${Binds.display("velly").toUpperCase()} RUFT MICH VON ÜBERALL. ICH HÖRE NUR, SOLANGE ICH WACH BIN.`
-                        : "SETUP LÄDT GEHIRN, OHREN UND STIMME LOKAL — OHNE SCHLÜSSEL UND OHNE KOSTEN. EIN KEY IST NUR FÜR WOLKEN NÖTIG."
+                        ? `TYPE OR TALK — ${Binds.display("velly").toUpperCase()} CALLS ME FROM ANYWHERE. I ONLY LISTEN WHILE I AM AWAKE.`
+                        : "SETUP LOADS A BRAIN, EARS AND A VOICE ON THIS PC — NO KEY, NO COST. A KEY IS ONLY FOR CLOUD BRAINS."
                     color: Colours.inkDim
                     font.pixelSize: Appearance.font.size.tiny
                     tracking: 1.1
@@ -636,12 +636,12 @@ Item {
 
                     Repeater {
                         model: [
-                            { t: "WIE WIRD DAS WETTER?", q: "Wie wird das Wetter heute?", i: "cloud" },
-                            { t: "SPIEL MUSIK", q: "Spiel mir Musik, die gerade passt.", i: "music_note" },
-                            { t: "IN 10 MIN ERINNERN", q: "Erinnere mich in zehn Minuten an eine Pause.", i: "alarm" },
-                            { t: "SYSTEM-UPDATE", q: "Mach ein System-Update.", i: "system_update" },
-                            { t: "VELVET ANPASSEN", q: "Was kann ich an Velvet alles einstellen? Nenn mir ein paar Beispiele, die du für mich ändern kannst.", i: "tune" },
-                            { t: "WAS KANNST DU?", q: "Was kannst du alles für mich tun?", i: "auto_awesome" }
+                            { t: "WHAT'S THE WEATHER?", q: "Wie wird das Wetter heute?", i: "cloud" },
+                            { t: "PLAY MUSIC", q: "Spiel mir Musik, die gerade passt.", i: "music_note" },
+                            { t: "REMIND ME IN 10 MIN", q: "Erinnere mich in zehn Minuten an eine Pause.", i: "alarm" },
+                            { t: "SYSTEM UPDATE", q: "Mach ein System-Update.", i: "system_update" },
+                            { t: "TUNE VELVET", q: "Was kann ich an Velvet alles einstellen? Nenn mir ein paar Beispiele, die du für mich ändern kannst.", i: "tune" },
+                            { t: "WHAT CAN YOU DO?", q: "Was kannst du alles für mich tun?", i: "auto_awesome" }
                         ]
 
                         Plate {
@@ -709,7 +709,7 @@ Item {
             P5Text {
                 width: convoColumn.width
                 visible: root.phase === "error" && Velly.errorText.length > 0
-                text: Velly.friendlyError === Velly.errorText ? `FEHLER  ·  ${Velly.errorText}` : `${Velly.friendlyError}\n(${Velly.errorText})`
+                text: Velly.friendlyError === Velly.errorText ? `ERROR  ·  ${Velly.errorText}` : `${Velly.friendlyError}\n(${Velly.errorText})`
                 color: Colours.danger
                 font.family: Appearance.fontFamily.mono
                 font.pixelSize: Appearance.font.size.tiny
@@ -1024,7 +1024,7 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
-                text: Velly.sttBusy ? "HÖRT ZU…" : (Velly.listening ? "MIC" : "STUMM")
+                text: Velly.sttBusy ? "LISTENING…" : (Velly.listening ? "MIC" : "MUTED")
                 color: Velly.listening ? Colours.accentInk : Colours.inkDim
                 font.pixelSize: Appearance.font.size.tiny
                 tracking: 1.1
@@ -1073,10 +1073,10 @@ Item {
                 if (Velly.sttError.length > 0)
                     return `OHREN  ·  ${Velly.sttError.toUpperCase().slice(0, 34)}`;
                 if (Velly.barged)
-                    return "ICH HÖRE  ·  SAG'S NOCHMAL";
+                    return "LISTENING  ·  SAY IT AGAIN";
                 if (Velly.sttBusy)
                     return "VERSTEHE…";
-                return Velly.earsAvailable || !Config.velly.ears ? "ENTER FRAGEN" : "KEIN MIKROFON GEFUNDEN";
+                return Velly.earsAvailable || !Config.velly.ears ? "ENTER TO ASK" : "NO MICROPHONE FOUND";
             }
             color: Velly.sttError.length > 0 ? Colours.danger : (Velly.barged ? Colours.accent : Colours.inkDim)
             font.pixelSize: Appearance.font.size.tiny
@@ -1084,7 +1084,7 @@ Item {
         }
 
         P5Text {
-            text: "ESC SCHLAFEN"
+            text: "ESC SLEEP"
             color: Colours.inkDim
             font.pixelSize: Appearance.font.size.tiny
             tracking: 1.1
@@ -1109,7 +1109,7 @@ Item {
             id: setupLabel
 
             anchors.centerIn: parent
-            text: Velly.brainOk ? "SETUP" : (Velly.installing ? "LÄDT…" : "GEHIRN LADEN")
+            text: Velly.brainOk ? "SETUP" : (Velly.installing ? "LOADING…" : "LOAD A BRAIN")
             color: Colours.accentInk
             font.pixelSize: Appearance.font.size.tiny
             tracking: 1.1
@@ -1156,7 +1156,7 @@ Item {
             x: 20
             y: 48
             width: parent.width - 100
-            text: "LOKAL IST VOREINGESTELLT UND KOSTET NICHTS. EIN SCHLÜSSEL IST NUR FÜR WOLKEN NÖTIG — ER LANDET IN AI.JSON (0600)."
+            text: "LOCAL IS THE DEFAULT AND COSTS NOTHING. A KEY IS ONLY FOR CLOUD BRAINS — IT GOES INTO AI.JSON (0600)."
             color: Colours.inkDim
             font.pixelSize: Appearance.font.size.tiny
             tracking: 1.1
@@ -1188,7 +1188,7 @@ Item {
             x: 20
             y: 92
             display: true
-            text: "GEHIRN"
+            text: "BRAIN"
             color: Colours.inkDim
             font.pixelSize: Appearance.font.size.tiny
             tracking: 1.2
@@ -1271,7 +1271,7 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: 12
                 anchors.verticalCenter: parent.verticalCenter
-                text: Velly.setupField === "key" ? "SCHLÜSSEL" : "MODELL"
+                text: Velly.setupField === "key" ? "KEY" : "MODEL"
                 color: Colours.accentInk
                 font.pixelSize: Appearance.font.size.tiny
                 tracking: 1.1
@@ -1307,10 +1307,10 @@ Item {
 
             Repeater {
                 model: [
-                    { label: "SCHLÜSSEL", field: "key" },
-                    { label: "MODELL", field: "model" },
+                    { label: "KEY", field: "key" },
+                    { label: "MODEL", field: "model" },
                     { label: "TEST", field: "test" },
-                    { label: "GEDÄCHTNIS", field: "forget" }
+                    { label: "MEMORY", field: "forget" }
                 ]
 
                 Plate {
@@ -1363,7 +1363,7 @@ Item {
             x: 20
             y: 252
             display: true
-            text: "MODELL-GRÖSSE"
+            text: "MODEL SIZE"
             color: Colours.inkDim
             font.pixelSize: Appearance.font.size.tiny
             tracking: 1.2
@@ -1498,7 +1498,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 display: true
                 elide: Text.ElideRight
-                text: Velly.installing ? `${Velly.installLabel || "ENGINE"}  ${Velly.installPct}%${Velly.installDetail.length > 0 ? "  ·  " + Velly.installDetail : ""}` : (Velly.brainOk ? "LOKALES GEHIRN AKTIV  ·  KLICK: PRÜFEN" : "LOKALES GEHIRN LADEN  ·  KOSTENLOS, OHNE SCHLÜSSEL")
+                text: Velly.installing ? `${Velly.installLabel || "ENGINE"}  ${Velly.installPct}%${Velly.installDetail.length > 0 ? "  ·  " + Velly.installDetail : ""}` : (Velly.brainOk ? "LOCAL BRAIN ON  ·  CLICK: CHECK" : "LOAD A LOCAL BRAIN  ·  FREE, NO KEY")
                 color: Colours.accentInk
                 font.pixelSize: Appearance.font.size.tiny
                 tracking: 1.1
@@ -1556,7 +1556,7 @@ Item {
                 anchors.leftMargin: 10
                 anchors.verticalCenter: parent.verticalCenter
                 display: true
-                text: "STIMME"
+                text: "VOICE"
                 color: Colours.inkDim
                 font.pixelSize: Appearance.font.size.tiny
                 tracking: 1.1
@@ -1589,7 +1589,7 @@ Item {
                 Repeater {
                     model: [
                         { action: "prev", label: "‹" },
-                        { action: "say", label: "SAG" },
+                        { action: "say", label: "SAY" },
                         { action: "next", label: "›" }
                     ]
 
@@ -1637,12 +1637,12 @@ Item {
             width: parent.width - 40
             text: {
                 if (Velly.probing)
-                    return "FRAGE DEN ANBIETER…";
+                    return "ASKING THE PROVIDER…";
                 if (Velly.setupNote.length > 0)
                     return Velly.setupNote;
-                return `AKTUELL  ·  ${(Velly.provider || "auto").toUpperCase()}  ·  ${Velly.model || "STANDARD-MODELL"}`;
+                return `NOW  ·  ${(Velly.provider || "auto").toUpperCase()}  ·  ${Velly.model || "DEFAULT MODEL"}`;
             }
-            color: Velly.setupNote.startsWith("FEHLER") ? Colours.danger : Colours.inkDim
+            color: Velly.setupNote.startsWith("ERROR") ? Colours.danger : Colours.inkDim
             font.family: Appearance.fontFamily.mono
             font.pixelSize: Appearance.font.size.tiny
             wrapMode: Text.Wrap
@@ -1653,7 +1653,7 @@ Item {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 16
             width: parent.width - 40
-            text: Velly.factsList.length > 0 ? `GEMERKT  ·  ${Velly.factsList[Velly.factsList.length - 1]}` : "NOCH NICHTS GEMERKT"
+            text: Velly.factsList.length > 0 ? `REMEMBERED  ·  ${Velly.factsList[Velly.factsList.length - 1]}` : "NOTHING REMEMBERED YET"
             color: Colours.inkDim
             font.pixelSize: Appearance.font.size.tiny
             elide: Text.ElideRight

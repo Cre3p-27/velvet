@@ -66,9 +66,13 @@ PanelWindow {
     // no click is stolen from anything — and the switch is in
     // WALLPAPER CHANGER → DESKTOP RIGHT-CLICK MENU.
     readonly property bool menuOn: root.builtin && Config.wallpaper.deskMenu && !Locker.locked
+    // the right-drag that draws a terminal (services/DrawTerm.qml) needs the
+    // pointer on bare desktop just like the menu does
+    readonly property bool drawOn: root.builtin && Config.wallpaper.drawTerminal && !Locker.locked
+    readonly property bool rightOn: root.menuOn || root.drawOn
 
     mask: Region {
-        item: root.menuOn ? ground : deadZone
+        item: root.rightOn ? ground : deadZone
         regions: hitRegions.instances
     }
 
@@ -99,14 +103,11 @@ PanelWindow {
     Item {
         id: ground
 
-        anchors.fill: parent
-        // depth: the picture rides a desktop switch a little (see below); the
-        // scale keeps its edges off the screen while it does
-        scale: 1 + Math.abs(root.depth) * 0.032
-        transform: Translate {
-            x: root.depthSide ? root.depth * root.depthPx : 0
-            y: root.depthVert ? root.depth * root.depthPx : 0
-        }
+        // depth: the picture rides a desktop switch a little (see below); its
+        // x, y and scale belong to render-thread animators then, which is why
+        // this sizes itself instead of anchoring
+        width: root.width
+        height: root.height
 
         // ---------------------------------------------------------- crossfade
         // `back` holds what was there; `front` fades in over it once it has
@@ -401,13 +402,50 @@ PanelWindow {
 
     // Right-click on a free spot: the desktop menu, at the pointer. Under the
     // widget layer, so a widget answers its own right-click (edit it) first.
+    // Right-DRAG instead pulls a frame, and a terminal opens in it.
     MouseArea {
         id: menuArea
 
+        property point from: Qt.point(0, 0)
+        property bool drawing: false
+
         anchors.fill: parent
-        enabled: root.menuOn
+        enabled: root.rightOn
         acceptedButtons: Qt.RightButton
-        onClicked: mouse => Panels.openDeskMenu(root.modelData.name, mouse.x, mouse.y)
+        preventStealing: true
+
+        onPressed: mouse => {
+            menuArea.from = Qt.point(mouse.x, mouse.y);
+            menuArea.drawing = false;
+        }
+        onPositionChanged: mouse => {
+            if (!root.drawOn || !(mouse.buttons & Qt.RightButton))
+                return;
+            if (!menuArea.drawing) {
+                // a hand that shakes a little is still a click
+                if (Math.abs(mouse.x - menuArea.from.x) < 10 && Math.abs(mouse.y - menuArea.from.y) < 10)
+                    return;
+                menuArea.drawing = true;
+                Panels.closeAll();
+                drawFrame.start(menuArea.from);
+            }
+            drawFrame.b = Qt.point(Math.max(0, Math.min(root.width, mouse.x)), Math.max(0, Math.min(root.height, mouse.y)));
+        }
+        onReleased: mouse => {
+            if (menuArea.drawing) {
+                menuArea.drawing = false;
+                drawFrame.finish();
+                return;
+            }
+            if (root.menuOn)
+                Panels.openDeskMenu(root.modelData.name, mouse.x, mouse.y);
+        }
+        onCanceled: {
+            if (menuArea.drawing) {
+                menuArea.drawing = false;
+                drawFrame.cancel();
+            }
+        }
     }
 
     // ═══════════════════════════════════ the desktop's widget layer
@@ -425,12 +463,10 @@ PanelWindow {
     Item {
         id: widgetLayer
 
-        anchors.fill: parent
         // nearer than the picture: it moves twice as far on a desktop switch
-        transform: Translate {
-            x: root.depthSide ? root.depth * root.depthPx * 2.2 : 0
-            y: root.depthVert ? root.depth * root.depthPx * 2.2 : 0
-        }
+        // (x and y are the depth animators', see below)
+        width: root.width
+        height: root.height
         visible: root.living && Config.wallpaper.livingWidgets && root.modelData?.name === Hypr.focusedScreen?.name
 
         // A stable model: liveWidgets() is a NEW array on every scene write
@@ -1123,6 +1159,160 @@ PanelWindow {
         onTriggered: root.kbT = (root.kbT + 0.25) % 180
     }
 
+    // ═══════════════════════════════════════════ draw a terminal
+    //  The frame a right-drag pulls: the accent of the look, the corners the
+    //  windows have, its size as it grows. Big enough, and on release the
+    //  terminal opens exactly there; too small, and it just goes.
+    Item {
+        id: drawFrame
+
+        property point a: Qt.point(0, 0)
+        property point b: Qt.point(0, 0)
+        property bool live: false
+        readonly property bool big: width >= 160 && height >= 90
+        readonly property real radius: Math.max(0, Math.min(Config.hypr.rounding, width / 2, height / 2))
+
+        function start(p: point): void {
+            drawFrame.a = p;
+            drawFrame.b = p;
+            leave.stop();
+            drawFrame.opacity = 1;
+            drawFrame.scale = 1;
+            drawFrame.live = true;
+        }
+        function finish(): void {
+            drawFrame.live = false;
+            if (drawFrame.big) {
+                const sx = root.modelData?.x ?? 0;
+                const sy = root.modelData?.y ?? 0;
+                DrawTerm.open(sx + drawFrame.x, sy + drawFrame.y, drawFrame.width, drawFrame.height);
+                Sfx.launch();
+                leave.grow = 1.035;
+            } else {
+                leave.grow = 0.94;
+            }
+            leave.restart();
+        }
+        function cancel(): void {
+            drawFrame.live = false;
+            leave.grow = 0.94;
+            leave.restart();
+        }
+
+        x: Math.min(a.x, b.x)
+        y: Math.min(a.y, b.y)
+        width: Math.abs(b.x - a.x)
+        height: Math.abs(b.y - a.y)
+        visible: live || leave.running
+        transformOrigin: Item.Center
+
+        readonly property real glyph: Math.round(Math.max(18, Math.min(56, Math.min(width, height) * 0.24)))
+
+        // a dark hairline outside and a light one inside: the frame reads on
+        // any wallpaper, whatever the accent
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -1
+            radius: drawFrame.radius + 1
+            color: "transparent"
+            border.width: 1
+            border.color: Qt.rgba(0, 0, 0, 0.38)
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: drawFrame.radius
+            color: Colours.alpha(Colours.accent, drawFrame.big ? 0.2 : 0.08)
+            border.width: 2
+            border.color: drawFrame.big ? Colours.accent : Colours.alpha(Colours.accent, 0.55)
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: 140
+                }
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: 3
+            radius: Math.max(0, drawFrame.radius - 3)
+            color: "transparent"
+            border.width: 1
+            border.color: Qt.rgba(1, 1, 1, 0.32)
+            visible: drawFrame.width > 16 && drawFrame.height > 16
+        }
+
+        // the terminal it will be, on a disc of the look's own paper
+        Rectangle {
+            anchors.centerIn: parent
+            width: Math.round(drawFrame.glyph * 1.75)
+            height: width
+            radius: width / 2
+            color: Colours.alpha(Colours.paper, 0.86)
+            visible: drawFrame.width > width + 12 && drawFrame.height > height + 12
+            opacity: drawFrame.big ? 1 : 0.55
+            scale: drawFrame.big ? 1 : 0.82
+
+            Behavior on scale {
+                NumberAnimation {
+                    duration: 160
+                    easing.type: Easing.OutBack
+                }
+            }
+
+            Icon {
+                anchors.centerIn: parent
+                name: "terminal"
+                font.pixelSize: drawFrame.glyph
+                color: Colours.accent
+            }
+        }
+
+        // its size, as it grows
+        Rectangle {
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: 8
+            width: sizeText.implicitWidth + 16
+            height: sizeText.implicitHeight + 8
+            radius: height / 2
+            color: Colours.alpha(Colours.paper, 0.86)
+            visible: drawFrame.width > width + 20 && drawFrame.height > height + 20
+
+            Text {
+                id: sizeText
+
+                anchors.centerIn: parent
+                text: `${Math.round(drawFrame.width)} × ${Math.round(drawFrame.height)}`
+                font.family: Appearance.fontFamily.mono
+                font.pixelSize: 12
+                color: Colours.ink
+            }
+        }
+
+        ParallelAnimation {
+            id: leave
+
+            property real grow: 1.035
+
+            NumberAnimation {
+                target: drawFrame
+                property: "opacity"
+                to: 0
+                duration: 360
+                easing.type: Easing.OutCubic
+            }
+            NumberAnimation {
+                target: drawFrame
+                property: "scale"
+                to: leave.grow
+                duration: 360
+                easing.type: Easing.OutCubic
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════ depth on a desktop switch
     //  Switching desktops, the picture moves a few pixels the way the windows
     //  slide and springs back; the widgets, nearer, move further. The way it
@@ -1134,7 +1324,6 @@ PanelWindow {
     readonly property bool depthVert: root.wsStyle.indexOf("vert") >= 0
     readonly property bool depthSide: !root.depthVert && root.wsStyle.indexOf("slide") >= 0
     readonly property real depthPx: Math.min(root.width, root.height) * 0.012
-    property real depth: 0
     property int wsFrom: Hypr.activeWsId
 
     Connections {
@@ -1148,32 +1337,49 @@ PanelWindow {
                 return;
             if ((root.modelData?.name ?? "") !== (Hypr.focusedScreen?.name ?? ""))
                 return;
+            // one kick at a time: a second switch inside it lets the first
+            // finish rather than snapping the picture back to start over
+            if (depthKick.running)
+                return;
             // a higher desktop comes in from below (slidevert) or the right:
             // the picture leaves with the old one, then settles
-            depthKick.dir = to > from ? -1 : 1;
-            depthKick.restart();
+            const d = to > from ? -1 : 1;
+            depthKick.dx = root.depthSide ? d * root.depthPx : 0;
+            depthKick.dy = root.depthVert ? d * root.depthPx : 0;
+            depthKick.start();
         }
     }
 
-    SequentialAnimation {
+    // Animators, not NumberAnimations: they run on the render thread, so
+    // the picture keeps moving while the shell is busy with the switch
+    // itself (the bar, the window lists — all of that lands in the same
+    // frames). Out with the windows, then back in one eased move that ends
+    // with Hyprland's own slide — no spring left wobbling after it.
+    ParallelAnimation {
         id: depthKick
 
-        property real dir: 1
+        property real dx: 0
+        property real dy: 0
+        readonly property int outMs: Math.round(150 * Config.appearance.animationScale)
+        readonly property int backMs: Math.round(480 * Config.appearance.animationScale)
 
-        NumberAnimation {
-            target: root
-            property: "depth"
-            to: depthKick.dir
-            duration: Math.round(120 * Config.appearance.animationScale)
-            easing.type: Easing.OutCubic
-        }
-        SpringAnimation {
-            target: root
-            property: "depth"
-            to: 0
-            spring: 2.4
-            damping: 0.3
-            epsilon: 0.002
+        SequentialAnimation {
+            ParallelAnimation {
+                XAnimator { target: ground; from: 0; to: depthKick.dx; duration: depthKick.outMs; easing.type: Easing.OutCubic }
+                YAnimator { target: ground; from: 0; to: depthKick.dy; duration: depthKick.outMs; easing.type: Easing.OutCubic }
+                ScaleAnimator { target: ground; from: 1; to: 1.032; duration: depthKick.outMs; easing.type: Easing.OutCubic }
+                XAnimator { target: widgetLayer; from: 0; to: depthKick.dx * 2.2; duration: depthKick.outMs; easing.type: Easing.OutCubic }
+                YAnimator { target: widgetLayer; from: 0; to: depthKick.dy * 2.2; duration: depthKick.outMs; easing.type: Easing.OutCubic }
+            }
+            // explicit `from`s: an animator in a group takes its start value
+            // when the GROUP starts, so without them this half snapped back
+            ParallelAnimation {
+                XAnimator { target: ground; from: depthKick.dx; to: 0; duration: depthKick.backMs; easing.type: Easing.InOutCubic }
+                YAnimator { target: ground; from: depthKick.dy; to: 0; duration: depthKick.backMs; easing.type: Easing.InOutCubic }
+                ScaleAnimator { target: ground; from: 1.032; to: 1; duration: depthKick.backMs; easing.type: Easing.InOutCubic }
+                XAnimator { target: widgetLayer; from: depthKick.dx * 2.2; to: 0; duration: depthKick.backMs; easing.type: Easing.InOutCubic }
+                YAnimator { target: widgetLayer; from: depthKick.dy * 2.2; to: 0; duration: depthKick.backMs; easing.type: Easing.InOutCubic }
+            }
         }
     }
 
