@@ -373,7 +373,9 @@ Singleton {
                 echo 'NONE'
                 exit 0
             fi
-            show=$(bluetoothctl show 2>/dev/null)
+            # every call has a deadline: with bluez unreachable bluetoothctl waits
+            # for the daemon forever, and each poll left one more of them behind
+            show=$(timeout 3 bluetoothctl show 2>/dev/null)
             if [ -z "$show" ]; then
                 echo 'NONE'
                 exit 0
@@ -382,8 +384,8 @@ Singleton {
             printf '%s\n' "$show" | grep -m1 'Discovering:' || echo 'Discovering: no'
             printf '%s\n' "$show" | grep -m1 'Alias:' | cut -d' ' -f2- || echo ''
             echo '---'
-            bluetoothctl devices 2>/dev/null | head -24 | while IFS=' ' read -r _ mac name; do
-                info=$(bluetoothctl info "$mac" 2>/dev/null)
+            timeout 3 bluetoothctl devices 2>/dev/null | head -24 | while IFS=' ' read -r _ mac name; do
+                info=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null)
                 conn=$(printf '%s' "$info" | grep -m1 'Connected:' | grep -q yes && echo 1 || echo 0)
                 paired=$(printf '%s' "$info" | grep -m1 'Paired:' | grep -q yes && echo 1 || echo 0)
                 trusted=$(printf '%s' "$info" | grep -m1 'Trusted:' | grep -q yes && echo 1 || echo 0)
