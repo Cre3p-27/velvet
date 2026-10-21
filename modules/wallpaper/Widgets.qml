@@ -214,7 +214,7 @@ Item {
                         id: clockMin
 
                         text: Qt.formatDateTime(clock.date, "mm")
-                        color: Colours.accentAlt
+                        color: (root.opts.minutes ?? "") === "accent" ? Colours.accent : ((root.opts.minutes ?? "") === "ink" ? Colours.ink : Colours.accentAlt)
                         font.weight: Font.Light
                         font.pixelSize: 46
                         tracking: -2

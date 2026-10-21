@@ -622,6 +622,32 @@ Flickable {
         }
 
         InsOption {
+            label: "MINUTES"
+            note: "THE SECOND COLOUR, OR ONE COLOUR FOR BOTH"
+            visible: root.wid === "clock"
+
+            InsChoice {
+                width: parent.width
+                model: [
+                    {
+                        v: "",
+                        t: "OTHER COLOUR"
+                    },
+                    {
+                        v: "accent",
+                        t: "ACCENT"
+                    },
+                    {
+                        v: "ink",
+                        t: "INK"
+                    }
+                ]
+                current: root.opts.minutes ?? ""
+                onChosen: v => root.set("minutes", v)
+            }
+        }
+
+        InsOption {
             label: root.wid === "greeting" ? "YOUR NAME" : "NAME SHOWN"
             note: `EMPTY = ${String(SysInfo.user).toUpperCase()}`
             visible: root.wid === "greeting" || root.wid === "user"

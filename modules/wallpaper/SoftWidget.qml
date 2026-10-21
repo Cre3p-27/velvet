@@ -112,7 +112,9 @@ Item {
                 digitScale: 0.8
                 fill: Colours.alpha(root.tone, root.fillOpacity + (1 - root.fillOpacity) * 0.6 * cs.heat)
                 hourColour: root.accent
-                minuteColour: Colours.ink
+                // ink is dark in a light look and the tone is always deep:
+                // the minutes lift until they read on it
+                minuteColour: Colours.readable(Colours.ink, root.tone, 4.5)
                 spin: cs.spin * 0.3
             }
         }

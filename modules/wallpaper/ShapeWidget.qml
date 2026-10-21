@@ -88,6 +88,9 @@ Item {
     readonly property color strong: root.pastel ? Qt.hsla(root.hue, 0.58, 0.34, 1) : Colours.accent
     readonly property color strong2: root.pastel ? Qt.hsla(root.hue2, 0.34, 0.40, 1) : Colours.accentAlt
     readonly property color quiet: root.pastel ? root.on3 : Colours.ink
+    // The clock's minutes: the other colour by default; ACCENT or INK when the
+    // wallpaper has no room for a second hue (DESKTOP inspector → MINUTES).
+    readonly property color minuteInk: (root.opts.minutes ?? "") === "accent" ? root.strong : ((root.opts.minutes ?? "") === "ink" ? root.quiet : root.strong2)
 
     // A container at rest melts into the wallpaper at the chosen opacity;
     // under the pointer it solidifies most of the way — it wakes up.
@@ -244,7 +247,7 @@ Item {
 
                         RollDigit {
                             text: clockCol.mm.charAt(0)
-                            color: root.strong2
+                            color: root.minuteInk
                             family: root.tallFamily
                             squeeze: root.tallSqueeze
                             pixelSize: 120
@@ -253,7 +256,7 @@ Item {
                         }
                         RollDigit {
                             text: clockCol.mm.charAt(1)
-                            color: root.strong2
+                            color: root.minuteInk
                             family: root.tallFamily
                             squeeze: root.tallSqueeze
                             pixelSize: 120
