@@ -882,6 +882,21 @@ qs -c velvet ipc call velly force false   # back to the largest size that fits
 
 ---
 
+### Your online apps through Composio (optional)
+
+Velly can read your mail, your calendar, your GitHub notifications or what Spotify plays — and, when you say yes,
+send, create or play — through [Composio](https://composio.dev): one key for many apps, each connected on
+Composio's own sign-in page.
+
+1. Make an account on composio.dev and connect the apps you want (Gmail, Google Calendar, GitHub, Notion, Spotify …).
+2. Create an API key there (Settings → API Keys).
+3. Run `~/.config/quickshell/velvet/bin/velvet-composio setup` and paste the key (it is not shown while you type).
+   It is saved to `~/.config/velvet/composio.json`, readable by you only.
+4. Ask Velly: "Was steht heute in meinem Kalender?", "Hab ich neue Mails?".
+
+Reading runs at once; anything that changes something asks first. `velvet-composio status` shows what is
+connected. Composio is a third party: connect only what you need, and remove apps there when you stop using them.
+
 ## The colour system
 
 Every colour in the shell comes from one accent, and by default that accent is

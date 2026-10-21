@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""velvet-composio — Velvet's (and Velly's) door to Composio: your online apps (Gmail, Google Calendar,
+GitHub, Notion, Spotify, Slack …) through ONE key, without a separate login per app inside Velvet.
+
+    velvet-composio setup                 ask for your Composio API key (hidden) and save it, readable by you only
+    velvet-composio status                which apps are connected to your Composio account
+    velvet-composio tools TOOLKIT [WORDS] the actions an app offers (slug, what it does, its fields)
+    velvet-composio run SLUG ['{json}']   run one action, print its JSON result
+    velvet-composio --selftest            check this script without the network
+
+The key lives in ~/.config/velvet/composio.json (mode 600) — never in config.json, never in a look, never in a
+log. Apps are connected on composio.dev (their own sign-in page); Velvet only ever uses what you connected there.
+Standard library only."""
+import getpass
+import json
+import os
+import stat
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+API = os.environ.get("VELVET_COMPOSIO_API", "https://backend.composio.dev/api/v3")
+CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "velvet", "composio.json")
+TIMEOUT = 25
+
+# what counts as reading: Velly may run these without asking (everything else asks first)
+READ_WORDS = ("GET", "LIST", "FETCH", "SEARCH", "FIND", "RETRIEVE", "READ", "QUERY", "CURRENT", "QUEUE", "COUNT", "CHECK", "LOOKUP")
+
+
+def load():
+    try:
+        with open(CONF) as f:
+            c = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return c if isinstance(c, dict) else {}
+
+
+def save(c):
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    tmp = CONF + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(c, f, indent=1)
+    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
+    os.replace(tmp, CONF)
+
+
+def is_read(slug: str) -> bool:
+    """an action that only looks (GMAIL_FETCH_EMAILS, GITHUB_LIST_NOTIFICATIONS …), by the verb after the app"""
+    parts = slug.upper().split("_")
+    return any(p in READ_WORDS for p in parts[1:3])
+
+
+def call(method, path, body=None, query=None):
+    c = load()
+    key = c.get("apiKey", "")
+    if not key:
+        return {"ok": False, "error": "no Composio key yet — run: velvet-composio setup"}
+    url = API + path + ("?" + urllib.parse.urlencode(query) if query else "")
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"x-api-key": key, "Content-Type": "application/json", "User-Agent": "velvet-composio"})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return {"ok": True, "data": json.loads(r.read().decode() or "{}")}
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode())
+            msg = detail.get("message") or detail.get("error") or str(detail)[:200]
+        except Exception:
+            msg = e.reason
+        return {"ok": False, "error": f"Composio said {e.code}: {msg}"}
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        return {"ok": False, "error": f"Composio not reachable: {getattr(e, 'reason', e)}"}
+
+
+def status():
+    r = call("GET", "/connected_accounts", query={"limit": 50})
+    if not r["ok"]:
+        return r
+    items = r["data"].get("items", []) if isinstance(r["data"], dict) else []
+    apps = []
+    for it in items:
+        tk = it.get("toolkit") or {}
+        apps.append({"app": tk.get("slug") or it.get("toolkit_slug") or "?", "status": it.get("status", "?"),
+                     "user": it.get("user_id", "")})
+    return {"ok": True, "apps": apps, "connected": sorted({a["app"] for a in apps if str(a["status"]).upper() == "ACTIVE"})}
+
+
+def tools(toolkit, words=""):
+    q = {"toolkit_slug": toolkit.lower(), "limit": 8}
+    if words:
+        q["search"] = words
+    r = call("GET", "/tools", query=q)
+    if not r["ok"]:
+        return r
+    items = r["data"].get("items", []) if isinstance(r["data"], dict) else []
+    out = []
+    for it in items:
+        props = ((it.get("input_parameters") or {}).get("properties") or {})
+        req = (it.get("input_parameters") or {}).get("required") or []
+        out.append({"slug": it.get("slug", ""), "does": (it.get("description") or "")[:160],
+                    "fields": {k: ("required " if k in req else "") + str(v.get("type", "")) for k, v in list(props.items())[:10]},
+                    "reads": is_read(it.get("slug", ""))})
+    return {"ok": True, "tools": out}
+
+
+def run(slug, args=None):
+    c = load()
+    body = {"arguments": args or {}}
+    if c.get("userId"):
+        body["user_id"] = c["userId"]
+    r = call("POST", "/tools/execute/" + urllib.parse.quote(slug.upper()), body=body)
+    if not r["ok"]:
+        return r
+    d = r["data"] if isinstance(r["data"], dict) else {}
+    if not d.get("successful", True):
+        return {"ok": False, "error": str(d.get("error") or "the action failed")[:400]}
+    return {"ok": True, "data": d.get("data")}
+
+
+def setup():
+    print("Velvet · Composio\n")
+    print("1. Open https://dashboard.composio.dev → Settings → API Keys, create a key and copy it.")
+    print("2. Paste it here (it is not shown while you type):\n")
+    key = getpass.getpass("   Composio API key: ").strip()
+    if not key:
+        print("nothing typed — nothing saved")
+        return 1
+    c = load()
+    c["apiKey"] = key
+    save(c)
+    s = status()
+    if not s["ok"]:
+        print("\nsaved, but the key did not work:", s["error"])
+        return 1
+    users = sorted({a["user"] for a in s["apps"] if a["user"]})
+    if users and not c.get("userId"):
+        c["userId"] = users[0]
+        save(c)
+    print("\nsaved to", CONF, "(only you can read it)")
+    print("connected apps:", ", ".join(s["connected"]) or "none yet — connect apps on composio.dev")
+    return 0
+
+
+def selftest():
+    assert is_read("GMAIL_FETCH_EMAILS") and is_read("GITHUB_LIST_NOTIFICATIONS") and is_read("SPOTIFY_GET_CURRENTLY_PLAYING_TRACK")
+    assert not is_read("GMAIL_SEND_EMAIL") and not is_read("SPOTIFY_START_RESUME_PLAYBACK") and not is_read("SLACK_SEND_MESSAGE")
+    global CONF
+    keep = CONF
+    import tempfile
+    d = tempfile.mkdtemp()
+    CONF = os.path.join(d, "velvet", "composio.json")
+    assert load() == {}
+    assert call("GET", "/x")["ok"] is False                 # no key: refused before any network
+    save({"apiKey": "test"})
+    assert stat.S_IMODE(os.stat(CONF).st_mode) == 0o600
+    assert load()["apiKey"] == "test"
+    CONF = keep
+    print("velvet-composio selftest ok")
+    return 0
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd = argv[0]
+    if cmd == "--selftest":
+        return selftest()
+    if cmd == "setup":
+        return setup()
+    if cmd == "status":
+        out = status()
+    elif cmd == "tools" and len(argv) >= 2:
+        out = tools(argv[1], " ".join(argv[2:]))
+    elif cmd == "run" and len(argv) >= 2:
+        try:
+            args = json.loads(argv[2]) if len(argv) > 2 else {}
+        except json.JSONDecodeError as e:
+            out = {"ok": False, "error": f"arguments are not JSON: {e}"}
+            print(json.dumps(out, ensure_ascii=False))
+            return 2
+        out = run(argv[1], args)
+    else:
+        print(__doc__)
+        return 2
+    print(json.dumps(out, ensure_ascii=False, indent=1))
+    return 0 if out.get("ok") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

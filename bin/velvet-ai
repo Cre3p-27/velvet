@@ -3157,6 +3157,65 @@ def page_text(html: str) -> str:
     return text
 
 
+# ── Composio: the user's online apps (Gmail, Google Calendar, GitHub, Notion, Spotify, Slack …) through ONE key
+# (bin/velvet-composio; the key lives in ~/.config/velvet/composio.json, set up by the user with
+# `velvet-composio setup`). Reading runs at once; anything that sends, creates, deletes or plays goes through
+# composio.act, which asks first like every other danger tool.
+COMPOSIO_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "velvet-composio")
+# keep in step with READ_WORDS in bin/velvet-composio
+COMPOSIO_READ = ("GET", "LIST", "FETCH", "SEARCH", "FIND", "RETRIEVE", "READ", "QUERY", "CURRENT", "QUEUE", "COUNT", "CHECK",
+                 "LOOKUP")
+
+
+def composio_call(*args, timeout=30.0) -> dict:
+    code, out, err = run([sys.executable, COMPOSIO_BIN, *args], timeout=timeout)
+    try:
+        r = json.loads(out)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": (err or out or "velvet-composio gave no answer")[:300]}
+    # a mail box or a calendar can be huge: the brain gets the start of it
+    blob = json.dumps(r.get("data"), ensure_ascii=False) if "data" in r else ""
+    if len(blob) > 6000:
+        r["data"] = blob[:6000] + " …(cut)"
+    return r
+
+
+def composio_reads(slug: str) -> bool:
+    parts = str(slug or "").upper().split("_")
+    return any(w in COMPOSIO_READ for w in parts[1:3])
+
+
+@tool("composio.status", "", "read",
+      "Which of the user's online apps are connected through Composio (gmail, googlecalendar, github, notion, spotify …).")
+def t_composio_status():
+    return composio_call("status")
+
+
+@tool("composio.tools", '{"app": "gmail", "words": "unread"}', "read",
+      "Find what a Composio-connected online app can do: action slugs, what each does, its fields. Call it before "
+      "composio.read or composio.act when you do not know the slug.")
+def t_composio_tools(app="", words=""):
+    if not str(app or "").strip():
+        return {"ok": False, "error": "which app? (gmail, googlecalendar, github, notion, spotify …)"}
+    return composio_call("tools", str(app).strip(), *([str(words)] if words else []))
+
+
+@tool("composio.read", '{"slug": "GMAIL_FETCH_EMAILS", "args": {"query": "is:unread", "max_results": 5}}', "read",
+      "Run a READING action of a connected online app (fetch, list, get, search …) — mails, calendar events, "
+      "GitHub notifications, what Spotify plays — and answer from the result.")
+def t_composio_read(slug="", args=None):
+    if not composio_reads(slug):
+        return {"ok": False, "error": "this action changes something — use composio.act, it asks the user first"}
+    return composio_call("run", str(slug), json.dumps(args or {}, ensure_ascii=False))
+
+
+@tool("composio.act", '{"slug": "SPOTIFY_START_RESUME_PLAYBACK", "args": {"uris": ["spotify:track:…"]}}', "danger",
+      "Run an action that CHANGES something in a connected online app (send a mail, create an event, post, play …). "
+      "The user is asked first.")
+def t_composio_act(slug="", args=None):
+    return composio_call("run", str(slug), json.dumps(args or {}, ensure_ascii=False))
+
+
 @tool("web.read", '{"url": "https://…"}', "read",
       "Read a web page (a result from web_lookup, a link the user gave) and get its text to answer from.")
 def t_web_read(url=""):
@@ -5250,6 +5309,8 @@ def describe_action(name: str, args: dict) -> str:
     """What a waiting action does, in a few words the island can show."""
     if name == "cmd.run":
         return f"den Befehl „{str((args or {}).get('command') or '').strip()[:90]}“ ausführen"
+    if name == "composio.act":
+        return f"„{str((args or {}).get('slug') or '').replace('_', ' ')[:60]}“ in deiner verbundenen App ausführen"
     return ACTION_WORDS.get(name, name)
 
 
