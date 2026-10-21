@@ -10,9 +10,11 @@ stock system to get audio levels from without pulling in a library, so it falls
 back to a field driven by the track's own position — and says so in the corner,
 because a fake meter that claims to be real is worse than no meter.
 
-Track, artist and position come from playerctl when it is there.
+Track, artist and position come from playerctl when it is there, else straight
+from MPRIS on the session bus (busctl).
 """
 
+import json
 import os
 import random
 import shutil
@@ -135,12 +137,54 @@ def playerctl(*args):
         return ""
 
 
+def busctl_json(*args):
+    try:
+        out = subprocess.run(
+            ["busctl", "--user", "--json=short", *args],
+            capture_output=True, text=True, timeout=0.6, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    rows = []
+    for line in out.stdout.splitlines() if out.returncode == 0 else []:
+        try:
+            rows.append(json.loads(line).get("data"))
+        except (ValueError, AttributeError):
+            pass
+    return rows
+
+
+def mpris_meta():
+    """the same answer straight from MPRIS on the session bus (busctl ships with systemd), for systems without
+    playerctl: a playing player first, else the first one there"""
+    names = busctl_json("call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames")
+    players = [n for n in (names[0][0] if names and names[0] else []) if n.startswith("org.mpris.MediaPlayer2.")]
+    found = []
+    for name in players:
+        rows = busctl_json("get-property", name, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player",
+                           "Metadata", "PlaybackStatus", "Position")
+        if len(rows) < 2 or not isinstance(rows[0], dict):
+            continue
+        m = {k: (v or {}).get("data") for k, v in rows[0].items()}
+        artist = m.get("xesam:artist") or []
+        found.append({
+            "title": str(m.get("xesam:title") or ""),
+            "artist": ", ".join(artist) if isinstance(artist, list) else str(artist),
+            "album": str(m.get("xesam:album") or ""),
+            "status": str(rows[1] or ""),
+            "pos": (rows[2] if len(rows) > 2 and isinstance(rows[2], int) else 0) / 1e6,
+            "len": (m.get("mpris:length") if isinstance(m.get("mpris:length"), int) else 0) / 1e6,
+        })
+    playing = [f for f in found if f["status"] == "Playing"]
+    return (playing or found or [{}])[0]
+
+
 def refresh_meta(t):
     if t - state["meta_at"] < 1.0:
         return
     state["meta_at"] = t
     if shutil.which("playerctl") is None:
-        state["meta"] = {}
+        state["meta"] = mpris_meta() if shutil.which("busctl") else {}
         return
     raw = playerctl("metadata", "--format",
                     "{{title}}\x1f{{artist}}\x1f{{album}}\x1f{{status}}\x1f{{position}}\x1f{{mpris:length}}")
