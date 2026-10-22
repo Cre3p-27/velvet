@@ -172,7 +172,8 @@ PanelWindow {
 
                 Timer {
                     running: !hovering.hovered && !card.swiping && !card.leaving
-                    interval: card.critical ? Config.notifs.timeout * 2 : Config.notifs.timeout
+                    // the sender's own timeout when it asked for one, else the user's
+                    interval: (card.modelData?.expire ?? -1) > 0 ? card.modelData.expire : (card.critical ? Config.notifs.timeout * 2 : Config.notifs.timeout)
                     onTriggered: card.leave(false)
                 }
 

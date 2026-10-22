@@ -64,6 +64,16 @@ Singleton {
         return !!(record && root.liveIds[record.id]);
     }
 
+    // The sender's own timeout (in ms, as notify-send -t sends it; -1 means "the
+    // server decides", 0 "never"): clamped to 0.8–30 s, or -1 for the user's
+    // NOTIFICATIONS → TIMEOUT.
+    function expireMs(ms: real): int {
+        const t = Number(ms);
+        if (!(t > 0))
+            return -1;
+        return Math.round(Math.max(800, Math.min(30000, t)));
+    }
+
     // Popups drop themselves when the app that sent them takes them back.
     readonly property var shownPopups: root.popups.filter(p => root.isLive(p))
 
@@ -72,6 +82,12 @@ Singleton {
         if (!record)
             return;
         root.popups = root.popups.filter(p => p.id !== record.id);
+        // a transient one is not kept anywhere: once its popup is gone, it is gone
+        if (record.transient) {
+            const n = root.handle(record.id);
+            if (n)
+                n.expire();
+        }
     }
 
     function close(record: var): void {
@@ -159,19 +175,25 @@ Singleton {
                 urgency: root.urgencyName(notification.urgency),
                 actions: actions,
                 time: Date.now(),
-                seen: false
+                seen: false,
+                // a status line ("recording starts", a volume step): shown, never kept
+                transient: notification.transient === true,
+                // how long the sender wants its popup up, in ms (-1: the user's NOTIFICATIONS → TIMEOUT)
+                expire: root.expireMs(notification.expireTimeout)
             };
 
             // Records past the cap are gone from the list — let the server
             // drop their live objects too, or they pile up all session
             // (most apps never close their own notifications).
-            const next = [record].concat(root.history);
-            for (let i = root.cap; i < next.length; i++) {
-                const old = root.handle(next[i].id);
-                if (old)
-                    old.expire();
+            if (!record.transient) {
+                const next = [record].concat(root.history);
+                for (let i = root.cap; i < next.length; i++) {
+                    const old = root.handle(next[i].id);
+                    if (old)
+                        old.expire();
+                }
+                root.history = next.slice(0, root.cap);
             }
-            root.history = next.slice(0, root.cap);
 
             if (root.dnd)
                 Focus.noteMissed();
