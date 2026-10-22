@@ -1169,6 +1169,8 @@ PanelWindow {
         property point a: Qt.point(0, 0)
         property point b: Qt.point(0, 0)
         property bool live: false
+        // the frame holds still until the terminal is in it (DrawTerm.settled)
+        property bool waiting: false
         readonly property bool big: width >= 160 && height >= 90
         readonly property real radius: Math.max(0, Math.min(Config.hypr.rounding, width / 2, height / 2))
 
@@ -1176,6 +1178,7 @@ PanelWindow {
             drawFrame.a = p;
             drawFrame.b = p;
             leave.stop();
+            drawFrame.waiting = false;
             drawFrame.opacity = 1;
             drawFrame.scale = 1;
             drawFrame.live = true;
@@ -1183,15 +1186,16 @@ PanelWindow {
         function finish(): void {
             drawFrame.live = false;
             if (drawFrame.big) {
+                // it stays exactly where it is until the terminal is in it
+                drawFrame.waiting = true;
                 const sx = root.modelData?.x ?? 0;
                 const sy = root.modelData?.y ?? 0;
                 DrawTerm.open(sx + drawFrame.x, sy + drawFrame.y, drawFrame.width, drawFrame.height);
                 Sfx.launch();
-                leave.grow = 1.035;
             } else {
                 leave.grow = 0.94;
+                leave.restart();
             }
-            leave.restart();
         }
         function cancel(): void {
             drawFrame.live = false;
@@ -1203,7 +1207,7 @@ PanelWindow {
         y: Math.min(a.y, b.y)
         width: Math.abs(b.x - a.x)
         height: Math.abs(b.y - a.y)
-        visible: live || leave.running
+        visible: live || leave.running || waiting
         transformOrigin: Item.Center
 
         readonly property real glyph: Math.round(Math.max(18, Math.min(56, Math.min(width, height) * 0.24)))
@@ -1309,6 +1313,23 @@ PanelWindow {
                 to: leave.grow
                 duration: 360
                 easing.type: Easing.OutCubic
+            }
+        }
+
+        Connections {
+            target: DrawTerm
+
+            function onSettled(placed: bool): void {
+                if (!drawFrame.waiting)
+                    return;
+                drawFrame.waiting = false;
+                if (placed) {
+                    // the terminal covers the frame exactly: it simply goes
+                    drawFrame.opacity = 0;
+                } else {
+                    leave.grow = 0.94;
+                    leave.restart();
+                }
             }
         }
     }

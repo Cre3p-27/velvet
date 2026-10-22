@@ -4,10 +4,16 @@
 //
 //  Hyprland is told where the NEXT window of the terminal's class goes before
 //  the terminal starts (a one-shot named rule under a Lua config, the classic
-//  `[float;size;move]` prefix under hyprland.conf), so the window maps in
-//  place instead of appearing somewhere and jumping. Once it is there the rule
-//  is switched off again, and a second look corrects anything a theme or a
-//  border put off by a few pixels.
+//  `[float;noanim;size;move]` prefix under hyprland.conf), so the window maps in
+//  place instead of appearing somewhere and jumping. `no_anim` keeps Hyprland's
+//  opening animation off it: the terminal IS the frame at once. The frame stays
+//  where it is until `settled` — the window is in it, or it never came — so the
+//  frame never shrinks away in the gap before the terminal shows.
+//
+//  Once the window is there the rule is switched off again, and a second look
+//  corrects anything a theme or a border put off by a few pixels. A terminal
+//  that starts slowly (a cold start, a busy machine) is still placed: the rule
+//  goes after 15 s, the claim on the window only after 30 s.
 pragma Singleton
 
 import qs.config
@@ -35,6 +41,9 @@ Singleton {
     // what is on its way: {x, y, w, h, at} in layout pixels, or null
     property var pending: null
 
+    // the frame may leave: the terminal is in its place (placed), or it never came (not placed)
+    signal settled(bool placed)
+
     function open(x: real, y: real, w: real, h: real): void {
         const b = Config.hypr.manage ? Math.max(0, Config.hypr.borderSize) : 2;
         // the frame you drew is the window's outside edge, border included
@@ -52,16 +61,17 @@ Singleton {
             rule.running = true;
             startSoon.restart();
         } else {
-            Hypr.execWith(["float", `size ${g.w} ${g.h}`, `move ${g.x} ${g.y}`], root.term);
+            Hypr.execWith(["float", "noanim", `size ${g.w} ${g.h}`, `move ${g.x} ${g.y}`], root.term);
         }
-        expire.restart();
+        ruleExpire.restart();
+        pendingExpire.restart();
     }
 
     function ruleLua(g: var, on: bool): string {
         const m = `match = { class = "^(${root.cls.replace(/[.]/g, "%.")})$" }`;
         if (!on)
             return `hl.window_rule({ name = "velvet-drawn", enabled = false, ${m} })`;
-        return `hl.window_rule({ name = "velvet-drawn", enabled = true, ${m}, float = true, size = { ${g.w}, ${g.h} }, move = { ${g.x}, ${g.y} } })`;
+        return `hl.window_rule({ name = "velvet-drawn", enabled = true, ${m}, float = true, no_anim = true, size = { ${g.w}, ${g.h} }, move = { ${g.x}, ${g.y} } })`;
     }
 
     // the rule is in before the terminal starts
@@ -76,29 +86,39 @@ Singleton {
         onTriggered: Hypr.exec(root.term)
     }
 
-    function done(): void {
-        if (Hypr.usingLua) {
-            ruleOff.command = ["hyprctl", "eval", root.ruleLua(null, false)];
-            ruleOff.running = false;
-            ruleOff.running = true;
-        }
-        root.pending = null;
-        expire.stop();
+    // the rule goes: the window is in, or it is not coming — never leave it armed for somebody else's window
+    function disarm(): void {
+        if (!Hypr.usingLua)
+            return;
+        ruleOff.command = ["hyprctl", "eval", root.ruleLua(null, false)];
+        ruleOff.running = false;
+        ruleOff.running = true;
     }
 
     Process {
         id: ruleOff
     }
 
-    // nothing opened: never leave the rule armed for somebody else's window
+    // nothing opened in 15 s: the rule goes and the frame lets go; a terminal
+    // that comes later is still placed (pendingExpire)
     Timer {
-        id: expire
+        id: ruleExpire
 
-        interval: 8000
-        onTriggered: root.done()
+        interval: 15000
+        onTriggered: {
+            root.disarm();
+            root.settled(false);
+        }
     }
 
-    // the window is there: the rule goes, then the second look
+    Timer {
+        id: pendingExpire
+
+        interval: 30000
+        onTriggered: root.pending = null
+    }
+
+    // the window is there: the rule goes, the frame may go, then the second look
     property string addr: ""
     property var want: null
 
@@ -113,7 +133,11 @@ Singleton {
                 return;
             root.want = root.pending;
             root.addr = "0x" + parts[0].replace(/^0x/, "");
-            root.done();
+            root.pending = null;
+            ruleExpire.stop();
+            pendingExpire.stop();
+            root.disarm();
+            root.settled(true);
             check.restart();
             recheck.restart();
         }
