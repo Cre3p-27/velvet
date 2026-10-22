@@ -344,6 +344,11 @@ PanelWindow {
                     a = Math.min(0.17, a + wa);
                 }
             }
+            // a black-and-white picture stays black and white: the same veil, no hue
+            if (Colours.wallpaperMono) {
+                const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+                c = Qt.rgba(l, l, l);
+            }
             timeVeil.color = Qt.rgba(c.r, c.g, c.b, a);
         }
 
@@ -365,6 +370,12 @@ PanelWindow {
         Connections {
             target: Weather
             function onMoodChanged(): void { timeVeil.refresh(); }
+        }
+
+        // a new picture can be black and white where the last one was not
+        Connections {
+            target: Colours
+            function onWallpaperMonoChanged(): void { timeVeil.refresh(); }
         }
 
         Connections {

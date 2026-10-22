@@ -176,6 +176,22 @@ Singleton {
         return best ?? root.accent;
     }
 
+    // A picture with no colour of its own — black and white, greys: every one
+    // of its prominent colours is (nearly) grey. The day-and-night veil keeps
+    // its brightness on such a picture but drops its hue, so a black-and-white
+    // wallpaper stays black and white.
+    readonly property bool wallpaperMono: {
+        const list = quantizer.colors;
+        if (!list || list.length === 0)
+            return false;
+        for (let i = 0; i < list.length; i++) {
+            const c = list[i];
+            if (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) > 0.06)
+                return false;
+        }
+        return true;
+    }
+
     // ------------------------------------------------------------------ ground
     // `surfaceLift` raises the whole dark end. Deep black looks great in a
     // screenshot and is tiring on a real panel at night.
