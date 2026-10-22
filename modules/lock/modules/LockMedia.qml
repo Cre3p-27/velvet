@@ -23,6 +23,9 @@ Item {
 
     property bool compact: false
     property bool carded: true
+    // the card's glyph watermark sits at its right edge: when nothing plays
+    // (no cover over it) the words keep clear of it
+    readonly property real reserve: root.carded && !root.has ? Math.round(cardRow.width * 0.2) : 0
 
     readonly property var player: {
         // One choice for the whole shell (services/MprisBridge.qml): it
@@ -235,7 +238,7 @@ Item {
 
         Column {
             anchors.verticalCenter: parent.verticalCenter
-            width: cardRow.width - cover.width - cardRow.spacing
+            width: cardRow.width - cover.width - cardRow.spacing - root.reserve
             spacing: 6
 
             P5Text {
@@ -253,6 +256,9 @@ Item {
                 text: root.has ? (root.artist || root.player?.identity || "Unknown artist") : "Play something — it shows up here"
                 color: Colours.alpha(Colours.inkDim, 0.9)
                 font.pixelSize: 13
+                // two lines, not an ellipsis: the hint is the whole message
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
             }
 
