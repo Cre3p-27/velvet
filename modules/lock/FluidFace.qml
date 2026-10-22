@@ -140,6 +140,46 @@ Item {
 
     // LOCK SCREEN → CLOCK & SOUND: the clock's size and face.
     readonly property real clockPx: 224 * surface.cs * Math.max(0.5, Math.min(1.4, Config.lock.clockScale))
+    // …but the digits never outgrow the centre stage: at a large CLOCK SIZE
+    // on a narrow screen they ran into the side columns. Measured at the full
+    // size (so the fit cannot feed back into the measurement), then shrunk
+    // to the stage — never grown.
+    readonly property real clockFit: {
+        const natural = hourMetrics.advanceWidth + minuteMetrics.advanceWidth + centerCol.width * 0.02;
+        return natural > 0 ? Math.min(1, (centerCol.width - 16 * surface.cs) / natural) : 1;
+    }
+
+    TextMetrics {
+        id: hourMetrics
+
+        font.family: surface.clockFamily
+        font.weight: Config.lock.clockFace === "display" ? Font.Black : Font.Light
+        font.pixelSize: surface.clockPx
+        text: surface.hourText
+    }
+
+    TextMetrics {
+        id: minuteMetrics
+
+        font.family: surface.clockFamily
+        font.weight: Config.lock.clockFace === "display" ? Font.Black : Font.Light
+        font.pixelSize: surface.clockPx * (Config.bar.clock.format24h ? 1 : 0.545)
+        text: "00"
+    }
+
+    // The card in a column that takes the room left over: the one that can
+    // use it (the notification dock, the music, the forecast), else the last.
+    // The last card used to stretch whatever it was — four power buttons in a
+    // card as tall as the dock.
+    function stretchIndex(zone: string): int {
+        const list = LockLayout.list(zone);
+        for (const id of ["notifs", "media", "weather"]) {
+            const i = list.indexOf(id);
+            if (i >= 0)
+                return i;
+        }
+        return list.length - 1;
+    }
     readonly property bool dotClock: Config.lock.clockFace === "dots" && !surface.dialClock
     // CLOCK SHAPE (or the ANALOG face): the clock moves into a dial.
     readonly property bool dialClock: Config.lock.clockFace === "analog" || (Config.lock.clockShape !== "" && Config.lock.clockShape !== "none" && Config.lock.clockShape !== "line")
@@ -723,7 +763,7 @@ Item {
                             zone: "left"
                             zoneW: leftCol.width
                             Layout.fillWidth: true
-                            Layout.fillHeight: index === LockLayout.list("left").length - 1
+                            Layout.fillHeight: index === surface.stretchIndex("left")
                         }
                     }
                 }
@@ -790,7 +830,7 @@ Item {
                                 font.family: surface.clockFamily
                                 font.weight: Config.lock.clockFace === "display" ? Font.Black : Font.Light
                                 font.italic: false
-                                font.pixelSize: surface.clockPx
+                                font.pixelSize: surface.clockPx * surface.clockFit
                                 tracking: -4
                             }
 
@@ -804,7 +844,7 @@ Item {
                                 font.family: surface.clockFamily
                                 font.weight: Config.lock.clockFace === "display" ? Font.Black : Font.Light
                                 font.italic: false
-                                font.pixelSize: surface.clockPx * (Config.bar.clock.format24h ? 1 : 0.545)
+                                font.pixelSize: surface.clockPx * surface.clockFit * (Config.bar.clock.format24h ? 1 : 0.545)
                                 tracking: -4
                             }
 
@@ -814,7 +854,7 @@ Item {
                                 visible: surface.dotClock
                                 text: surface.hourText
                                 color: Colours.accent
-                                pixelSize: surface.clockPx * 0.62
+                                pixelSize: surface.clockPx * surface.clockFit * 0.62
                             }
 
                             DotText {
@@ -824,7 +864,7 @@ Item {
                                 visible: surface.dotClock
                                 text: Qt.formatDateTime(clock.date, "mm")
                                 color: Colours.accentAlt
-                                pixelSize: surface.clockPx * 0.62 * (Config.bar.clock.format24h ? 1 : 0.545)
+                                pixelSize: surface.clockPx * surface.clockFit * 0.62 * (Config.bar.clock.format24h ? 1 : 0.545)
                             }
                         }
 
@@ -1425,7 +1465,7 @@ Item {
                             zone: "right"
                             zoneW: rightCol.width
                             Layout.fillWidth: true
-                            Layout.fillHeight: index === LockLayout.list("right").length - 1
+                            Layout.fillHeight: index === surface.stretchIndex("right")
                         }
                     }
                 }

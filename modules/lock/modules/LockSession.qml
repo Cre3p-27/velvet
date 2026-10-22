@@ -114,9 +114,17 @@ Item {
         }
 
         // The fluid lock's colour row — the shell's own palette, straight from
-        // the current wallpaper, in its 28px boxes.
+        // the current wallpaper, in its 28px boxes. In a narrow column the
+        // boxes and the gaps shrink together, so the row never runs past the
+        // card's edge (eight 28px boxes need 308px).
         Row {
-            spacing: 12
+            id: swatchRow
+
+            readonly property real gap: Math.max(4, Math.min(12, width * 0.04))
+            readonly property real cell: Math.max(12, Math.min(28, (width - 7 * gap) / 8))
+
+            width: parent.width
+            spacing: swatchRow.gap
 
             Repeater {
                 model: [Colours.accent, Colours.accentAlt, Colours.ink, Colours.inkDim, Colours.surfaceHigh, Colours.warning, Colours.danger, Colours.paper]
@@ -124,9 +132,9 @@ Item {
                 Rectangle {
                     required property var modelData
 
-                    width: 28
-                    height: 28
-                    radius: 12
+                    width: swatchRow.cell
+                    height: swatchRow.cell
+                    radius: swatchRow.cell * 0.43
                     color: modelData
                     // A hairline, so the swatches as dark as the card stay
                     // swatches instead of holes in the row.

@@ -24,8 +24,9 @@ Item {
     property bool compact: false
     property bool carded: true
     // the card's glyph watermark sits at its right edge: when nothing plays
-    // (no cover over it) the words keep clear of it
-    readonly property real reserve: root.carded && !root.has ? Math.round(cardRow.width * 0.2) : 0
+    // (no cover over it) the words keep clear of it — as far as the card has
+    // room for it; the words never get narrower than 170px for it
+    readonly property real reserve: root.carded && !root.has ? Math.round(Math.max(0, Math.min(cardRow.width * 0.2, cardRow.width - cover.width - cardRow.spacing - 170))) : 0
 
     readonly property var player: {
         // One choice for the whole shell (services/MprisBridge.qml): it
@@ -198,7 +199,8 @@ Item {
             id: cover
 
             anchors.verticalCenter: parent.verticalCenter
-            width: Math.min(cardRow.height, 116)
+            // a narrow column keeps two thirds of the card for the words
+            width: Math.min(cardRow.height, 116, Math.max(56, cardRow.width * 0.34))
             height: cover.width
 
             Rectangle {
