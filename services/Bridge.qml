@@ -260,6 +260,12 @@ Singleton {
         case "openDesktopTab":
             Panels.openSettingsTabNamed("DESKTOP");
             break;
+        case "takeLoginSong":
+            LoginSong.takeNow();
+            break;
+        case "playLoginSong":
+            LoginSong.playNow();
+            break;
         case "sceneStart":
             Scenes.launchAll(false);
             break;

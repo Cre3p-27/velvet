@@ -387,6 +387,20 @@ JsonAdapter {
         property bool dragFloats: true
     }
 
+    // =============================================================== ON LOGIN
+    // A song from Spotify that starts when the session does (bin/velvet-autostart,
+    // services/LoginSong.qml). The song is a spotify:track URI, taken from what
+    // Spotify plays when you press TAKE in SETTINGS → ON LOGIN.
+    property JsonObject login: JsonObject {
+        property bool songOn: false
+        property string song: ""
+        property string songTitle: ""
+        // seconds after the session starts before the song begins
+        property int songDelay: 8
+        // seconds the volume takes to rise back to Spotify's own level
+        property int songFade: 4
+    }
+
     // =============================================================== SCENE
     // The windows that belong on the desktop, and where. Arranged by
     // hand in SUPER+TAB -> DESKTOP and remembered per wallpaper.

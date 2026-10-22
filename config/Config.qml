@@ -27,6 +27,7 @@ Singleton {
     readonly property var osd: adapter.osd
     readonly property var wallpaper: adapter.wallpaper
     readonly property var lock: adapter.lock
+    readonly property var login: adapter.login
     readonly property var sfx: adapter.sfx
     readonly property var home: adapter.home
     readonly property var velly: adapter.velly

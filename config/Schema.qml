@@ -3939,6 +3939,54 @@ Singleton {
         },
         {
             kind: "page",
+            name: "ON LOGIN",
+            help: "What starts by itself when you log in: a song from Spotify. Play the song in Spotify, press TAKE THE SONG PLAYING NOW, and it starts on every login — after a short wait, faded in. Once per login: a restarted shell does not play it again.",
+            sub: "A SONG FROM SPOTIFY · AFTER A WAIT · FADED IN",
+            icon: "music_note",
+            items: [
+                {
+                    kind: "toggle",
+                    key: "login.songOn",
+                    name: "PLAY A SONG WHEN YOU LOG IN",
+                    help: "Starts the song below once per login, when the session is up. Spotify is opened for it if it is not running. Off by default.",
+                    sub: "ONCE PER LOGIN"
+                },
+                {
+                    kind: "action",
+                    name: "TAKE THE SONG PLAYING NOW",
+                    help: "Keeps the track Spotify is playing, or paused on, for the login. Play the song in Spotify first; the toast names what was kept.",
+                    sub: "NEEDS SPOTIFY RUNNING WITH A SONG IN ITS PLAYER",
+                    fn: "takeLoginSong"
+                },
+                {
+                    kind: "action",
+                    name: "PLAY THE KEPT SONG NOW",
+                    help: "Plays the kept song right away with the same fade — to hear how it starts, without waiting for a login.",
+                    sub: "THE SAME START, WITHOUT THE WAIT",
+                    fn: "playLoginSong"
+                },
+                {
+                    kind: "slider",
+                    key: "login.songDelay",
+                    name: "WAIT BEFORE IT PLAYS",
+                    help: "Seconds after the session starts before the song begins, so the desktop has settled first.",
+                    sub: "SECONDS AFTER YOU LOG IN",
+                    when: { key: "login.songOn", is: true },
+                    min: 0, max: 60, step: 1, fmt: "int", unit: "s"
+                },
+                {
+                    kind: "slider",
+                    key: "login.songFade",
+                    name: "FADE IN",
+                    help: "Seconds the volume takes to rise to the level Spotify had. 0 starts at full volume.",
+                    sub: "SECONDS TO FULL VOLUME",
+                    when: { key: "login.songOn", is: true },
+                    min: 0, max: 15, step: 1, fmt: "int", unit: "s"
+                }
+            ]
+        },
+        {
+            kind: "page",
             name: "SCREENSHOT",
             help: "The screenshot button on the bar.",
             sub: "THE BUTTON IN THE BAR",

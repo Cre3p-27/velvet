@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-autostart
+
+A song from Spotify that starts when you log in — or right now, when you ask.
+
+    velvet-autostart now                 the track Spotify is playing (or paused on), as JSON
+    velvet-autostart run SPOTIFY_URI     play it: wait, open Spotify if it is not running, fade in
+        [--delay SECONDS] [--fade SECONDS] [--once]
+    velvet-autostart --selftest          check the parsing (no Spotify, no bus)
+
+--once is the login start: one start per login, kept in $XDG_RUNTIME_DIR (gone at log out), so a
+restarted shell does not play the song a second time.
+
+Spotify is driven over MPRIS — the same bus the media widgets read. The fade moves Spotify's own
+volume from silence up to the level it had, and that level is put back at the end, even when the
+song never started. VELVET_AUTOSTART_NO_LAUNCH=1 never opens Spotify (tests).
+
+Standard library and busctl (systemd) only.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+BUS = "org.mpris.MediaPlayer2.spotify"
+PATH = "/org/mpris/MediaPlayer2"
+PLAYER = "org.mpris.MediaPlayer2.Player"
+URI = re.compile(r"^spotify:track:([A-Za-z0-9]{22})$")
+RUNDIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+MARK = os.path.join(RUNDIR, "velvet-login-song.done")
+LOG = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "velvet-autostart.log")
+
+
+def log(msg):
+    line = f"{time.strftime('%F %T')} {msg}"
+    print(line, file=sys.stderr, flush=True)
+    try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def busctl(*args):
+    """one busctl call; the parsed 'data' of its JSON answer, or None"""
+    try:
+        out = subprocess.run(["busctl", "--user", "--json=short", *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    try:
+        return json.loads(out.stdout).get("data")
+    except (ValueError, AttributeError):
+        return None
+
+
+def spotify_up():
+    names = busctl("call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames")
+    return bool(names) and BUS in (names[0] or [])
+
+
+def prop(name):
+    return busctl("get-property", BUS, PATH, PLAYER, name)
+
+
+def set_volume(v):
+    try:
+        subprocess.run(["busctl", "--user", "set-property", BUS, PATH, PLAYER, "Volume", "d", f"{v:.3f}"],
+                       capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def open_uri(uri):
+    try:
+        out = subprocess.run(["busctl", "--user", "call", BUS, PATH, PLAYER, "OpenUri", "s", uri],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0
+
+
+def track_from_meta(meta):
+    """a Spotify track from its MPRIS metadata (the dict of plain values), or None"""
+    tid = str(meta.get("mpris:trackid") or "")
+    tail = tid.rsplit("/", 1)[-1]
+    if "/com/spotify/track/" not in tid or not URI.match(f"spotify:track:{tail}"):
+        return None
+    artist = meta.get("xesam:artist") or []
+    return {
+        "uri": f"spotify:track:{tail}",
+        "title": str(meta.get("xesam:title") or ""),
+        "artist": ", ".join(str(a) for a in artist) if isinstance(artist, list) else str(artist),
+    }
+
+
+def now():
+    if not spotify_up():
+        return {"error": "Spotify is not running"}
+    raw = prop("Metadata") or {}
+    meta = {k: (v or {}).get("data") for k, v in raw.items()} if isinstance(raw, dict) else {}
+    track = track_from_meta(meta)
+    if track is None:
+        return {"error": "Spotify has no song in its player — play the song first"}
+    return track
+
+
+def wait_playing(seconds):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if prop("PlaybackStatus") == "Playing":
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def run(uri, delay, fade, once):
+    if not URI.match(uri):
+        log(f"not a Spotify track link: {uri}")
+        return 2
+    if once:
+        if os.path.exists(MARK):
+            log("the login song already started in this session")
+            return 0
+        try:
+            open(MARK, "w").close()
+        except OSError:
+            pass
+    if delay > 0:
+        time.sleep(delay)
+    if not spotify_up():
+        if os.environ.get("VELVET_AUTOSTART_NO_LAUNCH"):
+            log("Spotify is not running (launching is off)")
+            return 1
+        exe = shutil.which("spotify")
+        if not exe:
+            log("Spotify is not installed")
+            return 1
+        subprocess.Popen([exe, uri], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        log("opened Spotify")
+        end = time.monotonic() + 60
+        while time.monotonic() < end and not spotify_up():
+            time.sleep(0.5)
+        if not spotify_up():
+            log("Spotify did not come up within 60 s")
+            return 1
+        time.sleep(1.5)  # Spotify ignores player calls for a moment after its name appears
+    raw_vol = prop("Volume")
+    # the level Spotify had; None when it does not say — then the volume is never touched
+    v0 = min(1.0, max(0.0, float(raw_vol))) if isinstance(raw_vol, (int, float)) else None
+    try:
+        if fade > 0 and v0 is not None:
+            set_volume(0.0)
+        if not open_uri(uri):
+            log("Spotify refused the link")
+            return 1
+        started = wait_playing(12)
+        if not started:
+            log("Spotify did not start playing within 12 s")
+            return 1
+        if fade > 0 and v0 is not None:
+            steps = 20
+            for k in range(1, steps + 1):
+                set_volume(v0 * k / steps)
+                time.sleep(fade / steps)
+        log(f"playing {uri}")
+        return 0
+    finally:
+        if v0 is not None:
+            set_volume(v0)
+
+
+def selftest():
+    assert URI.match("spotify:track:4ZrEjG3Vef85NTve8ptC9Q")
+    assert not URI.match("spotify:album:4ZrEjG3Vef85NTve8ptC9Q") and not URI.match("spotify:track:short")
+    assert track_from_meta({"mpris:trackid": "/com/spotify/track/4ZrEjG3Vef85NTve8ptC9Q", "xesam:title": "T",
+                            "xesam:artist": ["A", "B"]}) == {"uri": "spotify:track:4ZrEjG3Vef85NTve8ptC9Q",
+                                                             "title": "T", "artist": "A, B"}
+    assert track_from_meta({"mpris:trackid": "/org/mpris/MediaPlayer2/TrackList/NoTrack"}) is None
+    assert track_from_meta({}) is None
+    print("velvet-autostart selftest ok")
+    return 0
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    if argv[0] == "--selftest":
+        return selftest()
+    if argv[0] == "now":
+        out = now()
+        print(json.dumps(out, ensure_ascii=False))
+        return 0 if "uri" in out else 1
+    if argv[0] == "run" and len(argv) >= 2:
+        delay, fade, once = 0.0, 0.0, False
+        rest = argv[2:]
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--once":
+                once = True
+            elif rest[i] in ("--delay", "--fade") and i + 1 < len(rest):
+                try:
+                    value = max(0.0, float(rest[i + 1]))
+                except ValueError:
+                    print(f"not a number: {rest[i + 1]}", file=sys.stderr)
+                    return 2
+                if rest[i] == "--delay":
+                    delay = min(value, 120.0)
+                else:
+                    fade = min(value, 30.0)
+                i += 1
+            else:
+                print(f"unknown option: {rest[i]}", file=sys.stderr)
+                return 2
+            i += 1
+        return run(argv[1], delay, fade, once)
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

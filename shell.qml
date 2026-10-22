@@ -320,6 +320,8 @@ ShellRoot {
         Dispatch.dialectName,
         Desk.ready,
         Scenes.loaded,
+        // The login song: named here so the singleton exists and the login start runs.
+        LoginSong.ready,
         Term.probed,
         Lyrics.ready,
         Looks.ready,
