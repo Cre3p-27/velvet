@@ -324,6 +324,8 @@ ShellRoot {
         LoginSong.ready,
         // SOUND PROBLEMS: the Bluetooth drop watcher (reconnect) runs all session.
         SoundCheck.known,
+        // LIVE WALLPAPERS: Velly's queue for the favourites, and the index the wallpaper reads.
+        LiveWalls.ready,
         Term.probed,
         Lyrics.ready,
         Looks.ready,

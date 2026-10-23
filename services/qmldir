@@ -44,5 +44,6 @@ singleton WorkspaceModes 1.0 WorkspaceModes.qml
 singleton Updates 1.0 Updates.qml
 singleton Monitors 1.0 Monitors.qml
 singleton SoundCheck 1.0 SoundCheck.qml
+singleton LiveWalls 1.0 LiveWalls.qml
 singleton DrawTerm 1.0 DrawTerm.qml
 singleton LoginSong 1.0 LoginSong.qml

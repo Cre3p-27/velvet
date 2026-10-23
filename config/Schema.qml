@@ -496,6 +496,14 @@ Singleton {
                     sub: "HER MODULE IN THE SWIPE CYCLE · WITHOUT HER A LONG PRESS DOES NOTHING"
                 },
                 {
+                    kind: "toggle",
+                    key: "wallpaper.liveAuto",
+                    name: "LIVE WALLPAPERS FOR FAVOURITES",
+                    aka: "LIVE WALLPAPER · GIF · FAVORITEN",
+                    help: "Her standing job: every wallpaper you star, she makes move — leaves, stars, mist, light, whatever suits the picture — a seamless loop and a GIF. All the knobs: WALLPAPER → LIVE WALLPAPERS.",
+                    sub: "SHE MAKES EVERY FAVOURITE MOVE · KNOBS IN WALLPAPER → LIVE WALLPAPERS"
+                },
+                {
                     kind: "action",
                     fn: "vellySetup",
                     name: "SETUP",
@@ -3619,6 +3627,239 @@ Singleton {
             name: "BROWSE WALLPAPERS",
             help: "Browse the wallpapers in your folder. Enter applies one, F marks it as a favourite.",
             sub: "ENTER APPLIES · F FAVOURITES"
+        },
+        {
+            kind: "page",
+            name: "LIVE WALLPAPERS",
+            aka: "LIVE WALLPAPER · LEBENDIGES WALLPAPER · BEWEGTES HINTERGRUNDBILD · GIF · ANIMIERT · ANIMATED",
+            help: "Your favourite wallpapers, moving. For every wallpaper you star, Velly reads the picture — its colours, its light, its little stars — and makes it move the way it suits: leaves fall through an autumn road, stars twinkle on a night sky, mist drifts through a forest, light breathes round what glows on black, a sheen sweeps across a poster. A seamless loop, played over the untouched picture (every pixel of the still stays), and a GIF to keep or share. One at a time, at the lowest priority, never while a game runs.",
+            sub: "VELLY MAKES EVERY FAVOURITE MOVE · A SEAMLESS LOOP AND A GIF",
+            icon: "animation",
+            items: [
+                {
+                    kind: "info",
+                    name: "RIGHT NOW",
+                    help: "What Velly is making, what waits, how many favourites already move — and the last thing that went wrong, if anything did.",
+                    sub: "WHAT VELLY IS MAKING",
+                    live: "liveStatus"
+                },
+                {
+                    kind: "info",
+                    name: "THIS WALLPAPER",
+                    help: "What the wallpaper that is up does: the style Velly chose for it and its loop — or that it is a still so far.",
+                    sub: "ITS STYLE AND ITS LOOP",
+                    live: "liveThis"
+                },
+                {
+                    kind: "toggle",
+                    key: "wallpaper.liveOn",
+                    name: "PLAY LIVE WALLPAPERS",
+                    aka: "LIVE AN · AUS",
+                    help: "Plays the live version of a wallpaper that has one. Off: every wallpaper is its still again (what was made stays). It needs FIT = FILL and the built-in renderer.",
+                    sub: "OFF: THE STILLS AGAIN · WHAT WAS MADE STAYS"
+                },
+                {
+                    kind: "toggle",
+                    key: "wallpaper.liveAuto",
+                    name: "VELLY MAKES THEM FOR FAVOURITES",
+                    aka: "AUTOMATISCH · AUTO · FAVORITEN",
+                    help: "Velly's standing job: every wallpaper you star becomes live by itself, a few seconds after the star — and anything that was missed (a game that interrupted her, a picture that changed) is picked up every half hour.",
+                    sub: "STAR A WALLPAPER — IT STARTS MOVING"
+                },
+                {
+                    kind: "slider",
+                    key: "wallpaper.liveStrength",
+                    name: "STRENGTH",
+                    aka: "STÄRKE · OPACITY",
+                    help: "How much of the motion shows — at once, on every live wallpaper, nothing is made again. 0 leaves only the still.",
+                    sub: "AT ONCE · NOTHING IS MADE AGAIN",
+                    min: 0,
+                    max: 1,
+                    step: 0.05,
+                    fmt: "percent"
+                },
+                {
+                    kind: "toggle",
+                    key: "wallpaper.livePauseBehind",
+                    name: "REST BEHIND WINDOWS",
+                    aka: "PAUSE · AKKU · GPU",
+                    help: "The live wallpaper moves only while you can see it: windows that fill the screen pause it, as do a game, the lock and the wallpaper wheel. A moving wallpaper makes the screen redraw all the time — behind windows that is work for nobody.",
+                    sub: "IT MOVES ONLY WHILE YOU CAN SEE IT"
+                },
+                {
+                    kind: "choice",
+                    key: "wallpaper.liveStyle",
+                    name: "STYLE",
+                    aka: "EFFEKT · BLÄTTER · STERNE · NEBEL · SCHNEE · REGEN",
+                    help: "AUTO lets Velly read each picture and choose: twinkling stars for a night sky, falling leaves for autumn, mist and petals for a soft forest, breathing light for black and white, a sheen for a poster. Or one style for every new one. Changing it affects what is made next — REMAKE puts it on this wallpaper.",
+                    sub: "AUTO: VELLY READS EACH PICTURE · APPLIES TO WHAT IS MADE NEXT",
+                    options: [
+                        { value: "auto", label: "AUTO · VELLY CHOOSES" },
+                        { value: "leaves", label: "FALLING LEAVES" },
+                        { value: "petals", label: "DRIFTING PETALS" },
+                        { value: "snow", label: "SNOW" },
+                        { value: "rain", label: "RAIN" },
+                        { value: "stars", label: "TWINKLING STARS" },
+                        { value: "fireflies", label: "FIREFLIES" },
+                        { value: "dust", label: "FLOATING LIGHT" },
+                        { value: "fog", label: "DRIFTING MIST" },
+                        { value: "glow", label: "BREATHING LIGHT" },
+                        { value: "sheen", label: "A SHEEN OF LIGHT" },
+                        { value: "rays", label: "LIGHT RAYS" }
+                    ]
+                },
+                {
+                    kind: "slider",
+                    key: "wallpaper.liveIntensity",
+                    name: "INTENSITY",
+                    aka: "INTENSITÄT",
+                    help: "How strongly the motion is made: brighter light, more opaque leaves. For what is made next — REMAKE for this one.",
+                    sub: "FOR WHAT IS MADE NEXT",
+                    min: 0.3,
+                    max: 1.6,
+                    step: 0.1,
+                    fmt: "float1",
+                    unit: "×"
+                },
+                {
+                    kind: "slider",
+                    key: "wallpaper.liveAmount",
+                    name: "AMOUNT",
+                    aka: "MENGE · ANZAHL · PARTIKEL",
+                    help: "How much falls, floats and twinkles. For what is made next.",
+                    sub: "HOW MUCH FALLS AND FLOATS",
+                    min: 0.3,
+                    max: 2,
+                    step: 0.1,
+                    fmt: "float1",
+                    unit: "×"
+                },
+                {
+                    kind: "slider",
+                    key: "wallpaper.liveSpeed",
+                    name: "SPEED",
+                    aka: "TEMPO · GESCHWINDIGKEIT",
+                    help: "How fast it moves. Every motion still comes round exactly once per loop — the loop never shows a seam. For what is made next.",
+                    sub: "SEAMLESS AT ANY SPEED",
+                    min: 0.5,
+                    max: 2,
+                    step: 0.1,
+                    fmt: "float1",
+                    unit: "×"
+                },
+                {
+                    kind: "choice",
+                    key: "wallpaper.liveSeconds",
+                    name: "LOOP",
+                    aka: "LÄNGE · DAUER",
+                    help: "How long the loop is before it begins again — seamlessly either way. Longer loops repeat less visibly and take a little longer to make.",
+                    sub: "LONGER REPEATS LESS VISIBLY",
+                    options: [
+                        { value: 6, label: "6 SECONDS" },
+                        { value: 8, label: "8 SECONDS" },
+                        { value: 10, label: "10 SECONDS" },
+                        { value: 14, label: "14 SECONDS" },
+                        { value: 20, label: "20 SECONDS" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "wallpaper.liveFps",
+                    name: "SMOOTHNESS",
+                    aka: "FPS · BILDRATE",
+                    help: "Frames per second of the motion. 30 is smooth for drifting things; 60 for fast rain or a high-refresh screen (twice the file, twice the work to make).",
+                    sub: "30 FOR DRIFT · 60 FOR FAST MOTION",
+                    options: [
+                        { value: 24, label: "24 FPS · FILM" },
+                        { value: 30, label: "30 FPS" },
+                        { value: 60, label: "60 FPS" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "wallpaper.liveGif",
+                    name: "MAKE A GIF TOO",
+                    aka: "GIF",
+                    help: "Every live wallpaper also becomes a GIF — the picture with its motion, to keep or send.",
+                    sub: "THE PICTURE WITH ITS MOTION, TO SEND"
+                },
+                {
+                    kind: "toggle",
+                    key: "wallpaper.liveGifPictures",
+                    name: "GIFS IN YOUR PICTURES",
+                    aka: "BILDER-ORDNER",
+                    help: "A copy of every GIF goes to your Pictures folder → Velvet Live, where you find it.",
+                    sub: "PICTURES → VELVET LIVE",
+                    when: { key: "wallpaper.liveGif", is: true }
+                },
+                {
+                    kind: "choice",
+                    key: "wallpaper.liveGifWidth",
+                    name: "GIF SIZE",
+                    help: "How wide the GIF is. A GIF holds 256 colours per frame and grows fast: 800 is sharp for a chat and stays small.",
+                    sub: "800 IS SHARP AND STAYS SMALL",
+                    when: { key: "wallpaper.liveGif", is: true },
+                    options: [
+                        { value: 480, label: "480 PX · TINY" },
+                        { value: 640, label: "640 PX" },
+                        { value: 800, label: "800 PX" },
+                        { value: 1280, label: "1280 PX · BIG FILES" }
+                    ]
+                },
+                {
+                    kind: "action",
+                    fn: "liveMakeThis",
+                    name: "MAKE THIS WALLPAPER LIVE",
+                    aka: "JETZT · DIESES",
+                    help: "Velly makes the wallpaper that is up live now — a favourite or not — with the style and settings above (about a minute; it is first in her queue).",
+                    sub: "NOW · FIRST IN VELLY'S QUEUE"
+                },
+                {
+                    kind: "action",
+                    fn: "liveRemakeThis",
+                    name: "REMAKE THIS ONE",
+                    aka: "NEU MACHEN",
+                    help: "Makes the wallpaper that is up again, with the style and settings as they are now.",
+                    sub: "WITH THE STYLE AND SETTINGS AS THEY ARE NOW"
+                },
+                {
+                    kind: "action",
+                    fn: "liveMakeAll",
+                    name: "MAKE EVERY FAVOURITE LIVE",
+                    help: "Queues every favourite that does not move yet — Velly makes them one after another.",
+                    sub: "ONE AFTER ANOTHER"
+                },
+                {
+                    kind: "action",
+                    fn: "liveRemakeAll",
+                    name: "REMAKE ALL FAVOURITES",
+                    help: "Makes every favourite again with the style and settings as they are now (about a minute each).",
+                    sub: "WITH THE SETTINGS AS THEY ARE NOW",
+                    danger: true
+                },
+                {
+                    kind: "action",
+                    fn: "liveStop",
+                    name: "STOP",
+                    help: "Stops what Velly is making and empties her queue. She starts again when you star a wallpaper or ask her.",
+                    sub: "EMPTIES THE QUEUE"
+                },
+                {
+                    kind: "action",
+                    fn: "liveOpenFolder",
+                    name: "OPEN THE GIFS",
+                    help: "Opens Pictures → Velvet Live, where the GIFs are.",
+                    sub: "PICTURES → VELVET LIVE"
+                },
+                {
+                    kind: "action",
+                    fn: "liveDeleteAll",
+                    name: "DELETE EVERY LIVE WALLPAPER",
+                    help: "Deletes everything Velly made (the GIFs in your Pictures stay — they are yours). The stills are never touched.",
+                    sub: "THE STILLS ARE NEVER TOUCHED",
+                    danger: true
+                }
+            ]
         },
         {
             kind: "toggle",

@@ -898,6 +898,53 @@ Composio's own sign-in page.
 Reading runs at once; anything that changes something asks first. `velvet-composio status` shows what is
 connected. Composio is a third party: connect only what you need, and remove apps there when you stop using them.
 
+## Live wallpapers
+
+Your favourite wallpapers, moving. Star a wallpaper (`F` in the wheel) and Velly
+reads the picture — its colours, its light, its little stars — and makes it move
+the way it suits:
+
+| the picture | what Velly makes |
+|---|---|
+| an autumn road, a forest in orange | leaves fall and tumble, light comes through the trees |
+| a night sky, small lights on dark | the stars twinkle, each to its own beat |
+| a soft, misty forest | mist drifts low through it, petals float |
+| black and white, a glow on black | the light breathes — a halo swells round what shines |
+| a poster, a drawing in two tones | a sheen of light sweeps across the paper |
+| cold and bright | snow |
+
+Or pick one style for all: **WALLPAPER → LIVE WALLPAPERS → STYLE** (falling leaves,
+petals, snow, rain, twinkling stars, fireflies, floating light, drifting mist,
+breathing light, a sheen, light rays).
+
+**How it is made.** `bin/velvet-livewall` renders the motion alone — never the
+picture — as a seamless loop: every motion comes round a whole number of times per
+loop (a leaf crosses its lane once or twice, a mote is born again where it was
+born, a twinkle has whole beats), so the last frame runs into the first. The video
+is HEVC 10-bit (smooth glows on black never band), made on the graphics card's own
+encoder when it has one (x265 otherwise). The wallpaper lays it over the untouched
+still with a small shader (`assets/shaders/livewall.frag`): every pixel of the
+picture stays the still's own, and **STRENGTH** changes at once without making
+anything again. Velly works one wallpaper at a time, at the lowest priority, and
+stops the moment a game takes the screen (she picks it up afterwards). About a
+minute per wallpaper at 4K.
+
+**It rests when nobody sees it**: under a game or a fullscreen film, behind the
+lock, in the wheel, and — **REST BEHIND WINDOWS** — while windows cover the desktop.
+
+**A GIF of each** goes to *Pictures → Velvet Live* (800 px, about 3 MB, ordered
+dither so only what moves is stored again). Everything else lives in
+`~/.local/share/velvet/livewalls`.
+
+```bash
+velvet livewall                      # what Velly is making, what this wallpaper does
+velvet livewall make current leaves  # this one, now, with falling leaves
+velvet livewall analyse FILE         # what Velly reads in a picture, and the style she would pick
+velvet livewall list                 # every live wallpaper made
+```
+
+Or ask her: *„Velly, mach mein Wallpaper lebendig — mit Schnee"*.
+
 ## The colour system
 
 Every colour in the shell comes from one accent, and by default that accent is

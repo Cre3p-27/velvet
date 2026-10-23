@@ -120,7 +120,9 @@ def game_running() -> bool:
     gamey = cls.startswith("steam_app") or cls in ("gamescope", "steam_proton") or ".exe" in cls \
         or cls.endswith((".x86_64", ".x86", ".x64", ".arm64")) \
         or any(k in cls for k in ("minecraft", "lutris", "heroic", "wine", "retroarch", "osu"))
-    return gamey or (full and cls not in ("google-chrome", "firefox", "mpv", "vlc", "chromium", "brave-browser"))
+    # Velvet's own settings window goes fullscreen too — that is no game
+    return gamey or (full and cls not in ("google-chrome", "firefox", "mpv", "vlc", "chromium", "brave-browser",
+                                          "org.quickshell", "quickshell"))
 
 
 if __name__ == "__main__":

@@ -546,6 +546,22 @@ JsonAdapter {
         // Hold the right button on the bare desktop and pull a frame: a
         // terminal opens in it (services/DrawTerm.qml).
         property bool drawTerminal: true
+        // ── LIVE WALLPAPERS (services/LiveWalls.qml, bin/velvet-livewall) ──────
+        // Velly makes every favourite move (leaves, stars, mist …) by herself;
+        // the wallpaper plays it over the untouched still.
+        property bool liveOn: true            // play the live version where one exists
+        property bool liveAuto: true          // Velly makes one for every favourite
+        property string liveStyle: "auto"     // auto (Velly reads the picture) or one style for all
+        property real liveStrength: 1.0       // how much of it shows — live, no remake
+        property real liveIntensity: 1.0      // how strong it is made (a remake)
+        property real liveAmount: 1.0         // how much falls and floats (a remake)
+        property real liveSpeed: 1.0          // how fast (a remake)
+        property int liveSeconds: 10          // the loop (a remake)
+        property int liveFps: 30              // 24 · 30 · 60 (a remake)
+        property bool livePauseBehind: true   // rests while windows cover the desktop
+        property bool liveGif: true           // a GIF of it too
+        property bool liveGifPictures: true   // …copied to Pictures/Velvet Live
+        property int liveGifWidth: 800
         // ── THE LIVING DESKTOP ─────────────────────────────────────
         // Widgets and living light layered onto the wallpaper itself,
         // so a wallpaper is a place rather than a picture. Master

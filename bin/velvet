@@ -20,8 +20,10 @@ VELVET · velvet — the shell from a terminal.
                                   black — also Super+Ctrl+Alt+R) · auto: back to the best
                                   mode that works · forget: try the fast modes again
     velvet sound [test]           the outputs, Bluetooth, what goes wrong · test: a short chime
-    velvet livewall [list|make FILE|favourites]
-                                  live wallpapers (Velly makes one for every favourite)
+    velvet livewall [status|list|make [FILE|current] [STYLE]|favourites|stop|analyse FILE|remove FILE|all]
+                                  live wallpapers — Velly makes every favourite move; make: one
+                                  now (style: auto leaves petals snow rain stars fireflies dust
+                                  fog glow sheen rays)
 
     velvet backup [FILE] [--with-secrets]
     velvet restore FILE
@@ -668,10 +670,48 @@ def cmd_sound(args):
 
 # ─────────────────────────────────────────────────────────────── live wallpapers
 def cmd_livewall(args):
+    """through Velly's queue while the shell runs (it shows the progress and plays the result), else the
+    workshop itself"""
     tool = os.path.join(VELVET, "bin", "velvet-livewall")
-    if not os.access(tool, os.X_OK):
+    if not os.path.exists(tool):
         die("this Velvet has no live wallpapers yet — velvet update")
-    os.execvp("python3", ["python3", tool] + (args or ["list"]))
+    sub = args[0] if args else "status"
+    up = running()
+    if sub == "status":
+        if not up:
+            os.execvp("python3", ["python3", tool, "list"])
+        try:
+            d = json.loads(ipc("livewall", "status") or "{}")
+        except ValueError:
+            d = {}
+        title("LIVE WALLPAPERS")
+        row("now", d.get("status", "?").lower())
+        cur = d.get("current")
+        row("this one", f"{cur['label'].lower()} — {cur['why']}" if cur else f"{C.dim}a still{C.end}")
+        if d.get("queue"):
+            row("waiting", ", ".join(d["queue"]))
+        row("on", ("plays" if d.get("on") else f"{C.warn}off{C.end}") + (" · Velly makes the favourites" if d.get("auto") else ""))
+        say(f"\n{C.dim}velvet livewall make [FILE|current] [STYLE] · list · favourites · stop{C.end}")
+        return 0
+    if sub == "make" and up:
+        target = args[1] if len(args) > 1 else "current"
+        if target != "current":
+            target = os.path.realpath(os.path.expanduser(target))
+            if not os.path.isfile(target):
+                die(f"no such picture: {args[1]}", 2)
+        style = args[2] if len(args) > 2 else "auto"
+        out = ipc("livewall", "make", target, style)
+        say(f"{C.good}✓{C.end} {out or 'queued'} {C.dim}— about a minute; velvet livewall shows the progress{C.end}")
+        return 0
+    if sub == "favourites" and up:
+        say(f"{C.good}✓{C.end} {ipc('livewall', 'favourites') or 'queued'}")
+        return 0
+    if sub == "stop":
+        if up:
+            ipc("livewall", "stop")
+        say(f"{C.good}✓{C.end} stopped")
+        return 0
+    os.execvp("python3", ["python3", tool] + args)
 
 
 # ─────────────────────────────────────────────────────────────── doctor

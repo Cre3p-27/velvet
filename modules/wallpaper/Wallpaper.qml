@@ -11,6 +11,7 @@ import Quickshell.Hyprland
 import Quickshell.Io
 import QtQuick
 import QtQuick.Shapes
+import QtMultimedia
 
 PanelWindow {
     id: root
@@ -164,6 +165,101 @@ PanelWindow {
                     } else if (status === Image.Error) {
                         opacity = 1;   // show whatever we have rather than a black screen
                     }
+                }
+            }
+
+            // ═══════════════════════════════════ the live wallpaper
+            //  The picture's own motion (services/LiveWalls.qml — Velly makes it,
+            //  bin/velvet-livewall): a video of the effect ALONE, packed — the top
+            //  half what it adds, the bottom half what it covers — written
+            //  premultiplied by assets/shaders/livewall.frag, so the ordinary
+            //  blending lays it over `front`: still × (1 − a) + add. The picture
+            //  itself keeps every pixel of the still; STRENGTH changes live. It
+            //  sits with `front` (same Ken Burns scale, same push-in), fades out
+            //  before a new picture comes and in once the new one has settled,
+            //  and rests whenever nobody can see it.
+            Item {
+                id: live
+
+                anchors.fill: parent
+                scale: root.kbScale
+                visible: live.shown > 0.001
+
+                // the effect of the picture that is up — "" for a still
+                readonly property string want: root.liveOk ? LiveWalls.videoFor(root.target) : ""
+                property real shown: 0
+
+                Behavior on shown {
+                    NumberAnimation {
+                        duration: live.shown < 0.5 ? 1300 : 280
+                        easing.type: Easing.InOutQuad
+                    }
+                }
+
+                onWantChanged: {
+                    // out first; the new one comes in once its picture has settled
+                    live.shown = 0;
+                    liveSwap.restart();
+                }
+
+                Timer {
+                    id: liveSwap
+
+                    interval: 320
+                    onTriggered: {
+                        liveVideo.source = live.want;
+                        if (live.want !== "")
+                            liveIn.restart();
+                    }
+                }
+
+                // the picture's own push-in is over before the motion starts
+                Timer {
+                    id: liveIn
+
+                    interval: Config.wallpaper.transition ? Config.wallpaper.fadeDuration * 1.6 + 200 : 200
+                    onTriggered: {
+                        if (live.want !== "" && liveVideo.source !== "")
+                            live.shown = 1;
+                    }
+                }
+
+                Video {
+                    id: liveVideo
+
+                    width: live.width
+                    height: live.height * 2
+                    loops: MediaPlayer.Infinite
+                    muted: true
+                    autoPlay: false
+                    fillMode: VideoOutput.Stretch
+                    readonly property bool wanted: source !== "" && root.livePlays
+                    onWantedChanged: wanted ? play() : pause()
+                    onSourceChanged: {
+                        if (wanted)
+                            play();
+                    }
+                    onErrorOccurred: (error, errorString) => {
+                        console.log(`Velvet: live wallpaper could not play — ${errorString}`);
+                        live.shown = 0;
+                    }
+                }
+
+                ShaderEffectSource {
+                    id: liveTex
+
+                    sourceItem: liveVideo
+                    hideSource: true
+                    live: true
+                    visible: false
+                }
+
+                ShaderEffect {
+                    anchors.fill: parent
+                    property var source: liveTex
+                    property real strength: Math.max(0, Math.min(1, Config.wallpaper.liveStrength)) * live.shown
+                    property real texelY: 1 / Math.max(2, liveVideo.height * 2)
+                    fragmentShader: Qt.resolvedUrl("../../assets/shaders/livewall.frag.qsb")
                 }
             }
         }
@@ -1158,6 +1254,32 @@ PanelWindow {
     // the eye, and an idle desktop stops costing the GPU (and the blur of
     // every window above it) forever. Pausing keeps the phase — no snap
     // back when an overlay closes — and turning it off returns to 1.
+    // ── when the live wallpaper moves: a picture that has one, its own framing (FILL), and someone who can
+    // see it — not under a game, the lock, the wheel, or windows that cover the desktop
+    readonly property bool liveOk: root.builtin && Config.wallpaper.fillMode === "fill"
+    readonly property bool livePlays: root.liveOk && !Locker.locked && !Hypr.allCovered && Config.appearance.animationScale > 0
+        && !Panels.wheel && !(Config.wallpaper.livePauseBehind && root.windowsCover)
+
+    // windows of this screen's desktop that fill (nearly) all of it: a fullscreen one, or tiled ones
+    // that add up to the screen (gaps leave a little); floating ones count less — they may overlap
+    readonly property bool windowsCover: {
+        const mon = Hyprland.monitorFor(root.modelData);
+        const ws = mon?.activeWorkspace;
+        if (!ws)
+            return false;
+        if (ws.lastIpcObject?.hasfullscreen === true)
+            return true;
+        const tops = Hyprland.toplevels?.values ?? [];
+        let area = 0;
+        for (let i = 0; i < tops.length; i++) {
+            const o = tops[i]?.lastIpcObject;
+            if (!o || o.workspace?.id !== ws.id || o.hidden || !o.size)
+                continue;
+            area += o.size[0] * o.size[1] * (o.floating ? 0.6 : 1);
+        }
+        return area >= 0.82 * root.width * root.height;
+    }
+
     property real kbT: 0
     readonly property real kbScale: Config.wallpaper.kenBurns ? 1 + 0.0175 * (1 - Math.cos(root.kbT * Math.PI / 90)) : 1
 

@@ -2431,6 +2431,97 @@ def t_wallpaper_random():
     return {"ok": True}
 
 
+# ── live wallpapers: Velly's standing job (services/LiveWalls.qml, bin/velvet-livewall)
+LIVE_STYLES = {
+    "auto": "auto", "automatisch": "auto", "egal": "auto", "passend": "auto",
+    "leaves": "leaves", "blaetter": "leaves", "blatt": "leaves", "laub": "leaves", "herbst": "leaves", "herbstlaub": "leaves",
+    "petals": "petals", "blueten": "petals", "bluetenblaetter": "petals", "kirschblueten": "petals", "sakura": "petals",
+    "snow": "snow", "schnee": "snow", "winter": "snow",
+    "rain": "rain", "regen": "rain",
+    "stars": "stars", "sterne": "stars", "funkeln": "stars", "glitzern": "stars",
+    "fireflies": "fireflies", "gluehwuermchen": "fireflies",
+    "dust": "dust", "staub": "dust", "lichtpunkte": "dust", "partikel": "dust",
+    "fog": "fog", "nebel": "fog", "dunst": "fog", "mist": "fog",
+    "glow": "glow", "leuchten": "glow", "atmen": "glow", "glühen": "glow", "gluehen": "glow",
+    "sheen": "sheen", "glanz": "sheen", "schimmer": "sheen",
+    "rays": "rays", "strahlen": "rays", "lichtstrahlen": "rays", "sonnenstrahlen": "rays",
+}
+
+
+def live_style(word) -> str:
+    w = fold(str(word or "auto"))
+    if w in LIVE_STYLES:
+        return LIVE_STYLES[w]
+    for k in sorted(LIVE_STYLES, key=len, reverse=True):
+        if len(k) >= 4 and k in w:
+            return LIVE_STYLES[k]
+    return "auto"
+
+
+def wallpaper_named(name) -> str:
+    """'current' / '' → the wallpaper that is up; a path → itself; words → the closest file in the wallpaper folder"""
+    try:
+        cfg = json.load(open(CFG_PATH)).get("wallpaper", {})
+    except (OSError, ValueError):
+        cfg = {}
+    want = str(name or "").strip()
+    if not want or fold(want) in ("current", "aktuell", "aktuelles", "dieses", "das", "jetzige", "meins"):
+        return cfg.get("current", "")
+    path = os.path.expanduser(want)
+    if os.path.isfile(path):
+        return os.path.realpath(path)
+    folder = cfg.get("directory") or os.path.join(HOME, "Pictures", "Wallpapers")
+    files = []
+    for dirpath, _, names in os.walk(folder):
+        files += [os.path.join(dirpath, n) for n in names if n.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
+    stems = {fold(os.path.splitext(os.path.basename(f))[0]): f for f in files}
+    f = fold(want)
+    for k, v in stems.items():
+        if f and f in k:
+            return v
+    close = difflib.get_close_matches(f, list(stems), n=1, cutoff=0.6)
+    return stems[close[0]] if close else ""
+
+
+@tool("livewall.status", "", "read",
+      "Live wallpapers (moving wallpapers you make from the favourites): what you are making right now, what waits, how "
+      "many favourites move already, and what the wallpaper that is up does (its style and why you chose it).")
+def t_livewall_status():
+    raw = shell_ipc("livewall", "status")
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return {"ok": False, "error": "the shell is not answering"}
+    return {"ok": True, **d}
+
+
+@tool("livewall.make", '{"wallpaper": "current", "style": "auto"}', "write",
+      "Make a wallpaper live (moving) — your own job: you read the picture and choose its motion. wallpaper: 'current' "
+      "(the one that is up), a file name or path. style: auto (you choose from the picture) or leaves, petals, snow, rain, "
+      "stars, fireflies, dust, fog, glow, sheen, rays. It goes first in your queue and takes about a minute; a GIF is made too.")
+def t_livewall_make(wallpaper="current", style="auto"):
+    path = wallpaper_named(wallpaper)
+    if not path:
+        return {"ok": False, "error": f"no wallpaper called '{wallpaper}'"}
+    st = live_style(style)
+    out = shell_ipc("livewall", "make", path, st)
+    if not out:
+        return {"ok": False, "error": "the shell is not answering"}
+    return {"ok": True, "queued": os.path.basename(path), "style": st, "note": "about a minute; the GIF lands in Pictures/Velvet Live"}
+
+
+@tool("livewall.toggle", '{"on": true}', "write",
+      "Live wallpapers on or off: off shows every wallpaper as its still again (what was made stays).")
+def t_livewall_toggle(on=None):
+    try:
+        cur = bool(json.load(open(CFG_PATH)).get("wallpaper", {}).get("liveOn", True))
+    except (OSError, ValueError):
+        cur = True
+    want = (not cur) if on is None else bool(on)
+    shell_ipc("velly", "set", "wallpaper.liveOn", json.dumps(want))
+    return {"ok": True, "on": want}
+
+
 @tool("focus.toggle", '{"on": true}', "write", "Turn focus mode (do not disturb + spotlight) on or off.")
 def t_focus_toggle(on=None):
     state = shell_state()

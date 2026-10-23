@@ -76,7 +76,8 @@ Singleton {
             "appearance.backdrop": ["persona", "plain", "grid", "dots", "checker", "ruled", "vignette", "aurora"],
             "appearance.vibe": ["", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "minimal", "flat", "neu", "clay", "windows", "ink", "chrome"],
             "sfx.pack": ["velvet", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"],
-            "services.btQuality": ["best", "stable", "safest"]
+            "services.btQuality": ["best", "stable", "safest"],
+            "wallpaper.liveStyle": ["auto", "dust", "leaves", "petals", "snow", "rain", "fireflies", "stars", "fog", "glow", "sheen", "rays"]
         })
 
     function current(key: string, value: var): var {

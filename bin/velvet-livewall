@@ -1,0 +1,1367 @@
+#!/usr/bin/env python3
+#  VELVET  ·  bin/velvet-livewall
+#  Live wallpapers: a picture that moves — leaves that fall, stars that
+#  twinkle, mist that drifts — made from the still itself, as a seamless loop
+#  the wallpaper plays (and a GIF to keep or share). Velly makes one for every
+#  favourite by herself (services/LiveWalls.qml runs the queue); this is the
+#  workshop. numpy + PIL + ffmpeg.
+#
+#    velvet-livewall make FILE [options]   make (or remake) the live version
+#    velvet-livewall analyse FILE          what Velly reads in the picture, and the style she picks
+#    velvet-livewall list                  every live wallpaper made (JSON with --json)
+#    velvet-livewall favourites [options]  make what the favourites are missing, one after another
+#    velvet-livewall remove FILE|all       delete live versions
+#    velvet-livewall --selftest
+#
+#  options: --style auto|dust|leaves|petals|snow|rain|fireflies|stars|fog|glow|sheen|rays
+#           --intensity 0.3–1.6  --amount 0.3–2  --speed 0.5–2  --seconds 6–20  --fps 24|30|60
+#           --size WxH (the screen; ≤ 3840×2160)  --gif / --no-gif  --gif-dir DIR  --force  --json
+#           --preview (small and short — to judge a style in seconds)
+#
+#  Seamless: every motion is periodic in the loop's length — a falling leaf
+#  crosses its lane a whole number of times, a mote is born again where it
+#  was born, a twinkle has a whole number of beats — so the last frame runs
+#  into the first. No camera move in the loop: Velvet's own Ken Burns drift
+#  moves the live picture exactly as it moves the still.
+#  The video holds ONLY the effect, never the picture (fx.mp4, packed: the top
+#  half is what it adds — light, and the colour of what it lays over the
+#  picture, premultiplied — the bottom half how much it covers). The wallpaper
+#  lays it over the untouched still with a shader (assets/shaders/livewall.frag):
+#  every pixel of the picture stays the still's own, the strength can change
+#  live, and the loop has no seam — a whole picture in the video shimmered once
+#  per loop where the encoder started afresh (measured: 2.4–2.8× an ordinary
+#  frame step, while the frames themselves had none).
+#  HEVC 10-bit (smooth glows on black never band), BT.709 TV range, tagged,
+#  one keyframe; H.264 when x265 is missing. Frames go from the workers
+#  through shared memory straight into ffmpeg — nothing big touches the disk.
+#  The GIF (live.gif) is the picture with its effect, made in a second, small pass.
+#  Polite: nice 19 + idle I/O; a game that takes the screen for more than a
+#  few seconds stops the work (its memory too) — the queue starts it again later.
+import colorsys
+import glob
+import hashlib
+import json
+import math
+import multiprocessing as mp
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+import numpy as np
+from PIL import Image, ImageDraw, ImageFilter
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+DATA = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share"), "velvet", "livewalls")
+CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "velvet")
+INDEX = os.path.join(DATA, "index.json")
+VERSION = 2
+
+STYLES = {
+    "dust": "FLOATING LIGHT",
+    "leaves": "FALLING LEAVES",
+    "petals": "DRIFTING PETALS",
+    "snow": "SNOW",
+    "rain": "RAIN",
+    "fireflies": "FIREFLIES",
+    "stars": "TWINKLING STARS",
+    "fog": "DRIFTING MIST",
+    "glow": "BREATHING LIGHT",
+    "sheen": "A SHEEN OF LIGHT",
+    "rays": "LIGHT RAYS",
+}
+
+
+# ─────────────────────────────────────────────────────────────── small things
+def say(obj):
+    print(json.dumps(obj, ensure_ascii=False), flush=True)
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def smooth(x):
+    """smoothstep 0..1"""
+    x = np.clip(x, 0.0, 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def lum(rgb):
+    return rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722
+
+
+def box_blur(a, r):
+    """separable box blur (twice = close to a gaussian), any 2-D float array"""
+    if r < 1:
+        return a
+    out = a
+    for _ in range(2):
+        for axis in (0, 1):
+            pad = [(0, 0)] * out.ndim
+            pad[axis] = (r + 1, r)
+            c = np.cumsum(np.pad(out, pad, mode="edge"), axis=axis, dtype=np.float64)
+            hi = np.take(c, np.arange(2 * r + 1, c.shape[axis]), axis=axis)
+            lo = np.take(c, np.arange(0, c.shape[axis] - 2 * r - 1), axis=axis)
+            out = ((hi - lo) / (2 * r + 1)).astype(np.float32)
+    return out
+
+
+def up(a, w, h):
+    """a low-resolution float layer (HxW or HxWx3) brought up to w×h, bilinear"""
+    if a.ndim == 2:
+        return np.asarray(Image.fromarray(a.astype(np.float32), "F").resize((w, h), Image.BILINEAR), dtype=np.float32)
+    return np.stack([up(a[..., i], w, h) for i in range(a.shape[2])], axis=-1)
+
+
+def game_running():
+    try:
+        from _gpu import game_running as g
+        return g()
+    except Exception:
+        return False
+
+
+# ─────────────────────────────────────────────────────────────── reading the picture
+def crop_to(im, want):
+    """the middle of a picture in the screen's shape (what PreserveAspectCrop shows)"""
+    sw, sh = im.size
+    if sw / sh > want:
+        nw = int(round(sh * want))
+        return im.crop(((sw - nw) // 2, 0, (sw - nw) // 2 + nw, sh))
+    nh = int(round(sw / want))
+    return im.crop((0, (sh - nh) // 2, sw, (sh - nh) // 2 + nh))
+
+
+def load(path, w, h):
+    """the picture cropped to the screen's shape and scaled to w×h — what the wallpaper shows"""
+    im = Image.open(path)
+    im.draft("RGB", (w * 2, h * 2))
+    return crop_to(im.convert("RGB"), w / h).resize((w, h), Image.LANCZOS)
+
+
+def kmeans(px, k=6, rounds=12, seed=1):
+    rng = np.random.default_rng(seed)
+    c = px[rng.choice(len(px), k, replace=False)]
+    for _ in range(rounds):
+        d = ((px[:, None, :] - c[None, :, :]) ** 2).sum(-1)
+        lab = d.argmin(1)
+        for i in range(k):
+            m = px[lab == i]
+            if len(m):
+                c[i] = m.mean(0)
+    w = np.bincount(lab, minlength=k) / len(px)
+    order = np.argsort(-w)
+    return c[order], w[order]
+
+
+# the ring a star must stand alone in: 13×13 around it, without its own 5×5
+_RING = [(dy, dx) for dy in range(-6, 7) for dx in range(-6, 7) if max(abs(dy), abs(dx)) > 2]
+
+
+def find_stars(L, limit=400):
+    """small bright points ALONE on a smooth, darker ground (a night sky — not the bright edge of a leaf),
+    and small drawn stars (a second look at half the size): [(x, y, how much brighter, ground)], brightest first"""
+    pts = _stars(L)
+    h, w = L.shape
+    if h >= 120 and w >= 120:
+        half = np.asarray(Image.fromarray(L.astype(np.float32), "F").resize((w // 2, h // 2), Image.BOX), dtype=np.float32)
+        for x, y, b, g in _stars(half):
+            X, Y = min(w - 1, 2 * x + 1), min(h - 1, 2 * y + 1)
+            if all(abs(X - px) > 3 or abs(Y - py) > 3 for px, py, _, _ in pts):
+                pts.append((X, Y, b, g))
+    pts.sort(key=lambda p: -p[2])
+    return pts[:limit]
+
+
+def _stars(L, limit=400):
+    h, w = L.shape
+    pad = np.pad(L, 2, mode="edge")
+    m5 = np.max(np.stack([pad[dy:dy + h, dx:dx + w] for dy in range(5) for dx in range(5)]), 0)
+    peak = (L >= m5 - 1e-6) & (L > 0.45)
+    peak[:7, :] = peak[-7:, :] = False
+    peak[:, :7] = peak[:, -7:] = False
+    ys, xs = np.nonzero(peak)
+    if len(xs) == 0:
+        return []
+    if len(xs) > 20000:
+        keep = np.argsort(-L[ys, xs])[:20000]
+        ys, xs = ys[keep], xs[keep]
+    dy = np.array([o[0] for o in _RING])
+    dx = np.array([o[1] for o in _RING])
+    ring = L[ys[:, None] + dy[None, :], xs[:, None] + dx[None, :]]
+    top = L[ys, xs]
+    alone = (top - ring.max(1) > 0.16) & (ring.std(1) < 0.07) & (ring.mean(1) < 0.42) & (top - ring.mean(1) > 0.3)
+    xs, ys, top, ground = xs[alone], ys[alone], top[alone], ring.mean(1)[alone]
+    b = top - ground
+    order = np.argsort(-b)[:limit]
+    return [(int(xs[i]), int(ys[i]), float(b[i]), float(ground[i])) for i in order]
+
+
+def analyse(path, aspect=None):
+    """what Velly reads in a picture (on a 480-wide copy — fast), cropped to the screen's shape like the
+    wallpaper shows it. A picture framed on a plain ground (a painting on black) is judged by the picture
+    inside the frame."""
+    im = Image.open(path)
+    full = im.size
+    im.draft("RGB", (960, 960))
+    im = im.convert("RGB")
+    if aspect:
+        im = crop_to(im, aspect)
+    im.thumbnail((480, 480), Image.LANCZOS)
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    h, w = a.shape[:2]
+    L = lum(a)
+    # where the artwork itself is: what differs from the border's colour
+    border = np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]])
+    bc = np.median(border, 0)
+    diff = box_blur((np.abs(a - bc).max(-1) > 0.08).astype(np.float32), 2) > 0.3
+    rows, cols_ = np.nonzero(diff.mean(1) > 0.02)[0], np.nonzero(diff.mean(0) > 0.02)[0]
+    if len(rows) and len(cols_):
+        x0, x1, y0, y1 = cols_.min(), cols_.max() + 1, rows.min(), rows.max() + 1
+    else:
+        x0, x1, y0, y1 = 0, w, 0, h
+    framed = (x1 - x0) * (y1 - y0) < 0.8 * w * h
+    inner = a[y0:y1, x0:x1] if framed else a
+    Li = lum(inner)
+    chroma = inner.max(-1) - inner.min(-1)
+    px = inner.reshape(-1, 3)
+    pal, weights = kmeans(px[:: max(1, len(px) // 6000)].copy())
+    hsv = np.array([colorsys.rgb_to_hsv(*p) for p in px[:: max(1, len(px) // 5000)]])
+    sat_ok = (hsv[:, 1] > 0.28) & (hsv[:, 2] > 0.18)
+    hues = hsv[sat_ok, 0] * 360
+    # pastels (a pink haze, a grey-green mist) count too, a little
+    soft = (hsv[:, 1] > 0.1) & (hsv[:, 1] <= 0.28) & (hsv[:, 2] > 0.3)
+    soft_hues = hsv[soft, 0] * 360
+    n = max(1, len(hsv))
+
+    def share(lo, hi):
+        def part(hs):
+            if lo <= hi:
+                return float(((hs >= lo) & (hs < hi)).sum())
+            return float(((hs >= lo) | (hs < hi)).sum())
+        return (part(hues) + 0.5 * part(soft_hues)) / n
+
+    gy, gx = np.gradient(Li)
+    texture = float(np.mean(np.hypot(gx, gy)) * 100)
+    # flat: areas without any grain (a poster, a drawing) — a photo has none
+    m1, m2 = box_blur(Li, 2), box_blur(Li * Li, 2)
+    still = float((np.sqrt(np.clip(m2 - m1 * m1, 0, None)) < 0.012).mean())
+    stars = find_stars(L)
+    # a drawing in two tones (ink on paper) has most of its area in two colours and many hard lines
+    q = im.quantize(8)
+    counts = sorted((c for c, _ in q.getcolors(8) or []), reverse=True)
+    two = sum(counts[:2]) / max(1, sum(counts))
+    ga = np.hypot(*np.gradient(a.mean(-1)))
+    top = L > np.quantile(L, 0.985)
+    ys, xs = np.nonzero(top)
+    light = [float(xs.mean()) / w, float(ys.mean()) / h] if len(xs) else [0.5, 0.2]
+    return {
+        "size": [full[0], full[1]],
+        "luma": round(float(L.mean()), 3),
+        "contrast": round(float(np.quantile(Li, 0.95) - np.quantile(Li, 0.05)), 3),
+        "dark": round(float((L < 0.1).mean()), 3),
+        "innerDark": round(float((Li < 0.1).mean()), 3),
+        "innerLuma": round(float(Li.mean()), 3),
+        "bright": round(float((L > 0.8).mean()), 3),
+        "chroma": round(float(chroma.mean()), 3),
+        "mono": bool(np.quantile(chroma, 0.95) < 0.09),
+        "palette": [[round(float(v), 3) for v in c] for c in pal],
+        "weights": [round(float(v), 3) for v in weights],
+        "autumn": round(share(12, 48) + 0.5 * share(345, 12), 3),
+        "green": round(share(70, 165), 3),
+        "blue": round(share(185, 255), 3),
+        "pink": round(share(285, 345), 3),
+        "texture": round(texture, 2),
+        "flat": round(still, 3),
+        "twoTone": round(float(two), 3),
+        "edges": round(float((ga > 0.06).mean()), 3),
+        "lines": round(float((ga > 0.12).mean()), 3),
+        "framed": bool(framed),
+        "stars": len(stars),
+        "starGround": round(float(np.median([g for _, _, _, g in stars])), 3) if stars else 1.0,
+        "box": [round(float(x0) / w, 3), round(float(y0) / h, 3), round(float(x1) / w, 3), round(float(y1) / h, 3)],
+        "light": [round(v, 3) for v in light],
+    }
+
+
+def pick(an):
+    """Velly's choice: (layers, why). A picture with a handful of small lights on a dark ground gets them
+    twinkling on top of whatever else suits it."""
+    layers, why = _pick(an)
+    if "stars" not in layers and an["stars"] >= 10 and an["starGround"] < 0.4:
+        layers = layers[:1] + ["stars"] + layers[1:]
+        why += f"; its {an['stars']} little stars twinkle"
+    return layers, why
+
+
+def _pick(an):
+    """the first rule that fits the picture"""
+    photo = an["flat"] < 0.3
+    misty = photo and 0.18 < an.get("innerLuma", an["luma"]) < 0.65 and an["chroma"] < 0.12 and an.get("innerDark", an["dark"]) < 0.35
+    if an["stars"] >= 25 and an["starGround"] < 0.35:
+        return ["stars", "dust", "glow"], f"{an['stars']} small lights on a dark sky — they twinkle"
+    if an["mono"]:
+        if an["dark"] > 0.5:
+            return ["glow", "dust"], "black and white, mostly dark — the light breathes, a little dust floats"
+        return ["dust", "sheen"], "black and white — dust in the light, a slow sheen"
+    if an["flat"] >= 0.3 and an["chroma"] >= 0.25:
+        return ["sheen", "dust"], "a poster in strong colours — light sweeps across it"
+    if an.get("twoTone", 0) > 0.8 and an.get("lines", 0) > 0.04:
+        return ["sheen", "dust"], "a drawing in two tones — light sweeps across the paper"
+    if photo and an["autumn"] > 0.28 and an["chroma"] > 0.11 and an.get("edges", 1) > 0.15:
+        return ["leaves", "rays", "dust"], "autumn colours — leaves fall, light comes through"
+    if misty:
+        if an["pink"] > 0.02:
+            return ["fog", "petals", "dust"], "a soft, misty picture with a touch of pink — mist drifts, petals float"
+        if an["green"] > 0.05 and an.get("innerLuma", an["luma"]) < 0.35:
+            return ["fog", "fireflies"], "a dim, misty green — mist and fireflies"
+        return ["fog", "dust"], "a soft, misty picture — the mist drifts"
+    if an["pink"] > 0.08 and an["contrast"] < 0.8:
+        return ["fog", "petals", "dust"], "soft pinks in the mist — petals drift"
+    if an["green"] > 0.2:
+        if an["luma"] < 0.32:
+            return ["fog", "fireflies"], "dark greens — mist and fireflies"
+        return ["fog", "dust"], "greens and soft light — mist drifts, pollen floats"
+    if an["pink"] > 0.25:
+        return ["petals", "dust"], "pinks — petals drift"
+    if an["blue"] > 0.3 and an["luma"] > 0.42:
+        return ["snow"], "cold and bright — snow"
+    if an["dark"] > 0.55:
+        return ["glow", "dust"], "mostly dark — its light breathes, motes drift"
+    return ["dust", "glow"], "floating light"
+
+
+# ─────────────────────────────────────────────────────────────── sprites
+def gauss(r):
+    """a soft round spot, alpha only, (2r+1)²"""
+    y, x = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32)
+    return np.exp(-(x * x + y * y) / (2 * (r / 2.6) ** 2)).astype(np.float32)
+
+
+def bokeh(r):
+    """a lens out of focus: a flat disc with a soft edge and a faint bright rim"""
+    y, x = np.mgrid[-r - 2:r + 3, -r - 2:r + 3].astype(np.float32)
+    d = np.hypot(x, y)
+    disc = np.clip((r - d) / max(1.0, r * 0.18), 0, 1)
+    rim = np.exp(-((d - r * 0.86) ** 2) / (2 * (r * 0.09 + 0.6) ** 2)) * 0.35
+    return np.clip(disc * 0.72 + rim * disc, 0, 1).astype(np.float32)
+
+
+def spikes(r):
+    """four thin rays for the brightest stars"""
+    y, x = np.mgrid[-r:r + 1, -r:r + 1].astype(np.float32)
+    fall = np.clip(1 - np.hypot(x, y) / r, 0, 1) ** 1.6
+    thin = np.exp(-(x * x) / 0.8) + np.exp(-(y * y) / 0.8)
+    return np.clip(thin * fall, 0, 1).astype(np.float32)
+
+
+def leaf_sprite(size, colour, rng, kind="leaf"):
+    """a leaf (or petal) drawn at 4× and brought down: RGBA float, premultiplied"""
+    S = 4
+    w, h = int(size * 0.62) * S + 8, size * S + 8
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    cx, top, bot = w / 2, 4, h - 4
+    pts = []
+    steps = 28
+    for i in range(steps + 1):
+        t = i / steps
+        if kind == "petal":
+            half = math.sin(math.pi * t) ** 0.7 * (w / 2 - 4) * (0.55 + 0.45 * t)
+        else:
+            half = math.sin(math.pi * t) ** 1.15 * (w / 2 - 4) * (1 - 0.25 * t)
+        pts.append((cx + half, top + t * (bot - top)))
+    pts += [(cx - (x - cx), y) for x, y in reversed(pts)]
+    r, g, b = [int(clamp(c, 0, 1) * 255) for c in colour]
+    d.polygon(pts, fill=(r, g, b, 255))
+    if kind == "leaf":
+        dark = (int(r * 0.62), int(g * 0.58), int(b * 0.55), 255)
+        d.line([(cx, top + 2), (cx, bot + 2)], fill=dark, width=max(1, S))
+        for i in range(1, 5):
+            y0 = top + (bot - top) * i / 5.5
+            d.line([(cx, y0), (cx + (w / 2 - 6) * 0.7, y0 - (bot - top) * 0.09)], fill=dark, width=max(1, S // 2))
+            d.line([(cx, y0), (cx - (w / 2 - 6) * 0.7, y0 - (bot - top) * 0.09)], fill=dark, width=max(1, S // 2))
+    im = im.resize((max(3, w // S), max(3, h // S)), Image.LANCZOS)
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    # light from above: the upper half a little brighter
+    shade = np.linspace(1.12, 0.86, a.shape[0], dtype=np.float32)[:, None, None]
+    rgb = np.clip(a[..., :3] * shade, 0, 1) * a[..., 3:4]
+    return np.concatenate([rgb, a[..., 3:4]], -1)
+
+
+def rotate(sprite, deg, squash):
+    """a premultiplied RGBA sprite turned in the plane and squashed across (a leaf tumbling)"""
+    h, w = sprite.shape[:2]
+    im = Image.fromarray((np.clip(sprite, 0, 1) * 255).astype(np.uint8), "RGBA")
+    nw = max(2, int(w * max(0.12, abs(squash))))
+    im = im.resize((nw, h), Image.BILINEAR)
+    im = im.rotate(deg, resample=Image.BICUBIC, expand=True)
+    return np.asarray(im, dtype=np.float32) / 255.0
+
+
+def streak(length, width, angle):
+    """a rain streak, alpha only"""
+    S = 3
+    L = int(length * S)
+    im = Image.new("L", (int(width * S * 4 + 8), L + 8), 0)
+    d = ImageDraw.Draw(im)
+    d.line([(im.width / 2, 4), (im.width / 2, L + 4)], fill=255, width=max(1, int(width * S)))
+    im = im.filter(ImageFilter.GaussianBlur(S * 0.6))
+    im = im.rotate(angle, resample=Image.BICUBIC, expand=True)
+    im = im.resize((max(2, im.width // S), max(2, im.height // S)), Image.LANCZOS)
+    a = np.asarray(im, dtype=np.float32) / 255.0
+    ramp = np.linspace(0.15, 1.0, a.shape[0], dtype=np.float32)[:, None]
+    return a * ramp
+
+
+# ─────────────────────────────────────────────────────────────── putting things on the frame
+def shift(a, fx, fy):
+    """a sprite moved by a fraction of a pixel (bilinear): one pixel bigger each way"""
+    p = np.pad(a, [(1, 1), (1, 1)] + [(0, 0)] * (a.ndim - 2))
+    return ((1 - fx) * (1 - fy) * p[1:, 1:] + fx * (1 - fy) * p[1:, :-1]
+            + (1 - fx) * fy * p[:-1, 1:] + fx * fy * p[:-1, :-1])
+
+
+def region(frame, sprite, x, y):
+    """the slices of frame and sprite that overlap with the sprite's centre at (x, y)"""
+    H, W = frame.shape[:2]
+    h, w = sprite.shape[:2]
+    ix, iy = int(math.floor(x)) - w // 2, int(math.floor(y)) - h // 2
+    x0, y0, x1, y1 = max(0, ix), max(0, iy), min(W, ix + w), min(H, iy + h)
+    if x0 >= x1 or y0 >= y1:
+        return None
+    return (slice(y0, y1), slice(x0, x1)), (slice(y0 - iy, y1 - iy), slice(x0 - ix, x1 - ix))
+
+
+class Overlay:
+    """the effect alone: `add` (what it adds: light, and the premultiplied colour of what it lays over)
+    and `alpha` (how much of the picture it covers). On screen: still × (1 − alpha) + add."""
+
+    def __init__(self, h, w):
+        self.add = np.zeros((h, w, 3), np.float32)
+        self.alpha = np.zeros((h, w), np.float32)
+        self.shape = (h, w)
+
+
+def add_spot(ov, alpha, colour, x, y, gain):
+    """light added (an alpha-only sprite × colour) — it covers nothing"""
+    fx, fy = x - math.floor(x), y - math.floor(y)
+    s = shift(alpha, fx, fy)
+    r = region(ov.add, s, x, y)
+    if r is None:
+        return
+    (fs, ss) = r
+    ov.add[fs] += s[ss][..., None] * (np.asarray(colour, np.float32) * gain)
+
+
+def over(ov, sprite, x, y, alpha):
+    """a premultiplied RGBA sprite laid over (what was added behind it is covered too)"""
+    fx, fy = x - math.floor(x), y - math.floor(y)
+    s = shift(sprite, fx, fy)
+    r = region(ov.add, s, x, y)
+    if r is None:
+        return
+    (fs, ss) = r
+    src = s[ss]
+    a = src[..., 3] * alpha
+    ov.add[fs] = ov.add[fs] * (1 - a[..., None]) + src[..., :3] * alpha
+    ov.alpha[fs] = ov.alpha[fs] * (1 - a) + a
+
+
+# ─────────────────────────────────────────────────────────────── the layers
+class Ctx:
+    """everything a frame needs, built once; workers get it by fork"""
+
+
+def palette_light(an, n=3):
+    """the picture's own light tones (for dust, sparkles)"""
+    cols = [np.array(c, np.float32) for c in an["palette"]]
+    cols.sort(key=lambda c: -float(lum(c)))
+    out = []
+    for c in cols[:n]:
+        h, s, v = colorsys.rgb_to_hsv(*[float(x) for x in c])
+        out.append(np.array(colorsys.hsv_to_rgb(h, min(s, 0.45), max(v, 0.92)), np.float32))
+    return out or [np.ones(3, np.float32)]
+
+
+def palette_hue(an, lo, hi, fallback):
+    """the picture's colours in a hue range (leaves in its own autumn)"""
+    out = []
+    for c in an["palette"]:
+        h, s, v = colorsys.rgb_to_hsv(*c)
+        deg = h * 360
+        inside = lo <= deg < hi if lo <= hi else (deg >= lo or deg < hi)
+        if inside and s > 0.25:
+            out.append((h, min(1, s * 1.15), clamp(v * 1.25, 0.45, 0.95)))
+    if not out:
+        out = [colorsys.rgb_to_hsv(*fallback)]
+    return out
+
+
+class Dust:
+    """motes of light: born, drift a little, fade — each comes back where it began, so the loop is seamless"""
+
+    def __init__(self, ctx, rng, amount, inten, speed):
+        W, H, T = ctx.W, ctx.H, ctx.T
+        self.cols = palette_light(ctx.an)
+        k = W / 3840
+        # the same scene at any size: the count does not follow the pixels
+        n = max(12, int(70 * amount))
+        self.p = []
+        box = ctx.an["box"] if ctx.an.get("framed") else [0, 0, 1, 1]
+        for i in range(n):
+            far = rng.random() < 0.55
+            r = int((rng.uniform(3, 6) if far else rng.uniform(10, 28)) * k) + 1
+            spr = gauss(max(2, r)) if far else bokeh(max(3, r))
+            cycles = int(rng.integers(1, 3))
+            life = T / cycles
+            vx = rng.uniform(-18, 18) * k * speed
+            vy = rng.uniform(-26, -6) * k * speed
+            self.p.append(dict(spr=spr, cycles=cycles, life=life, ph=rng.random(), vx=vx, vy=vy,
+                               seeds=[(box[0] + (box[2] - box[0]) * rng.random(), box[1] + (box[3] - box[1]) * rng.random()) for _ in range(cycles)],
+                               col=self.cols[int(rng.integers(0, len(self.cols)))],
+                               gain=(rng.uniform(0.12, 0.3) if far else rng.uniform(0.05, 0.13)) * inten,
+                               wob=rng.uniform(2, 9) * k, wf=int(rng.integers(1, 3)), wp=rng.random()))
+        self.W, self.H, self.T = W, H, T
+
+    def render(self, frame, t):
+        for p in self.p:
+            u = t / p["life"] + p["ph"]
+            c = int(math.floor(u)) % p["cycles"]
+            tau = u - math.floor(u)
+            sx, sy = p["seeds"][c]
+            age = tau * p["life"]
+            x = sx * self.W + p["vx"] * age + p["wob"] * math.sin(2 * math.pi * (p["wf"] * t / self.T + p["wp"]))
+            y = sy * self.H + p["vy"] * age
+            a = math.sin(math.pi * tau) ** 2
+            add_spot(frame, p["spr"], p["col"], x, y, p["gain"] * a)
+
+
+class Fall:
+    """leaves, petals, snow or rain crossing the screen in lanes: a whole number of crossings per loop"""
+
+    def __init__(self, ctx, rng, amount, inten, speed, kind):
+        W, H, T = ctx.W, ctx.H, ctx.T
+        k = W / 3840
+        self.W, self.H, self.T, self.kind = W, H, T, kind
+        self.p = []
+        if kind == "leaves":
+            hues = palette_hue(ctx.an, 8, 52, (0.85, 0.45, 0.12))
+            n, sizes, k_fall = int(30 * amount), (58, 168), (1, 2)
+        elif kind == "petals":
+            hues = palette_hue(ctx.an, 290, 360, (0.95, 0.72, 0.82)) + [(0.95, 0.12, 0.98)]
+            n, sizes, k_fall = int(46 * amount), (16, 40), (1, 2)
+        elif kind == "snow":
+            n, sizes, k_fall = int(260 * amount), (3, 13), (1, 2)
+        else:
+            n, sizes, k_fall = int(300 * amount), (70, 170), (10, 16)
+        self.margin = int(max(sizes) * k * 1.4) + 4
+        lane = H + 2 * self.margin
+        for i in range(max(6, n)):
+            depth = rng.random() ** 1.6                      # 0 far … 1 near
+            size = int((sizes[0] + (sizes[1] - sizes[0]) * depth) * k) + 2
+            kf = int(rng.integers(k_fall[0], k_fall[1] + 1))
+            kf = max(1, int(round(kf * speed))) if kind != "rain" else max(4, int(round(kf * speed)))
+            p = dict(x0=rng.random() * (W + 2 * self.margin) - self.margin, y0=rng.random() * lane,
+                     vy=kf * lane / T, depth=depth,
+                     sway=rng.uniform(0.012, 0.035) * W * (0.4 + depth) if kind != "rain" else 0,
+                     sf=int(rng.integers(1, 3)), sp=rng.random(),
+                     # one wind for all of them: some ride it across once per loop, the rest only fall
+                     drift=(W + 2 * self.margin) / T if kind in ("leaves", "petals") and rng.random() < 0.45 else 0.0)
+            if kind in ("leaves", "petals"):
+                h, s, v = hues[int(rng.integers(0, len(hues)))]
+                if kind == "leaves":
+                    # a leaf in the air catches the light: richer than the shaded leaves on the ground
+                    s, v = clamp(max(s, 0.7) * rng.uniform(0.9, 1.1), 0, 1), clamp(max(v, 0.78) * rng.uniform(0.85, 1.12), 0, 1)
+                col = colorsys.hsv_to_rgb((h + rng.uniform(-0.025, 0.025)) % 1, clamp(s * rng.uniform(0.8, 1.1), 0, 1), clamp(v * rng.uniform(0.75, 1.1), 0, 1))
+                spr = leaf_sprite(size, col, rng, "petal" if kind == "petals" else "leaf")
+                if depth < 0.25 or depth > 0.92:            # out of focus: far and very near
+                    blur = (0.25 - depth) * 10 + 0.6 if depth < 0.25 else (depth - 0.92) * 60 + 1.2
+                    spr = np.asarray(Image.fromarray((spr * 255).astype(np.uint8), "RGBA").filter(ImageFilter.GaussianBlur(blur * k + 0.4)), dtype=np.float32) / 255.0
+                spins = int(rng.integers(1, 3)) * (1 if rng.random() < 0.5 else -1)
+                flips = int(rng.integers(1, 4))
+                # 24 turned copies made once: a frame picks the nearest
+                turns = [rotate(spr, 360 * j / 24, math.cos(2 * math.pi * flips * j / 24)) for j in range(24)]
+                p.update(turns=turns, spins=spins, flips=flips, rp=rng.random(),
+                         alpha=clamp(0.55 + 0.45 * depth, 0, 1) * (0.92 if depth > 0.92 else 1.0) * min(1.0, inten))
+            elif kind == "snow":
+                p.update(spr=gauss(max(2, size // 2)), gain=(0.25 + 0.55 * depth) * inten)
+            else:
+                ang = 12
+                p.update(spr=streak(size, max(1.0, 1.2 + 1.6 * depth) * k, ang), gain=(0.05 + 0.16 * depth) * inten,
+                         dx=math.tan(math.radians(ang)))
+            self.p.append(p)
+        self.p.sort(key=lambda q: q["depth"])
+        self.lane = lane
+        self.snow = np.array([0.96, 0.97, 1.0], np.float32)
+        self.rain = np.array([0.82, 0.86, 0.92], np.float32)
+
+    def render(self, frame, t):
+        for p in self.p:
+            y = (p["y0"] + p["vy"] * t) % self.lane - self.margin
+            x = p["x0"] + p["drift"] * t + p["sway"] * math.sin(2 * math.pi * (p["sf"] * t / self.T + p["sp"]))
+            if self.kind == "rain":
+                x += (y + self.margin) * p["dx"]
+            x = (x + self.margin) % (self.W + 2 * self.margin) - self.margin
+            if self.kind in ("leaves", "petals"):
+                j = int(round(24 * ((p["spins"] * t / self.T + p["rp"]) % 1.0))) % 24
+                over(frame, p["turns"][j], x, y, p["alpha"])
+            elif self.kind == "snow":
+                add_spot(frame, p["spr"], self.snow, x, y, p["gain"])
+            else:
+                add_spot(frame, p["spr"], self.rain, x, y, p["gain"])
+
+
+class Fireflies:
+    """warm points with a halo, wandering on closed paths and glowing in slow beats"""
+
+    def __init__(self, ctx, rng, amount, inten, speed):
+        W, H, T = ctx.W, ctx.H, ctx.T
+        k = W / 3840
+        box = ctx.an["box"]
+        self.W, self.H, self.T = W, H, T
+        self.core = gauss(int(4 * k) + 2)
+        self.halo = gauss(int(46 * k) + 4)
+        self.col = np.array([1.0, 0.86, 0.42], np.float32)
+        self.p = []
+        for _ in range(max(8, int(26 * amount))):
+            self.p.append(dict(cx=(box[0] + (box[2] - box[0]) * rng.uniform(0.05, 0.95)) * W,
+                               cy=(box[1] + (box[3] - box[1]) * rng.uniform(0.35, 0.95)) * H,
+                               ax=rng.uniform(40, 160) * k, ay=rng.uniform(20, 90) * k,
+                               fx=int(rng.integers(1, 3)) * max(1, int(round(speed))), fy=int(rng.integers(1, 4)),
+                               px=rng.random(), py=rng.random(), beat=int(rng.integers(1, 4)), bp=rng.random(),
+                               gain=rng.uniform(0.55, 1.0) * inten))
+
+    def render(self, frame, t):
+        for p in self.p:
+            u = t / self.T
+            x = p["cx"] + p["ax"] * math.sin(2 * math.pi * (p["fx"] * u + p["px"]))
+            y = p["cy"] + p["ay"] * math.sin(2 * math.pi * (p["fy"] * u + p["py"]))
+            glow = max(0.0, math.sin(2 * math.pi * (p["beat"] * u + p["bp"]))) ** 3
+            add_spot(frame, self.halo, self.col, x, y, 0.16 * p["gain"] * glow)
+            add_spot(frame, self.core, self.col, x, y, 0.95 * p["gain"] * (0.15 + 0.85 * glow))
+
+
+class Stars:
+    """the picture's own bright points twinkle: each its own beat, the brightest with four thin rays"""
+
+    def __init__(self, ctx, rng, amount, inten, speed):
+        self.T = ctx.T
+        L = lum(ctx.base_small)
+        sh, sw = L.shape
+        sx, sy = ctx.W / sw, ctx.H / sh
+        found = find_stars(L, limit=int(220 * amount))
+        k = ctx.W / 3840
+        self.p = []
+        for i, (x, y, b, _) in enumerate(found):
+            colour = ctx.base_small[y, x]
+            colour = np.clip(colour / max(1e-3, float(colour.max())), 0.55, 1.0)
+            big = i < max(3, len(found) // 12)
+            r = int((7 if big else 4) * k + 2)
+            self.p.append(dict(x=(x + 0.5) * sx, y=(y + 0.5) * sy, col=colour.astype(np.float32),
+                               spr=gauss(r), ray=spikes(int(34 * k) + 4) if big else None,
+                               beat=int(rng.integers(1, 4)) * max(1, int(round(speed))), ph=rng.random(),
+                               gain=clamp(b * 1.4, 0.25, 1.0) * inten))
+
+    def render(self, frame, t):
+        u = t / self.T
+        for p in self.p:
+            s = 0.5 + 0.5 * math.sin(2 * math.pi * (p["beat"] * u + p["ph"]))
+            s = s ** 2
+            add_spot(frame, p["spr"], p["col"], p["x"], p["y"], 0.5 * p["gain"] * s)
+            if p["ray"] is not None:
+                add_spot(frame, p["ray"], p["col"], p["x"], p["y"], 0.42 * p["gain"] * s)
+
+
+class Soft:
+    """the full-frame light layers, computed small and brought up: glow, sheen, fog, rays"""
+
+    def __init__(self, ctx, rng, kinds, inten, speed, amount):
+        self.ctx = ctx
+        self.kinds = kinds
+        self.T = ctx.T
+        sm = ctx.base_small                          # ~960 wide
+        self.h, self.w = sm.shape[:2]
+        L = lum(sm)
+        self.inten = inten
+        self.speed = max(1, int(round(speed)))
+        self.speed_f = speed
+        if "glow" in kinds:
+            # the picture's own brightest parts, whatever their level (a dim green arc glows too)
+            top = float(np.quantile(L, 0.997))
+            lo = max(0.2, top * 0.55)
+            hi = smooth((L - lo) / max(0.05, top - lo)) * L
+            hi_rgb = sm * hi[..., None]
+            halo = box_blur_rgb(hi_rgb, max(2, self.w // 90)) * 0.6 + box_blur_rgb(hi_rgb, max(4, self.w // 30)) * 0.4
+            # a halo: the light spills OUT round the bright parts and only onto what is dark — a face inside a
+            # bright frame must not catch it (it turned white) — while the bright parts themselves lift a little
+            onto_dark = (1 - smooth((L - 0.12) / 0.33))[..., None]
+            self.glow_add = (np.clip(halo - hi_rgb, 0, None) * onto_dark * 1.4 + hi_rgb * 0.07).astype(np.float32)
+        if "sheen" in kinds:
+            yy, xx = np.mgrid[0:self.h, 0:self.w].astype(np.float32)
+            self.diag = (xx + yy * 0.55) / (self.w + self.h * 0.55)          # 0..1 along the sweep
+            self.catch = (0.25 + 0.75 * smooth(L / 0.9) ** 1.5)
+            # in the picture's own light, so bright colours shine instead of turning white
+            self.sheen_col = (palette_light(ctx.an, 1)[0] * 0.55 + np.array([1.0, 0.98, 0.95], np.float32) * 0.45)
+        if "fog" in kinds:
+            box = ctx.an["box"]
+            self.fog_tiles = [fbm_tile(self.w, self.h, rng, 5), fbm_tile(self.w, self.h, rng, 4)]
+            # each layer drifts at its own pace (a twentieth / a twelfth of the picture a second)
+            self.fog_v = [self.w / 20.0, self.w / 12.0]
+            yy = np.linspace(0, 1, self.h, dtype=np.float32)[:, None]
+            # the mist lies low and in the middle of the picture (inside its frame)
+            mid = smooth((yy - box[1] - 0.2 * (box[3] - box[1])) / (0.45 * (box[3] - box[1]) + 1e-3))
+            xx = np.linspace(0, 1, self.w, dtype=np.float32)[None, :]
+            inside = smooth((xx - box[0]) / 0.04) * smooth((box[2] - xx) / 0.04) * smooth((yy - box[1]) / 0.04) * smooth((box[3] - yy) / 0.04)
+            # …and keeps off what is bright (faces, the moon, a figure in the light)
+            self.fog_mask = (0.35 + 0.65 * mid) * inside * (0.12 + 0.88 * (1 - smooth((L - 0.38) / 0.32)))
+            light = palette_light(ctx.an, 2)
+            self.fog_col = (light[0] * 0.6 + sm.reshape(-1, 3).mean(0) * 0.4).astype(np.float32)
+        if "rays" in kinds:
+            lx, ly = ctx.an["light"]
+            self.rays = zoom_blur(smooth((L - 0.6) / 0.35), lx * self.w, ly * self.h)
+            self.ray_col = palette_light(ctx.an, 1)[0]
+
+    def render(self, t):
+        """the added light (HxWx3, small) and the mist (alpha, colour) for time t"""
+        u = t / self.T
+        add = np.zeros((self.h, self.w, 3), np.float32)
+        fog = None
+        if "glow" in self.kinds:
+            breathe = 0.5 + 0.5 * math.sin(2 * math.pi * self.speed * u - math.pi / 2)
+            # from almost nothing (the loop starts as the still) to its fullest and back
+            add += self.glow_add * (0.12 + 0.88 * breathe) * self.inten * 1.1
+        if "sheen" in self.kinds:
+            # one sweep per loop, the band off the picture for the second half: a bright core in a soft halo
+            pos = (u * self.speed % 1.0) * 2.0 - 0.35
+            d2 = (self.diag - pos) ** 2
+            band = np.exp(-d2 / (2 * 0.028 ** 2)) * 0.75 + np.exp(-d2 / (2 * 0.1 ** 2)) * 0.35
+            add += (band * self.catch)[..., None] * self.sheen_col * 0.15 * self.inten
+        if "rays" in self.kinds:
+            # the shafts brighten and dim, and lean a little with the light
+            flick = 0.62 + 0.38 * math.sin(2 * math.pi * self.speed * u)
+            lean = int(round(math.sin(2 * math.pi * u) * self.w / 160))
+            add += np.roll(self.rays, lean, axis=1)[..., None] * self.ray_col * 0.5 * flick * self.inten
+        if "fog" in self.kinds:
+            # the mist moves at its own pace in one direction; to come round, the loop crossfades from the
+            # mist where it is to the mist where it was a loop earlier (the same at t = 0 and t = T)
+            a = np.zeros((self.h, self.w), np.float32)
+            w8 = smooth(np.float32(u))
+            for i, tile in enumerate(self.fog_tiles):
+                v = self.fog_v[i] * self.speed_f
+                now = np.roll(tile, int(round(-v * t)) % self.w, axis=1)
+                was = np.roll(tile, int(round(-v * (t - self.T))) % self.w, axis=1)
+                mix = (1 - w8) * now + w8 * was
+                m = float(tile.mean())
+                mix = m + (mix - m) / math.sqrt((1 - w8) ** 2 + w8 ** 2)      # the crossfade must not thin it
+                a += mix * (0.62 if i == 0 else 0.38)
+            fog = (smooth((a - 0.36) / 0.5) * self.fog_mask * 0.36 * self.inten).astype(np.float32)
+        return add, fog
+
+
+def box_blur_rgb(a, r):
+    return np.stack([box_blur(a[..., i], r) for i in range(3)], -1)
+
+
+def value_noise(w, h, cx, cy, rng):
+    """soft random values on a cx×cy lattice that wraps round: the field tiles without a seam"""
+    g = rng.random((cy, cx)).astype(np.float32)
+    xs = np.arange(w, dtype=np.float32) * cx / w
+    ys = np.arange(h, dtype=np.float32) * cy / h
+    x0, y0 = np.floor(xs).astype(int), np.floor(ys).astype(int)
+    fx, fy = smooth(xs - x0), smooth(ys - y0)
+    x1, y1 = (x0 + 1) % cx, (y0 + 1) % cy
+    top = g[y0][:, x0] + (g[y0][:, x1] - g[y0][:, x0]) * fx[None, :]
+    bot = g[y1][:, x0] + (g[y1][:, x1] - g[y1][:, x0]) * fx[None, :]
+    return top + (bot - top) * fy[:, None]
+
+
+def fbm_tile(w, h, rng, octaves):
+    """seamless (tiling) cloudy noise 0..1: octaves of wrapping value noise, the big shapes first"""
+    out = np.zeros((h, w), np.float32)
+    amp, total = 1.0, 0.0
+    for o in range(octaves):
+        out += amp * value_noise(w, h, 3 * 2 ** o, 2 * 2 ** o, rng)
+        total += amp
+        amp *= 0.5
+    out /= total
+    return ((out - out.min()) / (out.max() - out.min() + 1e-6)).astype(np.float32)
+
+
+def zoom_blur(mask, cx, cy, steps=24, reach=0.42):
+    """rays: the bright parts smeared away from the light"""
+    h, w = mask.shape
+    im = Image.fromarray(mask.astype(np.float32), "F")
+    acc = np.zeros((h, w), np.float32)
+    for i in range(steps):
+        s = 1 + reach * i / steps
+        nw, nh = int(w * s), int(h * s)
+        big = im.resize((nw, nh), Image.BILINEAR)
+        x0, y0 = int(cx * s - cx), int(cy * s - cy)
+        acc += np.asarray(big.crop((x0, y0, x0 + w, y0 + h)), dtype=np.float32) * (1 - i / steps)
+    acc /= steps * 0.5
+    return box_blur(acc, max(1, w // 240))
+
+
+# ─────────────────────────────────────────────────────────────── one frame
+CTX = None
+
+
+def build(path, an, layers, W, H, T, fps, inten, amount, speed, seed):
+    ctx = Ctx()
+    ctx.W, ctx.H, ctx.T, ctx.fps = W, H, T, fps
+    ctx.an = an
+    img = load(path, W, H)
+    ctx.base = np.asarray(img, dtype=np.float32) / 255.0
+    sw = 960 if W > 960 else W
+    ctx.base_small = np.asarray(img.resize((sw, max(2, int(round(H * sw / W)))), Image.LANCZOS), dtype=np.float32) / 255.0
+    rng = np.random.default_rng(seed)
+    ctx.sprites = []
+    soft = [k for k in layers if k in ("glow", "sheen", "fog", "rays")]
+    ctx.soft = Soft(ctx, rng, soft, inten, speed, amount) if soft else None
+    for k in layers:
+        if k == "dust":
+            ctx.sprites.append(Dust(ctx, rng, amount * (0.6 if len(layers) > 1 else 1.0), inten, speed))
+        elif k in ("leaves", "petals", "snow", "rain"):
+            ctx.sprites.append(Fall(ctx, rng, amount, inten, speed, k))
+        elif k == "fireflies":
+            ctx.sprites.append(Fireflies(ctx, rng, amount, inten, speed))
+        elif k == "stars":
+            ctx.sprites.append(Stars(ctx, rng, amount, inten, speed))
+    # ordered dither, fixed in place: smooth light never shows steps (and never shimmers)
+    ctx.dither = ((np.random.default_rng(7).random((H, W, 1), dtype=np.float32) - 0.5) / 1023.0)
+    return ctx
+
+
+def overlay_at(i, ctx=None):
+    """the effect at frame i: fog first (it lies behind), then light, then what falls"""
+    ctx = ctx or CTX
+    t = i / ctx.fps
+    ov = Overlay(ctx.H, ctx.W)
+    if ctx.soft is not None:
+        add, fog = ctx.soft.render(t)
+        if fog is not None:
+            a = np.clip(up(fog, ctx.W, ctx.H), 0, 1)
+            ov.alpha = a
+            ov.add = a[..., None] * ctx.soft.fog_col
+        if np.any(add):
+            ov.add += up(add, ctx.W, ctx.H)
+    for layer in ctx.sprites:
+        layer.render(ov, t)
+    return ov
+
+
+def packed_into(buf, i):
+    """frame i as RGBA 16-bit (ffmpeg stacks the alpha under the colour), into a shared buffer"""
+    ctx = CTX
+    ov = overlay_at(i)
+    out = np.ndarray((ctx.H, ctx.W, 4), dtype="<u2", buffer=buf)
+    # a fixed dither: soft light never shows steps and never shimmers
+    out[..., :3] = (np.clip(ov.add + ctx.dither, 0, 1) * 65535.0 + 0.5).astype("<u2")
+    out[..., 3] = (np.clip(ov.alpha + ctx.dither[..., 0], 0, 1) * 65535.0 + 0.5).astype("<u2")
+
+
+def composite_at(i, ctx):
+    """frame i of the picture WITH its effect, 8-bit (the GIF, the poster)"""
+    ov = overlay_at(i, ctx)
+    f = ctx.base * (1 - ov.alpha[..., None]) + ov.add
+    return (np.clip(f, 0, 1) * 255 + 0.5).astype(np.uint8)
+
+
+# the workers: a frame number comes in, the frame lands in its slot of shared memory
+SLOTS = None
+
+
+def _work(job):
+    i, slot = job
+    packed_into(SLOTS[slot].buf, i)
+    return i, slot
+
+
+# ─────────────────────────────────────────────────────────────── making one
+def key_of(path):
+    return hashlib.sha1(os.path.realpath(path).encode()).hexdigest()[:12]
+
+
+def read_index():
+    try:
+        d = json.load(open(INDEX))
+        return d if isinstance(d, dict) and isinstance(d.get("walls"), dict) else {"version": VERSION, "walls": {}}
+    except (OSError, ValueError):
+        return {"version": VERSION, "walls": {}}
+
+
+def write_index(d):
+    os.makedirs(DATA, exist_ok=True)
+    tmp = INDEX + f".{os.getpid()}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(d, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, INDEX)
+
+
+class Lock:
+    """one workshop at a time (the shell's queue and a terminal never overlap)"""
+
+    def __enter__(self):
+        import fcntl
+        os.makedirs(DATA, exist_ok=True)
+        self.fh = open(os.path.join(DATA, ".lock"), "w")
+        try:
+            fcntl.flock(self.fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            say({"event": "busy", "error": "another live wallpaper is being made — it waits its turn"})
+            fcntl.flock(self.fh, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *a):
+        self.fh.close()
+
+
+def encoders():
+    rc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True, text=True)
+    return rc.stdout
+
+
+def render_node():
+    """the render node of the GPU that drives the main screen (the encoder there needs no copy across cards)"""
+    try:
+        out = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3).stdout
+        mons = json.loads(out or "[]")
+        name = max(mons, key=lambda m: m["width"] * m["height"])["name"]
+        for path in glob.glob(f"/sys/class/drm/card*-{name}"):
+            card = os.path.basename(path).split("-")[0]
+            nodes = sorted(glob.glob(f"/sys/class/drm/{card}/device/drm/renderD*"))
+            if nodes:
+                return "/dev/dri/" + os.path.basename(nodes[0])
+    except Exception:
+        pass
+    nodes = sorted(glob.glob("/dev/dri/renderD*"))
+    return nodes[0] if nodes else ""
+
+
+def vaapi_ok(node, w, h, graph):
+    """the GPU's own HEVC 10-bit encoder takes this very job (two black frames of the real size through the
+    real filter graph — the encoder refuses small frames, so a token probe would say no where it says yes)"""
+    if not node or "hevc_vaapi" not in encoders():
+        return False
+    raw = bytes(w * h * 8) * 2
+    cmd = ["ffmpeg", "-v", "error", "-vaapi_device", node, "-f", "rawvideo", "-pix_fmt", "rgba64le", "-s", f"{w}x{h}", "-r", "30",
+           "-i", "-", "-filter_complex", graph + ",format=p010le,hwupload[v]", "-map", "[v]", "-c:v", "hevc_vaapi",
+           "-profile:v", "main10", "-rc_mode", "CQP", "-qp", "16", "-g", "2", "-bf", "0", "-f", "null", "-"]
+    try:
+        return subprocess.run(cmd, input=raw, capture_output=True, timeout=30).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def screen_size():
+    try:
+        out = subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True, timeout=3).stdout
+        mons = json.loads(out or "[]")
+        m = max(mons, key=lambda m: m["width"] * m["height"])
+        return int(m["width"]), int(m["height"])
+    except Exception:
+        return 2560, 1440
+
+
+def make(path, o):
+    path = os.path.realpath(os.path.expanduser(path))
+    if not os.path.isfile(path):
+        say({"event": "error", "source": path, "error": "the picture is not there any more"})
+        return 2
+    free = shutil.disk_usage(os.path.dirname(DATA) if os.path.isdir(os.path.dirname(DATA)) else os.path.expanduser("~")).free
+    if free < 1.2e9:
+        say({"event": "error", "source": path, "error": f"only {free / 1e9:.1f} GB free on the disk — live wallpapers need about 1"})
+        return 3
+    W, H = o["size"]
+    if o["preview"]:
+        W, H = 960, int(round(960 * H / W)) // 2 * 2
+    W, H = min(W, 3840) // 2 * 2, min(H, 2160) // 2 * 2
+    fps = 15 if o["preview"] else o["fps"]
+    T = 4.0 if o["preview"] else o["seconds"]
+    n = int(round(T * fps))
+    an = analyse(path, W / H)
+    if o["style"] == "auto":
+        layers, why = pick(an)
+    else:
+        layers, why = [o["style"]], "chosen by hand"
+    label = " · ".join(STYLES[k] for k in layers[:2])
+    seed = int(key_of(path)[:8], 16) % (2 ** 31)
+    say({"event": "start", "source": path, "style": layers[0], "layers": layers, "label": label, "why": why,
+         "frames": n, "size": [W, H], "fps": fps, "seconds": T})
+    t0 = time.monotonic()
+    ctx = build(path, an, layers, W, H, T, fps, o["intensity"], o["amount"], o["speed"], seed)
+
+    key = key_of(path)
+    # a preview is overwritten by the next one; a live wallpaper keeps its own folder
+    out_dir = os.path.join(DATA, key) if not o["preview"] else os.path.join(DATA, "previews", key)
+    os.makedirs(out_dir, exist_ok=True)
+    video_tmp = os.path.join(out_dir, f"fx.{os.getpid()}.mp4")
+    video = os.path.join(out_dir, "fx.mp4")
+    if not o["preview"]:
+        rc = encode(ctx, n, fps, video_tmp, o, path)
+        if rc:
+            return rc
+        os.replace(video_tmp, video)
+    # the picture with its effect, small: the GIF and the poster (the wheel's thumbnail)
+    gw = o["gifWidth"] if not o["preview"] else 640
+    small = build(path, an, layers, gw, int(round(gw * H / W)) // 2 * 2, T, 20, o["intensity"], o["amount"], o["speed"], seed)
+    gif = make_gif(small, out_dir, path, o, T) if (o["gif"] or o["preview"]) else ""
+    poster = os.path.join(out_dir, "poster.jpg")
+    Image.fromarray(composite_at(0, small)).save(poster, quality=88)
+    took = round(time.monotonic() - t0, 1)
+    meta = {"source": path, "srcMtime": os.path.getmtime(path), "srcSize": os.path.getsize(path), "dir": out_dir,
+            "video": video if not o["preview"] else "", "gif": gif, "poster": poster, "style": layers[0], "layers": layers,
+            "label": label, "why": why, "w": W, "h": H, "fps": fps, "seconds": T, "made": int(time.time() * 1000),
+            "took": took, "params": {k: o[k] for k in ("style", "intensity", "amount", "speed")}, "version": VERSION,
+            "packed": True, "bytes": os.path.getsize(video) if not o["preview"] else 0}
+    if not o["preview"]:
+        json.dump(meta, open(os.path.join(out_dir, "meta.json"), "w"), ensure_ascii=False, indent=1)
+        idx = read_index()
+        idx["walls"][path] = meta
+        write_index(idx)
+        # the old kind of live wallpaper (the whole picture in the video) is not needed any more
+        for old in ("live.mp4",):
+            try:
+                os.remove(os.path.join(out_dir, old))
+            except OSError:
+                pass
+    say(dict(meta, event="done"))
+    return 0
+
+
+class GameStop(Exception):
+    """a game took the screen for longer than a moment"""
+
+
+def encode(ctx, n, fps, video_tmp, o, path):
+    """the effect, frame by frame from the workers into ffmpeg (packed: colour on top, alpha below)"""
+    global CTX, SLOTS
+    W, H = ctx.W, ctx.H
+    have = encoders()
+    graph = ("[0:v]split[c][a];[a]alphaextract,format=rgb48le[aa];[c]format=rgb48le[cc];[cc][aa]vstack,"
+             "scale=out_color_matrix=bt709:out_range=tv")
+    node = "" if os.environ.get("VELVET_LW_CPU") else render_node()
+    pre = []
+    if node and vaapi_ok(node, W, H, graph):
+        # the GPU's own encoder: ~1 GB and a few seconds, where x265 holds ~3 GB for this frame size;
+        # one keyframe, the same quantiser for every frame (I = P), no B-frames
+        pre = ["-vaapi_device", node]
+        graph += ",format=p010le,hwupload[v]"
+        # (no hvc1 tag here: the GPU encoder writes its parameter sets in the stream, and an hvc1 file
+        # without them in its header decoded as green garbage — measured, PSNR 11 dB against 45.6)
+        venc = ["-c:v", "hevc_vaapi", "-profile:v", "main10", "-rc_mode", "CQP", "-qp", "16", "-g", str(n), "-bf", "0"]
+    elif "libx265" in have:
+        graph += "[v]"
+        # ONE keyframe for the whole loop and the same quantiser in every frame (no pulse where a GOP starts)
+        # (a short lookahead and two frame threads: the packed frame is twice a 4K screen — the defaults
+        # held gigabytes for frames that are mostly black)
+        x265 = os.environ.get("VELVET_LW_X265") or (f"qp=16:ipratio=1.0:pbratio=1.0:keyint={n}:min-keyint={n}:scenecut=0:open-gop=0:"
+                                                   "rc-lookahead=8:bframes=3:frame-threads=2:pools=4")
+        venc = ["-c:v", "libx265", "-preset", "fast", "-pix_fmt", "yuv420p10le", "-tag:v", "hvc1",
+                "-x265-params", f"log-level=error:{x265}:colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited"]
+    else:
+        graph += "[v]"
+        venc = ["-c:v", "libx264", "-preset", "medium", "-qp", "16", "-pix_fmt", "yuv420p", "-g", str(n), "-keyint_min", str(n),
+                "-sc_threshold", "0", "-x264-params", "ipratio=1.0:pbratio=1.0"]
+    cmd = ["ffmpeg", "-v", "error", "-y", *pre, "-f", "rawvideo", "-pix_fmt", "rgba64le", "-s", f"{W}x{H}", "-r", str(fps), "-i", "-",
+           "-filter_complex", graph, "-map", "[v]", *venc, "-colorspace", "bt709", "-color_primaries", "bt709",
+           "-color_trc", "bt709", "-color_range", "tv", "-movflags", "+faststart", "-an", video_tmp]
+    enc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    workers = max(1, min(3, (os.cpu_count() or 4) - 4))
+    size = W * H * 4 * 2
+    from multiprocessing import shared_memory
+    SLOTS = [shared_memory.SharedMemory(create=True, size=size) for _ in range(workers + 2)]
+    CTX = ctx      # the workers are forked: they find it (and the slots) in their copy of this process
+    done, last, away = 0, 0.0, 0.0
+    try:
+        with mp.get_context("fork").Pool(workers) as pool:
+            inflight = {}
+            nxt = 0
+            free = list(range(len(SLOTS)))
+            while done < n:
+                while free and nxt < n:
+                    slot = free.pop(0)
+                    inflight[nxt] = pool.apply_async(_work, ((nxt, slot),))
+                    nxt += 1
+                i, slot = inflight.pop(done).get()
+                # a game took the screen: wait a moment, then stop (its memory too) — the queue tries later
+                while game_running():
+                    if not away:
+                        away = time.monotonic()
+                        say({"event": "paused", "source": path, "why": "a game is running"})
+                    if time.monotonic() - away > 12:
+                        raise GameStop()
+                    time.sleep(1)
+                away = 0.0
+                enc.stdin.write(memoryview(SLOTS[slot].buf)[:size])
+                free.append(slot)
+                done += 1
+                if time.monotonic() - last > 0.7 or done == n:
+                    say({"event": "progress", "source": path, "done": done, "total": n})
+                    last = time.monotonic()
+        enc.stdin.close()
+        err = enc.stderr.read().decode(errors="replace")
+        if enc.wait() != 0:
+            raise RuntimeError(err.strip()[-400:] or "ffmpeg failed")
+        return 0
+    except BaseException as e:
+        try:
+            enc.kill()
+        except OSError:
+            pass
+        try:
+            os.remove(video_tmp)
+        except OSError:
+            pass
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        if isinstance(e, GameStop):
+            say({"event": "later", "source": path, "why": "a game is running — it is made again afterwards"})
+            return 75
+        say({"event": "error", "source": path, "error": str(e)[:400]})
+        return 1
+    finally:
+        for m in SLOTS or []:
+            try:
+                m.close()
+                m.unlink()
+            except OSError:
+                pass
+        SLOTS = None
+
+
+def make_gif(small, out_dir, source, o, T):
+    """the picture with its effect as a GIF: 20 fps, one palette from the whole loop, only what moves re-drawn.
+    Ordered (Bayer) dither: it stays put where the picture stays put, so only the moving parts are stored again —
+    measured 3.0 MB against 10.5 MB for the error-diffusing kind, and no visible difference at 2× zoom."""
+    gif = os.path.join(out_dir, "live.gif")
+    tmp = gif + f".{os.getpid()}.tmp.gif"
+    n = int(round(T * 20))
+    vf = "split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle"
+    p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{small.W}x{small.H}",
+                          "-r", "20", "-i", "-", "-vf", vf, "-loop", "0", tmp], stdin=subprocess.PIPE)
+    try:
+        for i in range(n):
+            p.stdin.write(composite_at(i, small).tobytes())
+        p.stdin.close()
+        p.wait()
+    except BrokenPipeError:
+        p.wait()
+    if p.returncode != 0 or not os.path.exists(tmp):
+        return ""
+    os.replace(tmp, gif)
+    if o.get("gifDir"):
+        try:
+            os.makedirs(o["gifDir"], exist_ok=True)
+            name = os.path.splitext(os.path.basename(source))[0] + " · live.gif"
+            shutil.copyfile(gif, os.path.join(o["gifDir"], name))
+        except OSError:
+            pass
+    return gif
+
+
+# ─────────────────────────────────────────────────────────────── the rest of the commands
+def favourites():
+    try:
+        d = json.load(open(os.path.join(CONF, "favourites.json")))
+        return [p for p in d if isinstance(p, str)]
+    except (OSError, ValueError):
+        return []
+
+
+def fresh(meta, o):
+    """the live version still matches its picture (and what was asked)"""
+    try:
+        return (os.path.exists(meta["video"]) and abs(os.path.getmtime(meta["source"]) - meta["srcMtime"]) < 1
+                and meta.get("version") == VERSION and meta.get("packed") is True)
+    except (OSError, KeyError, TypeError):
+        return False
+
+
+def options(argv):
+    o = {"style": "auto", "intensity": 1.0, "amount": 1.0, "speed": 1.0, "seconds": 10.0, "fps": 30, "size": None,
+         "gif": True, "gifWidth": 960, "gifDir": "", "force": False, "json": False, "preview": False}
+    rest = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        val = argv[i + 1] if i + 1 < len(argv) else ""
+        if a == "--style" and val:
+            o["style"] = val if val in STYLES or val == "auto" else "auto"
+            i += 1
+        elif a in ("--intensity", "--amount", "--speed", "--seconds") and val:
+            lim = {"--intensity": (0.3, 1.6), "--amount": (0.3, 2.0), "--speed": (0.5, 2.0), "--seconds": (6.0, 20.0)}[a]
+            o[a[2:]] = clamp(float(val), *lim)
+            i += 1
+        elif a == "--fps" and val:
+            o["fps"] = min((24, 30, 60), key=lambda f: abs(f - int(float(val))))
+            i += 1
+        elif a == "--size" and "x" in val:
+            w, h = val.lower().split("x")
+            o["size"] = (int(w), int(h))
+            i += 1
+        elif a == "--gif-width" and val:
+            o["gifWidth"] = int(clamp(int(val), 320, 1920))
+            i += 1
+        elif a == "--gif-dir":
+            o["gifDir"] = os.path.expanduser(val)
+            i += 1
+        elif a == "--gif":
+            o["gif"] = True
+        elif a == "--no-gif":
+            o["gif"] = False
+        elif a == "--force":
+            o["force"] = True
+        elif a == "--json":
+            o["json"] = True
+        elif a == "--preview":
+            o["preview"] = True
+        else:
+            rest.append(a)
+        i += 1
+    # a whole number of 1/20 s (the GIF) and of frames
+    o["seconds"] = round(o["seconds"] * 2) / 2
+    if not o["size"]:
+        o["size"] = screen_size()
+    return o, rest
+
+
+def polite():
+    try:
+        os.nice(19)
+    except OSError:
+        pass
+    try:
+        subprocess.run(["ionice", "-c3", "-p", str(os.getpid())], capture_output=True)
+    except OSError:
+        pass
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(open(__file__).read().split("\nimport ")[0].replace("#  ", "").replace("#", ""))
+        return 0
+    if argv[0] == "--selftest":
+        return selftest()
+    cmd, o_rest = argv[0], argv[1:]
+    o, rest = options(o_rest)
+    if cmd == "analyse":
+        if not rest:
+            print("velvet-livewall analyse FILE")
+            return 2
+        an = analyse(rest[0])
+        layers, why = pick(an)
+        an.update(layers=layers, label=" · ".join(STYLES[k] for k in layers[:2]), why=why)
+        print(json.dumps(an, ensure_ascii=False, indent=None if o["json"] else 1))
+        return 0
+    if cmd == "list":
+        idx = read_index()["walls"]
+        if o["json"]:
+            print(json.dumps(idx, ensure_ascii=False))
+            return 0
+        for src, m in idx.items():
+            print(f"{'●' if fresh(m, o) else '○'} {os.path.basename(src):40} {m.get('label', ''):34} {m.get('w')}×{m.get('h')} · {m.get('seconds')} s · {m.get('bytes', 0) / 1e6:.1f} MB")
+        if not idx:
+            print("no live wallpapers yet — velvet-livewall make FILE (or star a wallpaper: Velly makes it)")
+        return 0
+    if cmd == "remove":
+        idx = read_index()
+        targets = list(idx["walls"]) if rest[:1] == ["all"] else [os.path.realpath(os.path.expanduser(r)) for r in rest]
+        for src in targets:
+            m = idx["walls"].pop(src, None)
+            d = m.get("dir") if m else os.path.join(DATA, key_of(src))
+            if d and os.path.isdir(d) and os.path.dirname(os.path.realpath(d)) == os.path.realpath(DATA):
+                shutil.rmtree(d, ignore_errors=True)
+        write_index(idx)
+        say({"event": "removed", "count": len(targets)})
+        return 0
+    if cmd in ("make", "favourites"):
+        polite()
+        signal.signal(signal.SIGTERM, lambda *a: (_ for _ in ()).throw(KeyboardInterrupt()))
+        with Lock():
+            todo = rest if cmd == "make" else favourites()
+            idx = read_index()["walls"]
+            rc = 0
+            for i, src in enumerate(todo):
+                real = os.path.realpath(os.path.expanduser(src))
+                if cmd == "favourites" and not o["force"] and real in idx and fresh(idx[real], o):
+                    continue
+                if cmd == "favourites":
+                    say({"event": "queue", "index": i + 1, "count": len(todo), "source": real})
+                try:
+                    rc = make(real, o) or rc
+                except KeyboardInterrupt:
+                    say({"event": "stopped", "source": real})
+                    return 130
+            return rc
+    print(f"velvet-livewall: unknown command {cmd} — velvet-livewall --help")
+    return 2
+
+
+# ─────────────────────────────────────────────────────────────── selftest
+def selftest():
+    problems = []
+    tmp = tempfile.mkdtemp(prefix="velvet-lw-test-")
+    try:
+        im = Image.new("RGB", (640, 360), (12, 14, 22))
+        d = ImageDraw.Draw(im)
+        rng = np.random.default_rng(3)
+        for _ in range(60):
+            x, y = rng.integers(10, 630), rng.integers(10, 240)
+            d.ellipse((x - 1, y - 1, x + 1, y + 1), fill=(255, 250, 230))
+        d.rectangle((0, 250, 640, 360), fill=(150, 70, 20))
+        src = os.path.join(tmp, "test.png")
+        im.save(src)
+        an = analyse(src, 16 / 9)
+        layers, why = pick(an)
+        if "stars" not in layers:
+            problems.append(f"60 points on a dark sky should twinkle, got {layers} ({an['stars']} stars)")
+        for kinds in (["dust"], ["leaves"], ["petals"], ["snow"], ["rain"], ["fireflies"], ["stars"], ["fog", "glow", "sheen", "rays"]):
+            ctx = build(src, an, kinds, 320, 180, 4.0, 10, 1.0, 1.0, 1.0, 5)
+            a0, aT, am = overlay_at(0, ctx), overlay_at(40, ctx), overlay_at(13, ctx)      # t = 0, T, T/3
+            seam = max(float(np.abs(a0.add - aT.add).max()), float(np.abs(a0.alpha - aT.alpha).max()))
+            if seam > 0.02:
+                problems.append(f"{kinds}: the effect at T differs from 0 by {seam:.3f}")
+            move = max(float(np.abs(a0.add - am.add).max()), float(np.abs(a0.alpha - am.alpha).max()))
+            if move < 0.005:
+                problems.append(f"{kinds}: nothing moves")
+            c = composite_at(13, ctx)
+            if c.shape != (180, 320, 3) or c.dtype != np.uint8:
+                problems.append(f"{kinds}: composite frame")
+        # over(): a leaf covers the light behind it; add_spot covers nothing
+        ov = Overlay(20, 20)
+        add_spot(ov, gauss(4), (1, 1, 1), 10, 10, 1.0)
+        if ov.alpha.max() != 0 or ov.add.max() < 0.5:
+            problems.append("light adds without covering")
+        leaf = np.zeros((9, 9, 4), np.float32)
+        leaf[..., 3] = 1
+        leaf[..., 0] = 0.5
+        over(ov, leaf, 10, 10, 1.0)
+        if abs(float(ov.alpha[10, 10]) - 1) > 1e-3 or abs(float(ov.add[10, 10, 1])) > 1e-3:
+            problems.append("a leaf covers what is behind it")
+        if pick({**an, "stars": 0, "mono": False, "autumn": 0.5, "texture": 3.0, "flat": 0.1, "chroma": 0.14, "edges": 0.25, "twoTone": 0.3})[0][0] != "leaves":
+            problems.append("autumn → leaves")
+        if pick({**an, "stars": 0, "mono": True, "dark": 0.8})[0][0] != "glow":
+            problems.append("dark black-and-white → breathing light")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if problems:
+        print("velvet-livewall selftest: FAILED")
+        for p in problems:
+            print("  ·", p)
+        return 1
+    print("velvet-livewall selftest: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(130)

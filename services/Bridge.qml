@@ -27,7 +27,7 @@ Singleton {
 
     // Live rows read through `revision`, so anything that can change behind
     // the settings menu's back has to bump it.
-    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts]
+    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine]
 
     onLiveWatchChanged: root.revision++
 
@@ -68,6 +68,10 @@ Singleton {
                 return Hypr.status;
             case "screenStatus":
                 return Monitors.status;
+            case "liveStatus":
+                return LiveWalls.status;
+            case "liveThis":
+                return LiveWalls.thisLine;
             case "soundVerdict":
                 return SoundCheck.verdict;
             case "soundPlays":
@@ -280,6 +284,28 @@ Singleton {
             break;
         case "screensForget":
             Monitors.forget();
+            break;
+        case "liveMakeThis":
+            LiveWalls.makeThis(false);
+            break;
+        case "liveRemakeThis":
+            LiveWalls.makeThis(true);
+            break;
+        case "liveMakeAll":
+            LiveWalls.makeFavourites(false);
+            break;
+        case "liveRemakeAll":
+            LiveWalls.makeFavourites(true);
+            break;
+        case "liveStop":
+            LiveWalls.stop();
+            Toast.show("VELLY STOPPED · HER QUEUE IS EMPTY", "info", 2600);
+            break;
+        case "liveOpenFolder":
+            Actions.run(`mkdir -p "${LiveWalls.gifDir}" && xdg-open "${LiveWalls.gifDir}"`);
+            break;
+        case "liveDeleteAll":
+            LiveWalls.removeAll();
             break;
         case "soundTest":
             SoundCheck.test();

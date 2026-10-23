@@ -810,6 +810,18 @@ PanelWindow {
                         font.pixelSize: Appearance.font.size.normal
                     }
 
+                    // it moves (WALLPAPER → LIVE WALLPAPERS) — or Velly is making it move
+                    P5Text {
+                        readonly property var made: LiveWalls.entry(root.current)
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: made !== null || LiveWalls.queued(root.current)
+                        text: made ? `LIVE · ${String(made.label).toUpperCase()}` : "VELLY MAKES IT LIVE…"
+                        color: Colours.accent
+                        font.pixelSize: Appearance.font.size.tiny
+                        tracking: 2
+                    }
+
                     P5Text {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: Config.wallpaper.current === root.current
