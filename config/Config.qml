@@ -31,6 +31,8 @@ Singleton {
     readonly property var sfx: adapter.sfx
     readonly property var home: adapter.home
     readonly property var velly: adapter.velly
+    readonly property var night: adapter.night
+    readonly property var books: adapter.books
     readonly property var pad: adapter.pad
     readonly property var display: adapter.display
 
@@ -77,6 +79,10 @@ Singleton {
             "appearance.vibe": ["", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "minimal", "flat", "neu", "clay", "windows", "ink", "chrome"],
             "sfx.pack": ["velvet", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"],
             "services.btQuality": ["best", "stable", "safest"],
+            "velly.speakWhen": ["spoken", "always"],
+            "books.lang": ["de", "en"],
+            "velly.voiceThinking": ["fast", "balanced"],
+            "velly.textThinking": ["thorough", "balanced"],
             "wallpaper.liveStyle": ["auto", "dust", "leaves", "petals", "snow", "rain", "fireflies", "stars", "fog", "glow", "sheen", "rays"],
             "wallpaper.liveWind": ["auto", "left", "right", "none"],
             "wallpaper.liveColour": ["picture", "gold", "white", "red", "orange", "pink", "purple", "blue", "turquoise", "green", "silver"]

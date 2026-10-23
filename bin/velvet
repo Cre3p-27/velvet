@@ -27,6 +27,13 @@ VELVET · velvet — the shell from a terminal.
                                   fog glow sheen rays); describe: in your own words ("langsamer
                                   goldener Schnee, kein Nebel"); undo: the version before; still:
                                   this wallpaper stays a still
+    velvet books [status|list|new KIND|make KIND|open ID|uploaded ID|redo ID …|engine [setup]]
+                                  Velly's book studio for Amazon KDP — colouring, puzzle and picture
+                                  books with print PDF, cover, listing and upload checklist; make:
+                                  start one now and finish it; engine setup: the picture engine
+                                  (~7 GB, shows every file first)
+    velvet night [status|start|stop|screen-off]
+                                  the night shift — she works while the screens are dark
 
     velvet backup [FILE] [--with-secrets]
     velvet restore FILE
@@ -60,8 +67,8 @@ KEEPER_PID = os.path.join(RUNDIR, "velvet-session.pid")
 QS = shutil.which("qs") or shutil.which("quickshell") or "qs"
 
 COMMANDS = ["start", "stop", "restart", "status", "logs", "doctor", "look", "wallpaper", "lock", "record",
-            "settings", "display", "sound", "livewall", "backup", "restore", "update", "uninstall", "remove",
-            "delete", "version", "completion", "help"]
+            "settings", "display", "sound", "livewall", "books", "night", "backup", "restore", "update", "uninstall",
+            "remove", "delete", "version", "completion", "help"]
 
 
 # ─────────────────────────────────────────────────────────────── output
@@ -1010,6 +1017,42 @@ def cmd_completion(args):
     return 0
 
 
+def cmd_books(args):
+    """the book studio itself (bin/velvet-books); `make KIND` = new + work until it is done"""
+    tool = os.path.join(VELVET, "bin", "velvet-books")
+    if not os.path.exists(tool):
+        die("this Velvet has no book studio yet — velvet update")
+    if not args:
+        args = ["list"]
+    if args[0] == "make":
+        out = subprocess.run(["python3", tool, "new"] + args[1:], capture_output=True, text=True)
+        try:
+            made = json.loads(out.stdout)
+        except ValueError:
+            die((out.stderr or "the book could not be started").strip().splitlines()[-1], 1)
+        say(f"{C.good}✓{C.end} book {made['id']} ({made['kind']}) — {C.dim}{made['dir']}{C.end}")
+        os.execvp("python3", ["python3", tool, "work", "--book", made["id"], "--until-done"])
+    os.execvp("python3", ["python3", tool] + args)
+
+
+def cmd_night(args):
+    """the night shift: its state from the file, start/stop through the shell (it owns the worker)"""
+    tool = os.path.join(VELVET, "bin", "velvet-night")
+    sub = args[0] if args else "status"
+    if sub in ("start", "stop"):
+        if not running():
+            die("Velvet is not running — the night shift lives in the shell (velvet start)")
+        ipc("night", sub)
+        say(f"{C.good}✓{C.end} night shift {'started — with the screen on, until it is out of work' if sub == 'start' else 'stopped'}")
+        return 0
+    if sub in ("screen-off", "screenoff", "off"):
+        if not running():
+            die("Velvet is not running (velvet start)")
+        ipc("night", "screenOff")
+        return 0
+    os.execvp("python3", ["python3", tool, "status" if sub == "status" else sub])
+
+
 def cmd_help(args):
     if args:
         lines = [l for l in __doc__.splitlines() if re.match(rf"\s+velvet {re.escape(args[0])}\b", l)]
@@ -1042,6 +1085,7 @@ def main(argv):
         "log": cmd_logs, "doctor": cmd_doctor, "look": cmd_look, "looks": cmd_look, "wallpaper": cmd_wallpaper,
         "lock": cmd_lock, "record": cmd_record, "settings": cmd_settings, "display": cmd_display,
         "screens": cmd_display, "sound": cmd_sound, "audio": cmd_sound, "livewall": cmd_livewall,
+        "books": cmd_books, "book": cmd_books, "night": cmd_night,
         "backup": cmd_backup, "restore": cmd_restore, "update": cmd_update, "uninstall": cmd_uninstall,
         "remove": cmd_uninstall, "delete": cmd_uninstall, "version": cmd_version, "completion": cmd_completion,
         "help": cmd_help,

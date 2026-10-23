@@ -326,6 +326,9 @@ ShellRoot {
         SoundCheck.known,
         // LIVE WALLPAPERS: Velly's queue for the favourites, and the index the wallpaper reads.
         LiveWalls.ready,
+        // NIGHT SHIFT: watches the screens all session (and SCREEN OFF AFTER).
+        NightShift.started,
+        Books.started,
         Term.probed,
         Lyrics.ready,
         Looks.ready,

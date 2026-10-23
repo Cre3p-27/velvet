@@ -27,7 +27,7 @@ Singleton {
 
     // Live rows read through `revision`, so anything that can change behind
     // the settings menu's back has to bump it.
-    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine, LiveWalls.thisMoves, LiveWalls.previewLine]
+    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine, LiveWalls.thisMoves, LiveWalls.previewLine, NightShift.status, NightShift.screenLine, NightShift.lastLine, Books.shelfLine, Books.nowLine, Books.engineLine]
 
     onLiveWatchChanged: root.revision++
 
@@ -76,6 +76,18 @@ Singleton {
                 return LiveWalls.thisMoves;
             case "livePromptRead":
                 return LiveWalls.previewShort;
+            case "nightStatus":
+                return NightShift.status;
+            case "nightScreen":
+                return NightShift.screenLine;
+            case "nightLast":
+                return NightShift.lastLine;
+            case "booksShelf":
+                return Books.shelfLine;
+            case "booksNow":
+                return Books.nowLine;
+            case "booksEngine":
+                return Books.engineLine;
             case "soundVerdict":
                 return SoundCheck.verdict;
             case "soundPlays":
@@ -330,6 +342,24 @@ Singleton {
             break;
         case "soundTest":
             SoundCheck.test();
+            break;
+        case "nightStartNow":
+            NightShift.startNow();
+            break;
+        case "nightStop":
+            NightShift.stop();
+            break;
+        case "screenOffNow":
+            NightShift.screensOff();
+            break;
+        case "booksOpenShelf":
+            Books.openShelf();
+            break;
+        case "booksMakeNow":
+            Books.makeNow();
+            break;
+        case "booksInstallEngine":
+            Books.installEngine();
             break;
         case "playLoginSong":
             LoginSong.playNow();

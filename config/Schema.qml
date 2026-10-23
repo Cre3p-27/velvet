@@ -504,6 +504,237 @@ Singleton {
                     sub: "SHE MAKES EVERY FAVOURITE MOVE · KNOBS IN WALLPAPER → LIVE WALLPAPERS"
                 },
                 {
+                    kind: "page",
+                    name: "NIGHT SHIFT",
+                    aka: "NACHTSCHICHT · MONITOR AUS · BILDSCHIRM AUS · NACHTS ARBEITEN · WENN DER PC AN IST",
+                    help: "While your screens are dark and the PC is on, Velly works: books for the shelf (BOOK STUDIO), live wallpapers for new favourites, her memory, the update count. She starts a few minutes after the last screen went dark — switched off, unplugged or in standby — and stops the moment one wakes, never while a game runs. In the morning a note says what she did.",
+                    sub: "SHE WORKS WHILE THE SCREENS ARE DARK · STOPS WHEN ONE WAKES",
+                    icon: "bedtime",
+                    items: [
+                        {
+                            kind: "toggle",
+                            key: "night.enabled",
+                            name: "NIGHT SHIFT",
+                            aka: "NACHTSCHICHT",
+                            help: "Velly works while every screen is dark and the PC is on. Off: nothing runs at night.",
+                            sub: "SHE WORKS WHILE THE SCREENS ARE DARK"
+                        },
+                        {
+                            kind: "info",
+                            live: "nightStatus",
+                            name: "RIGHT NOW",
+                            help: "What the night shift is doing this moment.",
+                            sub: "WORKING, WAITING, OR OFF"
+                        },
+                        {
+                            kind: "info",
+                            live: "nightScreen",
+                            name: "THE SCREENS",
+                            help: "What Velvet sees: dark (switched off, unplugged, in standby) or lit. Some monitors stay connected when you press their power button — Velvet cannot see that one switch off. SCREEN OFF AFTER (below), SCREENS OFF NOW or „Velly, mach den Bildschirm aus“ put them into standby, and that it does see.",
+                            sub: "DARK OR LIT, AND WHY"
+                        },
+                        {
+                            kind: "info",
+                            live: "nightLast",
+                            name: "LAST NIGHT",
+                            help: "What she did during the last night shift: books finished, books begun, live wallpapers, updates waiting.",
+                            sub: "WHAT SHE DID"
+                        },
+                        {
+                            kind: "slider",
+                            key: "night.startAfter",
+                            name: "START AFTER",
+                            aka: "STARTVERZÖGERUNG",
+                            help: "How long every screen must be dark before she starts — so switching the monitor off and on again for a moment starts nothing.",
+                            sub: "MINUTES OF DARK SCREENS FIRST",
+                            min: 1, max: 30, step: 1, fmt: "int", unit: " min"
+                        },
+                        {
+                            kind: "choice",
+                            key: "night.screenOff",
+                            name: "SCREEN OFF AFTER",
+                            aka: "BILDSCHIRM AUS NACH · STANDBY · DPMS · ENERGIE SPAREN",
+                            help: "After this many minutes without a key or the mouse, the screens go to standby (a key or the mouse wakes them). Never while a fullscreen window is open (a game, a film) or something is playing. It is also what lets the night shift begin when your monitor stays connected after its power button.",
+                            sub: "IDLE MINUTES → STANDBY · NEVER UNDER A GAME OR A FILM",
+                            options: [
+                                { value: 0, label: "NEVER" },
+                                { value: 5, label: "5 MINUTES" },
+                                { value: 10, label: "10 MINUTES" },
+                                { value: 20, label: "20 MINUTES" },
+                                { value: 30, label: "30 MINUTES" },
+                                { value: 60, label: "1 HOUR" }
+                            ]
+                        },
+                        {
+                            kind: "toggle",
+                            key: "night.books",
+                            name: "BOOKS",
+                            aka: "BÜCHER",
+                            help: "She works on the books of the BOOK STUDIO until the shelf holds as many finished books as SHELF SIZE says.",
+                            sub: "THE BOOK STUDIO'S SHELF"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "night.livewalls",
+                            name: "LIVE WALLPAPERS",
+                            help: "Live wallpapers for favourites that have none yet.",
+                            sub: "NEW FAVOURITES MOVE"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "night.tidy",
+                            name: "TIDY HER MEMORY",
+                            aka: "GEDÄCHTNIS AUFRÄUMEN",
+                            help: "She merges what she remembered twice and drops what is out of date.",
+                            sub: "DUPLICATES MERGED, OLD NOTES GONE"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "night.updates",
+                            name: "COUNT THE UPDATES",
+                            aka: "UPDATES ZÄHLEN",
+                            help: "She counts the system updates waiting (checkupdates, read only — nothing is installed) and tells you in the morning.",
+                            sub: "COUNTED, NEVER INSTALLED"
+                        },
+                        {
+                            kind: "action",
+                            fn: "nightStartNow",
+                            name: "START NOW",
+                            aka: "JETZT STARTEN",
+                            help: "Runs the night shift right now, with the screen on — to try it, or to get a book done — until it is out of work or you press STOP.",
+                            sub: "WITH THE SCREEN ON, UNTIL DONE"
+                        },
+                        {
+                            kind: "action",
+                            fn: "nightStop",
+                            name: "STOP",
+                            help: "Stops the night shift at once. Unfinished work goes on next time (every step is saved).",
+                            sub: "NOTHING IS LOST"
+                        },
+                        {
+                            kind: "action",
+                            fn: "screenOffNow",
+                            name: "SCREENS OFF NOW",
+                            aka: "BILDSCHIRM JETZT AUS",
+                            help: "Puts the screens into standby now. A key or the mouse wakes them; the night shift starts after START AFTER.",
+                            sub: "STANDBY NOW · A KEY WAKES THEM"
+                        }
+                    ]
+                },
+                {
+                    kind: "page",
+                    name: "BOOK STUDIO",
+                    aka: "BUCHSTUDIO · BÜCHER · KDP · AMAZON · BILDERBUCH · MALBUCH · RÄTSELBUCH · GELD VERDIENEN · PASSIVES EINKOMMEN",
+                    help: "Velly makes paperbacks for Amazon KDP: the print PDF, the full cover with spine, the listing (title, description, seven keywords, categories, price) and a checklist for the upload. Colouring books (mandalas) and puzzle books (sudoku, word search, mazes) need nothing to download; picture books need the picture engine (~7 GB, once). You look each book over and upload it yourself — KDP has no upload for programs, and the account is yours. Honest: a book sells when there is demand and its cover works; nobody can promise income.",
+                    sub: "BOOKS FOR AMAZON KDP · YOU CHECK AND UPLOAD",
+                    icon: "menu_book",
+                    items: [
+                        {
+                            kind: "info",
+                            live: "booksShelf",
+                            name: "THE SHELF",
+                            aka: "REGAL",
+                            help: "Books ready to upload, books in the making, books already on KDP. Each one is a folder in Dokumente/Velly Bücher with review.html (every page, every field with a copy button), interior.pdf, cover.pdf, listing.txt and CHECKLIST.md.",
+                            sub: "READY · IN THE MAKING · ON KDP"
+                        },
+                        {
+                            kind: "info",
+                            live: "booksNow",
+                            name: "RIGHT NOW",
+                            help: "What the studio is doing this moment.",
+                            sub: "WHICH BOOK, WHICH STEP"
+                        },
+                        {
+                            kind: "action",
+                            fn: "booksOpenShelf",
+                            name: "OPEN THE SHELF",
+                            aka: "REGAL ÖFFNEN · ORDNER",
+                            help: "Opens the folder with every book (Dokumente/Velly Bücher). Open a book's review.html to look it over.",
+                            sub: "DOKUMENTE/VELLY BÜCHER"
+                        },
+                        {
+                            kind: "action",
+                            fn: "booksMakeNow",
+                            name: "MAKE ONE NOW",
+                            aka: "JETZT EIN BUCH MACHEN",
+                            help: "Velly starts the next book now instead of tonight. A colouring or puzzle book is done in seconds (plus a minute for the listing); a picture book takes longer and needs the picture engine. A game pauses it.",
+                            sub: "NOW INSTEAD OF TONIGHT"
+                        },
+                        {
+                            kind: "text",
+                            key: "books.author",
+                            name: "AUTHOR NAME",
+                            aka: "AUTORENNAME · PSEUDONYM · PEN NAME",
+                            help: "The name on the cover and the title page — a pen name is fine on KDP, as long as it is not someone else's. A book already made gets a new name with its next cover (in the shelf: velvet-books redo ID --cover).",
+                            sub: "ON THE COVER AND THE TITLE PAGE",
+                            placeholder: "e.g. Lina Sommer",
+                            examples: [],
+                            empty: "EMPTY · „VELLY STUDIO“"
+                        },
+                        {
+                            kind: "choice",
+                            key: "books.lang",
+                            name: "LANGUAGE",
+                            aka: "SPRACHE",
+                            help: "The books' language — titles, stories, rules, listings.",
+                            sub: "GERMAN OR ENGLISH",
+                            options: [
+                                { value: "de", label: "DEUTSCH" },
+                                { value: "en", label: "ENGLISH" }
+                            ]
+                        },
+                        {
+                            kind: "slider",
+                            key: "books.maxWaiting",
+                            name: "SHELF SIZE",
+                            aka: "REGALGRÖSSE",
+                            help: "How many finished books may wait for your upload before she pauses. KDP takes at most three new titles a day per account — and every book needs your look first.",
+                            sub: "FINISHED BOOKS WAITING FOR YOU",
+                            min: 1, max: 10, step: 1, fmt: "int", unit: " books"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "books.coloring",
+                            name: "COLOURING BOOKS",
+                            aka: "MALBÜCHER · MANDALAS",
+                            help: "Mandala colouring books (adults, children, seniors, flowers, geometry, hearts): 40–50 designs, single-sided, 8.5 × 11 in. Drawn by a program — nothing to download.",
+                            sub: "MANDALAS · NOTHING TO DOWNLOAD"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "books.puzzle",
+                            name: "PUZZLE BOOKS",
+                            aka: "RÄTSELBÜCHER · SUDOKU · SUCHSEL · LABYRINTHE",
+                            help: "Sudoku (every one with exactly one solution), word searches and mazes, with all solutions — also in large print for seniors. Computed by a program — nothing to download.",
+                            sub: "SUDOKU · WORD SEARCH · MAZES · WITH SOLUTIONS"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "books.picture",
+                            name: "PICTURE BOOKS",
+                            aka: "BILDERBÜCHER · KINDERBÜCHER",
+                            help: "Story picture books for ages 3–6: the local brain writes the story, an editor round checks and improves it (at least once, until 9 of 10), the picture engine paints 14 spreads and the cover. Needs the picture engine.",
+                            sub: "STORY, EDITOR, PICTURES · NEEDS THE PICTURE ENGINE"
+                        },
+                        {
+                            kind: "info",
+                            live: "booksEngine",
+                            name: "PICTURE ENGINE",
+                            aka: "BILD-ENGINE · STABLE DIFFUSION · Z-IMAGE",
+                            help: "stable-diffusion.cpp (Vulkan) with Z-Image-Turbo — Apache 2.0, so the pictures may be sold — the FLUX VAE, and Velly's Qwen3-4B as its text encoder (already on disk).",
+                            sub: "FOR PICTURE BOOKS"
+                        },
+                        {
+                            kind: "action",
+                            fn: "booksInstallEngine",
+                            name: "INSTALL THE PICTURE ENGINE",
+                            aka: "BILD-ENGINE INSTALLIEREN",
+                            help: "Opens a terminal that downloads it: first every file with its source and size, then the files (each model checked against its SHA-256). Ctrl+C stops it; it picks up the missing files next time.",
+                            sub: "~7 GB · STABLE-DIFFUSION.CPP 37 MB + Z-IMAGE-TURBO 6.6 GB + VAE 335 MB"
+                        }
+                    ]
+                },
+                {
                     kind: "action",
                     fn: "vellySetup",
                     name: "SETUP",
@@ -590,6 +821,42 @@ Singleton {
                     aka: "STIMME · SPEAK",
                     help: "Velly reads her answers aloud. Off: she answers as text in the island only.",
                     sub: "SHE SPEAKS HER ANSWERS · WITHOUT AN ENGINE THE BLIPS TALK UNTIL A REAL VOICE IS THERE"
+                },
+                {
+                    kind: "choice",
+                    key: "velly.speakWhen",
+                    name: "SHE SPEAKS",
+                    aka: "SPRICHT NUR WENN · NUR MIT MIKROFON · VOICE ONLY WHEN SPOKEN TO · ANTWORT VORLESEN",
+                    help: "When Velly answers out loud. WHEN SPOKEN TO: only what you said to her (the microphone, „Hey Velly“) gets a spoken answer — what you type is answered in the island, silently, and so is a reminder you typed. ALWAYS: every answer is spoken, typed or not.",
+                    sub: "WHEN SPOKEN TO: A SPOKEN QUESTION GETS A SPOKEN ANSWER, A TYPED ONE A WRITTEN ONE",
+                    options: [
+                        { value: "spoken", label: "WHEN SPOKEN TO" },
+                        { value: "always", label: "ALWAYS" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "velly.voiceThinking",
+                    name: "WHEN YOU SPEAK",
+                    aka: "SPRECHEN · GESCHWINDIGKEIT · SPEED FIRST · SCHNELL",
+                    help: "How Velly thinks when you talk to her. SPEED FIRST: the quickest thinking that does the job and a few spoken sentences — the answer comes in a moment (only an outright „denk genau nach“ gets more). BALANCED: a little more thought for questions and explanations, about half a second slower.",
+                    sub: "SPEED FIRST: THE ANSWER IN A MOMENT · BALANCED: MORE THOUGHT FOR QUESTIONS",
+                    options: [
+                        { value: "fast", label: "SPEED FIRST" },
+                        { value: "balanced", label: "BALANCED" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "velly.textThinking",
+                    name: "WHEN YOU TYPE",
+                    aka: "SCHREIBEN · GRÜNDLICH · PERFEKT · THOROUGH · QUALITY",
+                    help: "How Velly works when you type to her. UNTIL IT IS RIGHT: she thinks as deeply as she can, takes every step a task needs (up to 16 tool steps), checks each result and tries another way when one fails — and before the answer goes out she reads it once more like an editor and improves it (CHECKING in the island). Slower, and the answer is written: paragraphs and lists. BALANCED: quicker, no second look.",
+                    sub: "UNTIL IT IS RIGHT: DEEP THINKING, EVERY STEP, A SECOND LOOK BEFORE IT GOES OUT",
+                    options: [
+                        { value: "thorough", label: "UNTIL IT IS RIGHT" },
+                        { value: "balanced", label: "BALANCED" }
+                    ]
                 },
                 {
                     kind: "choice",

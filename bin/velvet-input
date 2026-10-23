@@ -1,0 +1,815 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-input
+
+Velly's hands and eyes: the keyboard, the mouse, the clipboard and the screen,
+spoken straight to the compositor in Wayland's own wire protocol. Stdlib only
+— no wtype, ydotool, wl-clipboard or grim needed (none of them is on every
+machine; on this one none was).
+
+    velvet-input type TEXT          type TEXT into the window that has the keyboard —
+                                    any character (umlauts, ß, €, emoji): the virtual
+                                    keyboard brings its own keymap, one key per character
+    velvet-input key COMBO          one key or a combination: enter, esc, tab, ctrl+s,
+                                    ctrl+shift+v, alt+tab, super+1, f5, ctrl+alt+t …
+    velvet-input click [X Y] [--button left|right|middle] [--double]
+    velvet-input move X Y           the pointer to X Y (layout pixels, as hyprctl reports them)
+    velvet-input scroll N           N notches, N > 0 scrolls down
+    velvet-input copy [TEXT]        TEXT (or stdin) into the clipboard. A small server keeps
+                                    it there until something else is copied, like wl-copy
+    velvet-input paste              the clipboard's text on stdout (exit 1: empty)
+    velvet-input shot FILE [--output NAME]
+                                    a PNG of one screen (the focused one, or NAME)
+    velvet-input globals            what this compositor offers (diagnostics)
+    velvet-input --selftest         the parts that need no compositor
+
+Who gets the keys is the compositor's choice: the focused surface. Velly
+focuses the target window first and folds the island (it holds the keyboard
+while it is open) — that is velvet-ai's input.type, not this file's business.
+
+Protocols: zwp_virtual_keyboard_v1, zwlr_virtual_pointer_v1,
+ext_data_control_v1 or zwlr_data_control_v1, zwlr_screencopy_v1, wl_shm.
+"""
+
+import array
+import json
+import mmap
+import os
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import zlib
+
+
+class WaylandError(RuntimeError):
+    pass
+
+
+# ───────────────────────────────────────────────────────────────── the wire
+class Wayland:
+    """The smallest Wayland client that does the job: one socket, the
+    registry, requests out, events in — with the file descriptors that ride
+    along — and a roundtrip."""
+
+    def __init__(self):
+        runtime = os.environ.get("XDG_RUNTIME_DIR") or ""
+        display = os.environ.get("WAYLAND_DISPLAY") or "wayland-0"
+        path = display if display.startswith("/") else os.path.join(runtime, display)
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            self.sock.connect(path)
+        except OSError as exc:
+            raise WaylandError(f"no compositor at {path}: {exc}") from exc
+        self.next_id = 2
+        self.buf = b""
+        self.fds = []
+        self.globals = {}          # interface → [(name, version), …]
+        self.handlers = {}         # object id → fn(op, body)
+        self.registry = self.new_id()
+        self.send(1, 1, struct.pack("<I", self.registry))      # wl_display.get_registry
+        self.roundtrip()
+
+    def new_id(self) -> int:
+        """The next object id. The server insists on getting them in order:
+        an id handed out must go out before any later one (libwayland calls
+        anything else "invalid arguments")."""
+        i = self.next_id
+        self.next_id += 1
+        return i
+
+    def send(self, obj: int, op: int, payload: bytes = b"", fds=None) -> None:
+        msg = struct.pack("<II", obj, ((8 + len(payload)) << 16) | op) + payload
+        if fds:
+            self.sock.sendmsg([msg], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))])
+        else:
+            self.sock.sendall(msg)
+
+    @staticmethod
+    def wstr(s: str) -> bytes:
+        b = s.encode("utf-8") + b"\0"
+        return struct.pack("<I", len(b)) + b + b"\0" * ((4 - len(b) % 4) % 4)
+
+    @staticmethod
+    def rstr(body: bytes, off: int):
+        """A string argument at `off`: (text, next offset)."""
+        ln = struct.unpack_from("<I", body, off)[0]
+        text = body[off + 4:off + 4 + max(0, ln - 1)].decode("utf-8", "replace")
+        return text, off + 4 + ln + ((4 - ln % 4) % 4)
+
+    def has(self, iface: str) -> bool:
+        return iface in self.globals
+
+    def bind(self, iface: str, version: int, index: int = 0) -> int:
+        name, offered = self.globals[iface][index]
+        nid = self.new_id()
+        self.send(self.registry, 0, struct.pack("<I", name) + self.wstr(iface)
+                  + struct.pack("<II", min(version, offered), nid))
+        return nid
+
+    def version(self, iface: str, index: int = 0) -> int:
+        return self.globals[iface][index][1]
+
+    def take_fd(self) -> int:
+        if not self.fds:
+            raise WaylandError("an event promised a file descriptor that did not come")
+        return self.fds.pop(0)
+
+    def read(self, timeout: float = 5.0) -> None:
+        self.sock.settimeout(timeout)
+        fds = array.array("i")
+        try:
+            data, anc, _flags, _addr = self.sock.recvmsg(65536, socket.CMSG_LEN(16 * fds.itemsize))
+        except socket.timeout as exc:
+            raise WaylandError("the compositor did not answer") from exc
+        for level, kind, extra in anc:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                fds.frombytes(extra[:len(extra) - (len(extra) % fds.itemsize)])
+        self.fds.extend(fds)
+        if not data:
+            raise WaylandError("the compositor closed the connection")
+        self.buf += data
+        while len(self.buf) >= 8:
+            obj, so = struct.unpack_from("<II", self.buf)
+            size = so >> 16
+            if size < 8 or len(self.buf) < size:
+                break
+            body = self.buf[8:size]
+            self.buf = self.buf[size:]
+            self.dispatch(obj, so & 0xFFFF, body)
+
+    def dispatch(self, obj: int, op: int, body: bytes) -> None:
+        if obj == 1:
+            if op == 0:                                         # wl_display.error
+                oid, code = struct.unpack_from("<II", body)
+                msg, _ = self.rstr(body, 8)
+                raise WaylandError(f"protocol error on object {oid} (code {code}): {msg}")
+            return                                              # delete_id
+        if obj == self.registry:
+            if op == 0:                                         # global
+                name = struct.unpack_from("<I", body)[0]
+                iface, off = self.rstr(body, 4)
+                ver = struct.unpack_from("<I", body, off)[0]
+                self.globals.setdefault(iface, []).append((name, ver))
+            return
+        fn = self.handlers.get(obj)
+        if fn:
+            fn(op, body)
+
+    def roundtrip(self, timeout: float = 5.0) -> None:
+        cb = self.new_id()
+        done = []
+        self.handlers[cb] = lambda op, body: done.append(op)
+        self.send(1, 0, struct.pack("<I", cb))                  # wl_display.sync
+        end = time.monotonic() + timeout
+        while not done:
+            left = end - time.monotonic()
+            if left <= 0:
+                raise WaylandError("the compositor did not answer")
+            self.read(left)
+        self.handlers.pop(cb, None)
+
+    def wait(self, cond, timeout: float = 5.0) -> None:
+        end = time.monotonic() + timeout
+        while not cond():
+            left = end - time.monotonic()
+            if left <= 0:
+                raise WaylandError("timed out waiting for the compositor")
+            self.read(left)
+
+    def seat(self) -> int:
+        if not self.has("wl_seat"):
+            raise WaylandError("the compositor offers no seat")
+        if not hasattr(self, "_seat"):
+            self._seat = self.bind("wl_seat", 5)
+            self.roundtrip()
+        return self._seat
+
+
+def now_ms(t0: float) -> int:
+    return int((time.monotonic() - t0) * 1000) & 0xFFFFFFFF
+
+
+# ────────────────────────────────────────────────────────────── the keyboard
+# Real modifiers in xkb order: Shift Lock Control Mod1 Mod2 Mod3 Mod4 Mod5.
+MOD_BITS = {"Shift_L": (1, "Shift"), "Control_L": (4, "Control"), "Alt_L": (8, "Mod1"),
+            "Super_L": (64, "Mod4"), "ISO_Level3_Shift": (128, "Mod5")}
+MOD_NAMES = {"ctrl": "Control_L", "control": "Control_L", "strg": "Control_L", "shift": "Shift_L",
+             "umschalt": "Shift_L", "alt": "Alt_L", "super": "Super_L", "win": "Super_L", "meta": "Super_L",
+             "cmd": "Super_L", "mod": "Super_L", "altgr": "ISO_Level3_Shift"}
+KEY_NAMES = {"enter": "Return", "return": "Return", "eingabe": "Return", "tab": "Tab", "esc": "Escape",
+             "escape": "Escape", "space": "space", "leertaste": "space", "backspace": "BackSpace",
+             "rücktaste": "BackSpace", "delete": "Delete", "del": "Delete", "entf": "Delete", "insert": "Insert",
+             "einfg": "Insert", "home": "Home", "pos1": "Home", "end": "End", "ende": "End", "pageup": "Prior",
+             "bildauf": "Prior", "pagedown": "Next", "bildab": "Next", "up": "Up", "hoch": "Up", "oben": "Up",
+             "down": "Down", "runter": "Down", "unten": "Down", "left": "Left", "links": "Left", "right": "Right",
+             "rechts": "Right", "print": "Print", "druck": "Print", "menu": "Menu", "plus": "plus",
+             "minus": "minus", "comma": "comma", "period": "period", "dot": "period", "slash": "slash"}
+for _n in range(1, 25):
+    KEY_NAMES[f"f{_n}"] = f"F{_n}"
+
+
+def sym_of(ch: str) -> str:
+    """The keysym that types `ch` — its own name for letters and digits, a
+    Unicode keysym (U+hex) for everything else."""
+    if ch == "\n":
+        return "Return"
+    if ch == "\t":
+        return "Tab"
+    if ch == " ":
+        return "space"
+    cp = ord(ch)
+    if cp < 0x80 and ch.isalnum():
+        return ch
+    if cp < 0x20 or 0x7F <= cp < 0xA0:
+        return ""
+    return f"U{cp:04X}"
+
+
+def build_keymap(syms: list) -> bytes:
+    """An XKB keymap with ONE keycode per keysym (index i → keycode 9 + i),
+    the modifiers mapped to their real modifier. A keymap of our own is what
+    makes any character typeable whatever the user's layout is."""
+    out = ["xkb_keymap {", 'xkb_keycodes "velvet" {', "minimum = 8;", "maximum = 255;"]
+    out += [f"<K{i}> = {9 + i};" for i in range(len(syms))]
+    out += ["};", 'xkb_types "velvet" { include "complete" };',
+            'xkb_compatibility "velvet" { include "complete" };', 'xkb_symbols "velvet" {']
+    out += [f"key <K{i}> {{[ {sym} ]}};" for i, sym in enumerate(syms)]
+    out += [f"modifier_map {MOD_BITS[sym][1]} {{ <K{i}> }};" for i, sym in enumerate(syms) if sym in MOD_BITS]
+    out += ["};", "};", ""]
+    return "\n".join(out).encode("utf-8")
+
+
+def parse_combo(spec: str):
+    """"ctrl+shift+v" → (["Control_L", "Shift_L"], "v"). The last part is the
+    key; a single character is typed as itself ("ctrl+ä" works)."""
+    raw = str(spec or "").replace(" ", "")
+    plus = raw.endswith("++") or raw == "+"
+    if plus:
+        raw = raw[:-1]
+    parts = raw.split("+")
+    if plus:
+        parts[-1] = "+"
+    if not raw or any(not p for p in parts):
+        raise ValueError(f"no key in {spec!r}")
+    mods = []
+    for p in parts[:-1]:
+        sym = MOD_NAMES.get(p.lower())
+        if not sym:
+            raise ValueError(f"unknown modifier {p!r}")
+        mods.append(sym)
+    last = parts[-1]
+    key = MOD_NAMES.get(last.lower()) if len(parts) == 1 and last.lower() in MOD_NAMES else None
+    if key is None:
+        key = KEY_NAMES.get(last.lower()) or (sym_of(last.lower() if len(last) == 1 and last.isalpha() else last)
+                                              if len(last) == 1 else "")
+    if not key:
+        raise ValueError(f"unknown key {last!r}")
+    return mods, key
+
+
+class Keyboard:
+    def __init__(self, wl: Wayland):
+        if not wl.has("zwp_virtual_keyboard_manager_v1"):
+            raise WaylandError("the compositor has no virtual keyboard (zwp_virtual_keyboard_v1)")
+        self.wl = wl
+        self.t0 = time.monotonic()
+        seat = wl.seat()
+        manager = wl.bind("zwp_virtual_keyboard_manager_v1", 1)
+        self.kbd = wl.new_id()
+        wl.send(manager, 0, struct.pack("<II", seat, self.kbd))
+        self.syms = []
+
+    def keymap(self, syms: list) -> None:
+        self.syms = list(syms)
+        data = build_keymap(self.syms) + b"\0"
+        fd, path = tempfile.mkstemp(prefix="velvet-keymap-")
+        try:
+            os.unlink(path)
+            os.write(fd, data)
+            os.lseek(fd, 0, 0)
+            self.wl.send(self.kbd, 0, struct.pack("<II", 1, len(data)), fds=[fd])     # keymap(xkb_v1, fd, size)
+        finally:
+            os.close(fd)
+        self.wl.roundtrip()
+        time.sleep(0.03)            # clients get the keymap before the first key
+
+    def press(self, sym: str, down: bool) -> None:
+        code = self.syms.index(sym) + 1        # evdev code = xkb keycode - 8
+        self.wl.send(self.kbd, 1, struct.pack("<III", now_ms(self.t0), code, 1 if down else 0))
+
+    def mods(self, mask: int) -> None:
+        self.wl.send(self.kbd, 2, struct.pack("<IIII", mask, 0, 0, 0))
+
+    def tap(self, sym: str, hold: float = 0.012) -> None:
+        self.press(sym, True)
+        self.wl.roundtrip()
+        time.sleep(hold)
+        self.press(sym, False)
+
+    def type(self, text: str, gap: float = 0.006) -> int:
+        """Types `text`, 200 different characters per keymap at most (a
+        keymap has 247 codes); returns how many characters went out."""
+        typed = 0
+        chars = [c for c in text if sym_of(c)]
+        i = 0
+        while i < len(chars):
+            chunk, seen = [], []
+            while i < len(chars) and (chars[i] in seen or len(seen) < 200):
+                if chars[i] not in seen:
+                    seen.append(chars[i])
+                chunk.append(chars[i])
+                i += 1
+            self.keymap([sym_of(c) for c in seen])
+            for c in chunk:
+                self.tap(sym_of(c))
+                typed += 1
+                if gap:
+                    time.sleep(gap)
+            self.wl.roundtrip()
+        return typed
+
+    def combo(self, spec: str) -> None:
+        mods, key = parse_combo(spec)
+        syms = list(dict.fromkeys(mods + [key]))
+        self.keymap(syms)
+        mask = 0
+        for m in mods:
+            self.press(m, True)
+            mask |= MOD_BITS[m][0]
+            self.mods(mask)
+        self.wl.roundtrip()
+        self.tap(key, 0.03)
+        for m in reversed(mods):
+            self.press(m, False)
+            mask &= ~MOD_BITS[m][0]
+            self.mods(mask)
+        self.wl.roundtrip()
+
+
+# ──────────────────────────────────────────────────────────────── the mouse
+BUTTONS = {"left": 0x110, "right": 0x111, "middle": 0x112, "links": 0x110, "rechts": 0x111, "mitte": 0x112}
+
+
+def layout_box():
+    """(x, y, w, h) of all screens together in layout pixels — hyprctl's
+    numbers, which is what a click target from a window list is in."""
+    try:
+        mons = json.loads(subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True,
+                                         timeout=3).stdout or "[]")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        mons = []
+    boxes = []
+    for m in mons if isinstance(mons, list) else []:
+        scale = float(m.get("scale") or 1) or 1
+        w, h = float(m.get("width") or 0) / scale, float(m.get("height") or 0) / scale
+        if int(m.get("transform") or 0) % 2 == 1:
+            w, h = h, w
+        boxes.append((float(m.get("x") or 0), float(m.get("y") or 0), w, h))
+    if not boxes:
+        return 0.0, 0.0, 1920.0, 1080.0
+    x0 = min(b[0] for b in boxes)
+    y0 = min(b[1] for b in boxes)
+    x1 = max(b[0] + b[2] for b in boxes)
+    y1 = max(b[1] + b[3] for b in boxes)
+    return x0, y0, x1 - x0, y1 - y0
+
+
+class Pointer:
+    def __init__(self, wl: Wayland):
+        if not wl.has("zwlr_virtual_pointer_manager_v1"):
+            raise WaylandError("the compositor has no virtual pointer (zwlr_virtual_pointer_v1)")
+        self.wl = wl
+        self.t0 = time.monotonic()
+        seat = wl.seat()
+        manager = wl.bind("zwlr_virtual_pointer_manager_v1", 2)
+        self.ptr = wl.new_id()
+        wl.send(manager, 0, struct.pack("<II", seat, self.ptr))
+        self.box = layout_box()
+
+    def move(self, x: float, y: float) -> None:
+        bx, by, bw, bh = self.box
+        px = int(round(max(0, min(bw - 1, x - bx))))
+        py = int(round(max(0, min(bh - 1, y - by))))
+        self.wl.send(self.ptr, 1, struct.pack("<IIIII", now_ms(self.t0), px, py, int(bw), int(bh)))
+        self.wl.send(self.ptr, 4)                                # frame
+        self.wl.roundtrip()
+
+    def button(self, name: str, down: bool) -> None:
+        self.wl.send(self.ptr, 2, struct.pack("<III", now_ms(self.t0), BUTTONS[name], 1 if down else 0))
+        self.wl.send(self.ptr, 4)
+        self.wl.roundtrip()
+
+    def click(self, name: str = "left", double: bool = False) -> None:
+        for n in range(2 if double else 1):
+            self.button(name, True)
+            time.sleep(0.05)
+            self.button(name, False)
+            if double and n == 0:
+                time.sleep(0.08)
+
+    def scroll(self, notches: int) -> None:
+        sign = 1 if notches > 0 else -1
+        for _ in range(abs(int(notches))):
+            self.wl.send(self.ptr, 5, struct.pack("<I", 0))                                   # source: wheel
+            self.wl.send(self.ptr, 7, struct.pack("<IIii", now_ms(self.t0), 0, 15 * 256 * sign, sign))
+            self.wl.send(self.ptr, 4)
+            self.wl.roundtrip()
+            time.sleep(0.04)
+
+
+# ──────────────────────────────────────────────────────────── the clipboard
+TEXT_TYPES = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"]
+
+
+def data_control(wl: Wayland):
+    """(manager id, interface) — the standard ext protocol first, the older
+    wlroots one second; both have the same requests and events."""
+    for iface in ("ext_data_control_manager_v1", "zwlr_data_control_manager_v1"):
+        if wl.has(iface):
+            return wl.bind(iface, 1), iface
+    raise WaylandError("the compositor has no clipboard access for programs (data-control)")
+
+
+def paste() -> str:
+    wl = Wayland()
+    seat = wl.seat()
+    manager, _iface = data_control(wl)
+    device = wl.new_id()
+    offers = {}            # offer id → [mime, …]
+    current = [None]
+
+    def on_offer(oid):
+        def fn(op, body):
+            if op == 0:
+                mime, _ = Wayland.rstr(body, 0)
+                offers.setdefault(oid, []).append(mime)
+        return fn
+
+    def on_device(op, body):
+        if op == 0:                                              # data_offer(new_id)
+            oid = struct.unpack_from("<I", body)[0]
+            offers[oid] = []
+            wl.handlers[oid] = on_offer(oid)
+        elif op == 1:                                            # selection(offer or 0)
+            current[0] = struct.unpack_from("<I", body)[0] or None
+
+    wl.handlers[device] = on_device
+    wl.send(manager, 1, struct.pack("<II", device, seat))       # get_data_device
+    wl.roundtrip()
+    wl.roundtrip()
+    oid = current[0]
+    if not oid:
+        return ""
+    mime = next((m for m in TEXT_TYPES if m in offers.get(oid, [])), "")
+    if not mime:
+        return ""
+    rfd, wfd = os.pipe()
+    wl.send(oid, 0, Wayland.wstr(mime), fds=[wfd])              # receive(mime, fd)
+    os.close(wfd)
+    wl.roundtrip()
+    chunks = []
+    end = time.monotonic() + 3
+    os.set_blocking(rfd, False)
+    while time.monotonic() < end:
+        try:
+            piece = os.read(rfd, 65536)
+        except BlockingIOError:
+            time.sleep(0.01)
+            continue
+        if not piece:
+            break
+        chunks.append(piece)
+    os.close(rfd)
+    return b"".join(chunks).decode("utf-8", "replace")
+
+
+def copy(text: str, foreground: bool = False) -> int:
+    """Owns the clipboard with `text` until someone else copies — in a child
+    process that outlives this call, the way wl-copy does it."""
+    data = text.encode("utf-8")
+    if not foreground:
+        rfd, wfd = os.pipe()
+        pid = os.fork()
+        if pid:
+            os.close(wfd)
+            ready = os.read(rfd, 64).decode() or "fail no answer"
+            os.close(rfd)
+            if ready.startswith("ok"):
+                return 0
+            print(f"velvet-input: {ready[5:] or 'the clipboard did not take it'}", file=sys.stderr)
+            return 1
+        os.close(rfd)
+        os.setsid()
+        devnull = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull, fd)
+    else:
+        wfd = None
+    try:
+        wl = Wayland()
+        seat = wl.seat()
+        manager, _iface = data_control(wl)
+        source = wl.new_id()
+        wl.send(manager, 0, struct.pack("<I", source))              # create_data_source
+        for mime in TEXT_TYPES:
+            wl.send(source, 0, Wayland.wstr(mime))                  # offer
+        device = wl.new_id()
+        wl.send(manager, 1, struct.pack("<II", device, seat))
+        done = [False]
+
+        def on_source(op, body):
+            if op == 0:                                              # send(mime, fd)
+                fd = wl.take_fd()
+                try:
+                    os.set_blocking(fd, True)
+                    view = memoryview(data)
+                    while view:
+                        n = os.write(fd, view)
+                        view = view[n:]
+                except OSError:
+                    pass
+                finally:
+                    os.close(fd)
+            elif op == 1:                                            # cancelled: someone else copied
+                done[0] = True
+
+        wl.handlers[source] = on_source
+        wl.send(device, 0, struct.pack("<I", source))                # set_selection
+        wl.roundtrip()
+        if wfd is not None:
+            os.write(wfd, b"ok")
+            os.close(wfd)
+            wfd = None
+        while not done[0]:
+            wl.read(3600 * 24)
+        return 0
+    except Exception as exc:                                          # noqa: BLE001
+        if wfd is not None:
+            os.write(wfd, f"fail {exc}"[:60].encode())
+            os.close(wfd)
+        return 1
+    finally:
+        if not foreground:
+            os._exit(0)
+
+
+# ─────────────────────────────────────────────────────────────── the screen
+SHM_ARGB8888, SHM_XRGB8888 = 0, 1
+FOURCC = lambda s: struct.unpack("<I", s.encode())[0]                     # noqa: E731
+SHM_ABGR8888, SHM_XBGR8888 = FOURCC("AB24"), FOURCC("XB24")
+SHM_XRGB2101010, SHM_ARGB2101010 = FOURCC("XR30"), FOURCC("AR30")
+SHM_XBGR2101010, SHM_ABGR2101010 = FOURCC("XB30"), FOURCC("AB30")
+KNOWN_SHM = {SHM_ARGB8888, SHM_XRGB8888, SHM_ABGR8888, SHM_XBGR8888,
+             SHM_XRGB2101010, SHM_ARGB2101010, SHM_XBGR2101010, SHM_ABGR2101010}
+
+
+def to_rgb(raw: bytes, fmt: int, w: int, h: int, stride: int) -> bytes:
+    """Packed RGB rows from a screencopy buffer."""
+    try:
+        import numpy as np                                               # noqa: PLC0415
+    except ImportError:
+        np = None
+    if np is not None:
+        px = np.frombuffer(raw, dtype=np.uint8).reshape(h, stride)[:, :w * 4]
+        if fmt in (SHM_ARGB8888, SHM_XRGB8888):
+            rgb = px.reshape(h, w, 4)[:, :, [2, 1, 0]]
+        elif fmt in (SHM_ABGR8888, SHM_XBGR8888):
+            rgb = px.reshape(h, w, 4)[:, :, [0, 1, 2]]
+        else:
+            v = px.copy().view("<u4").reshape(h, w)
+            a, b, c = (v >> 20) & 0x3FF, (v >> 10) & 0x3FF, v & 0x3FF
+            r, g, bl = (a, b, c) if fmt in (SHM_XRGB2101010, SHM_ARGB2101010) else (c, b, a)
+            rgb = (np.stack([r, g, bl], axis=-1) >> 2).astype(np.uint8)
+        return np.ascontiguousarray(rgb).tobytes()
+    out = bytearray()
+    for y in range(h):
+        row = raw[y * stride:y * stride + w * 4]
+        for x in range(0, w * 4, 4):
+            p = row[x:x + 4]
+            if fmt in (SHM_ARGB8888, SHM_XRGB8888):
+                out += bytes((p[2], p[1], p[0]))
+            elif fmt in (SHM_ABGR8888, SHM_XBGR8888):
+                out += bytes((p[0], p[1], p[2]))
+            else:
+                v = struct.unpack("<I", p)[0]
+                a, b, c = (v >> 20) & 0x3FF, (v >> 10) & 0x3FF, v & 0x3FF
+                r, g, bl = (a, b, c) if fmt in (SHM_XRGB2101010, SHM_ARGB2101010) else (c, b, a)
+                out += bytes((r >> 2, g >> 2, bl >> 2))
+    return bytes(out)
+
+
+def write_png(path: str, rgb: bytes, w: int, h: int) -> None:
+    rows = b"".join(b"\0" + rgb[y * w * 3:(y + 1) * w * 3] for y in range(h))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
+    tmp = path + ".part"
+    with open(tmp, "wb") as fh:
+        fh.write(png)
+    os.replace(tmp, path)
+
+
+def focused_output() -> str:
+    try:
+        mons = json.loads(subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True,
+                                         timeout=3).stdout or "[]")
+        for m in mons:
+            if m.get("focused"):
+                return str(m.get("name") or "")
+        return str(mons[0].get("name") or "") if mons else ""
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return ""
+
+
+def shot(path: str, output_name: str = "") -> dict:
+    wl = Wayland()
+    if not wl.has("zwlr_screencopy_manager_v1"):
+        raise WaylandError("the compositor offers no screen capture (zwlr_screencopy_v1)")
+    want = output_name or focused_output()
+    outputs = {}
+    for index in range(len(wl.globals.get("wl_output", []))):
+        oid = wl.bind("wl_output", 4, index)
+        info = outputs.setdefault(oid, {"name": ""})
+
+        def on_output(op, body, info=info):
+            if op == 4:                                                    # name (v4)
+                info["name"], _ = Wayland.rstr(body, 0)
+
+        wl.handlers[oid] = on_output
+    wl.roundtrip()
+    if not outputs:
+        raise WaylandError("no screen to capture")
+    target = next((oid for oid, info in outputs.items() if want and info["name"] == want), next(iter(outputs)))
+    name = outputs[target]["name"]
+    manager = wl.bind("zwlr_screencopy_manager_v1", 3)
+    frame = wl.new_id()
+    st = {"buffers": [], "done": False, "ready": False, "failed": False, "flags": 0}
+
+    def on_frame(op, body):
+        if op == 0:                                                        # buffer(format, w, h, stride)
+            st["buffers"].append(struct.unpack_from("<IIII", body))
+        elif op == 1:
+            st["flags"] = struct.unpack_from("<I", body)[0]
+        elif op == 2:
+            st["ready"] = True
+        elif op == 3:
+            st["failed"] = True
+        elif op == 6:                                                      # buffer_done (v3)
+            st["done"] = True
+
+    wl.handlers[frame] = on_frame
+    wl.send(manager, 0, struct.pack("<IiI", frame, 0, target))            # capture_output(frame, cursor, output)
+    v3 = wl.version("zwlr_screencopy_manager_v1") >= 3
+    wl.wait(lambda: st["failed"] or (st["done"] if v3 else bool(st["buffers"])))
+    if st["failed"]:
+        raise WaylandError("the screen capture failed")
+    pick = next((b for b in st["buffers"] if b[0] in KNOWN_SHM), None)
+    if pick is None:
+        raise WaylandError(f"no buffer format I can read ({[hex(b[0]) for b in st['buffers']]})")
+    fmt, w, h, stride = pick
+    size = stride * h
+    fd = os.memfd_create("velvet-shot", 0)
+    os.ftruncate(fd, size)
+    shm = wl.bind("wl_shm", 1)
+    pool = wl.new_id()
+    wl.send(shm, 0, struct.pack("<Ii", pool, size), fds=[fd])            # create_pool
+    buffer = wl.new_id()
+    wl.send(pool, 0, struct.pack("<IiiiiI", buffer, 0, w, h, stride, fmt))  # create_buffer
+    wl.send(frame, 0, struct.pack("<I", buffer))                           # copy
+    wl.wait(lambda: st["ready"] or st["failed"], timeout=10)
+    if st["failed"]:
+        os.close(fd)
+        raise WaylandError("the screen capture failed")
+    with mmap.mmap(fd, size, mmap.MAP_SHARED, mmap.PROT_READ) as mem:
+        raw = bytes(mem[:size])
+    os.close(fd)
+    rgb = to_rgb(raw, fmt, w, h, stride)
+    if st["flags"] & 1:                                                    # y_invert
+        rgb = b"".join(rgb[y * w * 3:(y + 1) * w * 3] for y in range(h - 1, -1, -1))
+    write_png(path, rgb, w, h)
+    return {"ok": True, "path": path, "output": name, "width": w, "height": h}
+
+
+# ─────────────────────────────────────────────────────────────────── the CLI
+def selftest() -> int:
+    fails = []
+    if sym_of("ä") != "U00E4" or sym_of("A") != "A" or sym_of("\n") != "Return" or sym_of("€") != "U20AC" \
+            or sym_of("😀") != "U1F600" or sym_of("\x07"):
+        fails.append("keysyms")
+    km = build_keymap(["a", "Control_L", "U00E4"]).decode()
+    if "<K0> = 9;" not in km or "key <K2> {[ U00E4 ]};" not in km or "modifier_map Control { <K1> };" not in km:
+        fails.append("keymap")
+    try:
+        from_xkb = subprocess.run(["xkbcli", "compile-keymap", "--keymap", "-"],
+                                  input=build_keymap(["a", "U00E4", "Control_L", "U1F600"]), capture_output=True, timeout=10)
+        if from_xkb.returncode != 0 or b"adiaeresis" not in from_xkb.stdout:
+            fails.append(f"keymap does not compile: {from_xkb.stderr.decode()[:160]}")
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    if parse_combo("ctrl+shift+v") != (["Control_L", "Shift_L"], "v") or parse_combo("Enter") != ([], "Return") \
+            or parse_combo("super+1") != (["Super_L"], "1") or parse_combo("alt+F4") != (["Alt_L"], "F4") \
+            or parse_combo("strg+ä") != (["Control_L"], "U00E4") or parse_combo("ctrl++") != (["Control_L"], "U002B"):
+        fails.append("combos")
+    for bad in ("hyper+x", "ctrl+", ""):
+        try:
+            parse_combo(bad)
+            fails.append(f"combo {bad!r} accepted")
+        except ValueError:
+            pass
+    raw = struct.pack("<II", 0x00FF0000, 0x000000FF)            # xrgb8888: one red, one blue pixel
+    if to_rgb(raw, SHM_XRGB8888, 2, 1, 8) != bytes((255, 0, 0, 0, 0, 255)):
+        fails.append("xrgb8888")
+    v = (1023 << 20)                                              # xrgb2101010: full red
+    if to_rgb(struct.pack("<I", v), SHM_XRGB2101010, 1, 1, 4) != bytes((255, 0, 0)):
+        fails.append("xrgb2101010")
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "t.png")
+        write_png(p, bytes((255, 0, 0, 0, 255, 0)), 2, 1)
+        with open(p, "rb") as fh:
+            if not fh.read(8).startswith(b"\x89PNG"):
+                fails.append("png")
+    if fails:
+        print("velvet-input selftest: FAILED\n  · " + "\n  · ".join(fails))
+        return 1
+    print("velvet-input selftest: ok")
+    return 0
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    try:
+        if cmd == "--selftest":
+            return selftest()
+        if cmd == "globals":
+            wl = Wayland()
+            print(json.dumps({k: max(v for _n, v in vs) for k, vs in sorted(wl.globals.items())}, indent=1))
+            return 0
+        if cmd == "type":
+            text = " ".join(rest) if rest else sys.stdin.read()
+            wl = Wayland()
+            n = Keyboard(wl).type(text)
+            print(json.dumps({"ok": True, "typed": n}))
+            return 0
+        if cmd == "key":
+            if not rest:
+                raise ValueError("which key?")
+            wl = Wayland()
+            Keyboard(wl).combo(rest[0])
+            print(json.dumps({"ok": True, "key": rest[0]}))
+            return 0
+        if cmd in ("click", "move"):
+            nums = [a for a in rest if not a.startswith("--")]
+            button = "left"
+            if "--button" in rest:
+                button = rest[rest.index("--button") + 1]
+                nums = [a for a in nums if a != button]
+            if button not in BUTTONS:
+                raise ValueError(f"unknown button {button!r}")
+            wl = Wayland()
+            ptr = Pointer(wl)
+            if len(nums) >= 2:
+                ptr.move(float(nums[0]), float(nums[1]))
+                time.sleep(0.03)
+            elif cmd == "move":
+                raise ValueError("move needs X Y")
+            if cmd == "click":
+                ptr.click(button, "--double" in rest)
+            print(json.dumps({"ok": True, "at": nums[:2], "button": button}))
+            return 0
+        if cmd == "scroll":
+            wl = Wayland()
+            Pointer(wl).scroll(int(rest[0]) if rest else 3)
+            print(json.dumps({"ok": True}))
+            return 0
+        if cmd == "copy":
+            text = " ".join(rest) if rest and rest[0] != "--foreground" else sys.stdin.read()
+            return copy(text, foreground="--foreground" in rest)
+        if cmd == "paste":
+            text = paste()
+            sys.stdout.write(text)
+            return 0 if text else 1
+        if cmd == "shot":
+            if not rest:
+                raise ValueError("where to?")
+            name = rest[rest.index("--output") + 1] if "--output" in rest else ""
+            print(json.dumps(shot(os.path.abspath(rest[0]), name)))
+            return 0
+    except (WaylandError, ValueError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 1
+    print(f"velvet-input: unknown command {cmd!r} — see --help", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

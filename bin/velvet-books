@@ -1,0 +1,3008 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-books
+
+Velly's book studio: whole paperbacks for Amazon KDP — the interior PDF, the
+full-wrap cover, the listing (title, description, seven keywords, categories,
+price), a review page and an upload checklist. She makes them at night (bin/
+velvet-night); you look them over and upload them — KDP has no upload API,
+and the account is yours.
+
+    velvet-books status                  the shelf and the studio, JSON
+    velvet-books new [KIND] [--idea TEXT] [--lang de|en] [--audience kids|adults|seniors]
+                                         start a book. KIND: coloring | puzzle | picture
+                                         (picture needs the picture engine — see `engine`)
+    velvet-books work [--minutes N] [--book ID] [--until-done]
+                                         the next steps of the open books, one at a time;
+                                         every step is saved, so a stop loses at most one picture
+    velvet-books list                    every book, one line each
+    velvet-books shelf                   the shelf's folder in the file manager
+    velvet-books show ID                 one book: where it is, what it needs, its listing
+    velvet-books open ID                 its review page in the browser
+    velvet-books redo ID [--page N | --cover | --listing | --all]
+    velvet-books uploaded ID [--asin X]  you put it on KDP: it leaves the "to upload" pile
+    velvet-books engine [setup]          the picture engine (stable-diffusion.cpp + Z-Image-Turbo):
+                                         what is there, and — only with `setup`, started by you —
+                                         the download (~7 GB) with its sources and sizes
+    velvet-books --selftest
+
+Kinds, and what each needs:
+  coloring  50 mandalas, single-sided, 8.5 × 11 in, black ink — nothing to download
+  puzzle    sudoku, word searches and mazes with solutions, 8.5 × 11 in — nothing to download
+  picture   a story picture book, 8.5 × 8.5 in, full colour with bleed — the local brain
+            writes and edits the story, the picture engine paints it
+
+What a book becomes on disk: ~/Dokumente/Velly Bücher/<nr> <title>/ — book.json (the
+state), interior.pdf, cover.pdf, cover-front.jpg, listing.txt, review.html,
+CHECKLIST.md. The KDP numbers (sizes, bleed, spine, print cost, royalty) were
+read from KDP's help pages on 2026-10-23; the checklist says to check them in
+KDP's own calculator before you set the price.
+"""
+
+import datetime
+import fcntl
+import glob
+import hashlib
+import html
+import json
+import math
+import os
+import random
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+HOME = os.path.expanduser("~")
+CONF_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "velvet")
+DATA_DIR = os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share"), "velvet")
+BIN = os.path.dirname(os.path.abspath(__file__))
+CFG_PATH = os.path.join(CONF_DIR, "config.json")
+INDEX_PATH = os.path.join(CONF_DIR, "books.json")
+STATE_PATH = os.path.join(CONF_DIR, "books-state.json")       # what the studio does right now (the shell reads it)
+NIGHT_TOUCH = os.path.join(CONF_DIR, "ai-night.touch")        # keeps velvet-local's server up while she writes
+LOCAL_PORT = int(os.environ.get("VELLY_LOCAL_PORT") or "8137")
+ENGINE_DIR = os.path.join(DATA_DIR, "engines", "sdcpp")
+IMAGE_MODELS = os.path.join(DATA_DIR, "models", "image")
+
+PT = 72.0                                                       # PDF points per inch
+DPI = 300
+
+# ── KDP's numbers (read from kdp.amazon.com help pages on 2026-10-23) ───────────
+#  Large trim (> 6.12 in wide): both sizes used here. Printing cost =
+#  fixed + pages × per page, by page range. Royalty 60 % from 9.99 (USD/EUR)
+#  up, 50 % at 9.98 and below: royalty = rate × list price − printing cost.
+KDP = {
+    "checked": "2026-10-23",
+    "bleed": 0.125,                       # top, bottom and outside; a bleed page is +0.125 wide, +0.25 high
+    "spine": {"white": 0.002252, "cream": 0.0025, "premium": 0.002347},   # inches per page
+    "spineTextMin": 80,                   # "only print spine text on books with more than 79 pages"
+    "gutter": [(150, 0.375), (300, 0.5), (500, 0.625), (700, 0.75), (828, 0.875)],
+    "outside": {"bleed": 0.375, "plain": 0.25},
+    "pages": {"min": 24, "max": 590},
+    "cost": {                             # large trim
+        "USD": {"black": [(110, 2.84, 0.0), (828, 1.00, 0.017)], "premium": [(40, 4.20, 0.0), (828, 1.00, 0.08)]},
+        "EUR": {"black": [(110, 2.48, 0.0), (828, 0.75, 0.016)], "premium": [(40, 3.61, 0.0), (828, 0.75, 0.0715)]},
+    },
+    "royalty": {"high": 0.60, "low": 0.50, "from": 9.99},
+    "barcode": (2.0, 1.2),                # inches, KDP puts it in the lower right of the back cover
+}
+
+KINDS = {
+    "coloring": {"trim": (8.5, 11.0), "ink": "black", "bleed": False, "label": {"de": "Malbuch", "en": "coloring book"}},
+    "puzzle": {"trim": (8.5, 11.0), "ink": "black", "bleed": False, "label": {"de": "Rätselbuch", "en": "puzzle book"}},
+    "picture": {"trim": (8.5, 8.5), "ink": "premium", "bleed": True, "label": {"de": "Bilderbuch", "en": "picture book"}},
+}
+
+STOP = {"now": False}
+
+
+def log(msg: str) -> None:
+    print(f"velvet-books: {msg}", file=sys.stderr, flush=True)
+
+
+def read_json(path: str, fallback):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return fallback
+
+
+def write_json(path: str, data) -> None:
+    """In place (the shell's FileView watches the inode), then flushed."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as fh:
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(data, ensure_ascii=False, indent=1))
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def config() -> dict:
+    """The studio's dials from the shell's config.json (books.*)."""
+    data = read_json(CFG_PATH, {})
+    out = {"author": "", "lang": "de", "kinds": ["coloring", "puzzle", "picture"], "maxWaiting": 3,
+           "audience": "adults", "market": "EUR"}
+    books = data.get("books") if isinstance(data, dict) else None
+    if isinstance(books, dict):
+        out.update({k: v for k, v in books.items() if v not in (None, "")})
+        # VELLY → BOOK STUDIO: one switch per kind
+        out["kinds"] = [k for k in ("coloring", "puzzle", "picture") if books.get(k, True) is not False] or ["puzzle"]
+    return out
+
+
+def author_name() -> str:
+    return str(config().get("author") or "").strip() or "Velly Studio"
+
+
+def stopping() -> bool:
+    return STOP["now"]
+
+
+def on_term(_sig, _frm):
+    STOP["now"] = True
+
+
+def documents_dir() -> str:
+    path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "user-dirs.dirs")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r'\s*XDG_DOCUMENTS_DIR="(.*)"', line)
+                if m:
+                    return m.group(1).replace("$HOME", HOME)
+    except OSError:
+        pass
+    for name in ("Dokumente", "Documents"):
+        if os.path.isdir(os.path.join(HOME, name)):
+            return os.path.join(HOME, name)
+    return os.path.join(HOME, "Dokumente")
+
+
+def studio_dir() -> str:
+    return os.path.join(documents_dir(), "Velly Bücher")
+
+
+def slug(text: str, n: int = 48) -> str:
+    t = re.sub(r"[^\w äöüÄÖÜß&,.!-]+", "", str(text or "")).strip(" .-")
+    return (t[:n].rstrip(" ,.-") or "Buch")
+
+
+def say_state(**fields) -> None:
+    """What the studio does right now — the settings page and Velly read it."""
+    cur = read_json(STATE_PATH, {})
+    if not isinstance(cur, dict):
+        cur = {}
+    cur.update(fields, at=int(time.time() * 1000))
+    write_json(STATE_PATH, cur)
+
+
+# ───────────────────────────────────────────────────────────── KDP arithmetic
+def gutter_for(pages: int) -> float:
+    for top, inch in KDP["gutter"]:
+        if pages <= top:
+            return inch
+    return KDP["gutter"][-1][1]
+
+
+def spine_width(pages: int, ink: str) -> float:
+    paper = "premium" if ink == "premium" else "white"
+    return pages * KDP["spine"][paper]
+
+
+def print_cost(pages: int, ink: str, currency: str) -> float:
+    for top, fixed, per in KDP["cost"][currency]["premium" if ink == "premium" else "black"]:
+        if pages <= top:
+            return round(fixed + pages * per, 2)
+    raise ValueError("too many pages")
+
+
+def royalty(price: float, pages: int, ink: str, currency: str) -> float:
+    rate = KDP["royalty"]["high"] if price >= KDP["royalty"]["from"] else KDP["royalty"]["low"]
+    return round(rate * price - print_cost(pages, ink, currency), 2)
+
+
+def suggest_price(pages: int, ink: str, currency: str, floor: float = 0.0) -> dict:
+    """The first .99 price at or above 9.99 that leaves at least ~3 (EUR/USD) per
+    copy — 60 % only starts at 9.99, and below it 50 % of a cheap book is
+    almost nothing after printing."""
+    cost = print_cost(pages, ink, currency)
+    price = max(9.99, floor)
+    while royalty(price, pages, ink, currency) < 3.0 and price < 40:
+        price = math.floor(price) + 1.99 if price % 1 > 0.98 else price + 1.0
+        price = round(math.floor(price) + 0.99, 2)
+    return {"currency": currency, "price": price, "printing": cost, "royalty": royalty(price, pages, ink, currency),
+            "rate": "60 %" if price >= KDP["royalty"]["from"] else "50 %"}
+
+
+def even(n: int) -> int:
+    return n + (n % 2)
+
+
+# ─────────────────────────────────────────────────────────────── drawing kit
+def cairo_mods():
+    import cairo                                                   # noqa: PLC0415
+    import gi                                                      # noqa: PLC0415
+    gi.require_version("Pango", "1.0")
+    gi.require_version("PangoCairo", "1.0")
+    from gi.repository import Pango, PangoCairo                    # noqa: PLC0415
+    return cairo, Pango, PangoCairo
+
+
+class Doc:
+    """One PDF: pages of one size (inches), drawn with cairo in points.
+    `page()` starts a page and returns the context; text goes through Pango
+    (real wrapping, kerning, embedded fonts)."""
+
+    def __init__(self, path: str, w_in: float, h_in: float):
+        self.cairo, self.Pango, self.PangoCairo = cairo_mods()
+        self.w, self.h = w_in * PT, h_in * PT
+        self.surface = self.cairo.PDFSurface(path, self.w, self.h)
+        try:
+            self.surface.set_metadata(self.cairo.PDFMetadata.CREATOR, "Velvet · velly book studio")
+        except Exception:                                          # noqa: BLE001
+            pass
+        self.ctx = self.cairo.Context(self.surface)
+        self.count = 0
+        self.started = False
+
+    def page(self):
+        if self.started:
+            self.ctx.show_page()
+        self.started = True
+        self.count += 1
+        self.ctx.save()
+        self.ctx.set_source_rgb(1, 1, 1)
+        self.ctx.paint()
+        self.ctx.restore()
+        return self.ctx
+
+    def close(self) -> int:
+        if not self.started:
+            self.page()
+        self.surface.finish()
+        return self.count
+
+    # text
+    def layout(self, text: str, font: str, size: float, width: float = 0, align: str = "left",
+               spacing: float = 1.0, markup: bool = False):
+        lay = self.PangoCairo.create_layout(self.ctx)
+        # points are points: PangoCairo assumes 96 dpi, the PDF has 72 units an inch
+        self.PangoCairo.context_set_resolution(lay.get_context(), 72)
+        lay.context_changed()
+        desc = self.Pango.FontDescription.from_string(f"{font} {size}")
+        lay.set_font_description(desc)
+        if width:
+            lay.set_width(int(width * self.Pango.SCALE))
+            lay.set_wrap(self.Pango.WrapMode.WORD)
+        lay.set_alignment({"center": self.Pango.Alignment.CENTER, "right": self.Pango.Alignment.RIGHT}.get(
+            align, self.Pango.Alignment.LEFT))
+        if spacing != 1.0:
+            try:
+                lay.set_line_spacing(spacing)
+            except Exception:                                      # noqa: BLE001
+                pass
+        if markup:
+            lay.set_markup(text, -1)
+        else:
+            lay.set_text(text, -1)
+        return lay
+
+    def text(self, x: float, y: float, text: str, font: str = "Noto Sans", size: float = 12, width: float = 0,
+             align: str = "left", rgb=(0, 0, 0), spacing: float = 1.0, markup: bool = False) -> float:
+        """Draws and returns the height."""
+        lay = self.layout(text, font, size, width, align, spacing, markup)
+        self.ctx.save()
+        self.ctx.set_source_rgb(*rgb)
+        self.ctx.move_to(x, y)
+        self.PangoCairo.show_layout(self.ctx, lay)
+        self.ctx.restore()
+        return lay.get_pixel_extents()[1].height
+
+    def measure(self, text: str, font: str, size: float, width: float = 0, spacing: float = 1.0):
+        lay = self.layout(text, font, size, width, "left", spacing)
+        ext = lay.get_pixel_extents()[1]
+        return ext.width, ext.height
+
+    def fit(self, text: str, font: str, size: float, width: float, height: float, spacing: float = 1.0,
+            least: float = 6) -> float:
+        """The largest size ≤ `size` at which `text` fits the box."""
+        s = size
+        while s > least:
+            _w, h = self.measure(text, font, s, width, spacing)
+            if h <= height:
+                return s
+            s -= 0.5
+        return least
+
+    def image(self, path: str, x: float, y: float, w: float, h: float, cover: bool = True) -> None:
+        """A picture into a box (points): a JPEG goes into the PDF as it is
+        (no re-encoding, no bloat); `cover` fills the box and crops."""
+        from PIL import Image                                       # noqa: PLC0415
+        im = Image.open(path).convert("RGB")
+        iw, ih = im.size
+        scale = max(w / iw, h / ih) if cover else min(w / iw, h / ih)
+        dw, dh = iw * scale, ih * scale
+        ox, oy = x + (w - dw) / 2, y + (h - dh) / 2
+        tmp = None
+        if not path.lower().endswith((".jpg", ".jpeg")):
+            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            im.save(tmp.name, quality=93, subsampling=0)
+            jpeg = tmp.name
+        else:
+            jpeg = path
+        data = open(jpeg, "rb").read()
+        surf = self.cairo.ImageSurface(self.cairo.FORMAT_RGB24, iw, ih)
+        surf.set_mime_data(self.cairo.MIME_TYPE_JPEG, data)
+        self.ctx.save()
+        self.ctx.rectangle(x, y, w, h)
+        self.ctx.clip()
+        self.ctx.translate(ox, oy)
+        self.ctx.scale(scale, scale)
+        self.ctx.set_source_surface(surf, 0, 0)
+        self.ctx.paint()
+        self.ctx.restore()
+        if tmp:
+            os.unlink(tmp.name)
+
+
+def preview_pdf(pdf: str, out_dir: str, dpi: int = 40, first: int = 1, last: int = 0) -> list:
+    """Small PNGs of the pages (pdftoppm), for the review page."""
+    os.makedirs(out_dir, exist_ok=True)
+    for old in glob.glob(os.path.join(out_dir, "p-*.png")):
+        os.unlink(old)
+    cmd = ["pdftoppm", "-png", "-r", str(dpi), "-f", str(first)] + (["-l", str(last)] if last else []) + \
+          [pdf, os.path.join(out_dir, "p")]
+    subprocess.run(cmd, capture_output=True, timeout=600)
+    return sorted(glob.glob(os.path.join(out_dir, "p-*.png")))
+
+
+# ────────────────────────────────────────────────────────────────── mandalas
+class Mandala:
+    """A mandala as closed shapes in rings — every shape a region to colour.
+    Seeded: the same seed draws the same mandala. `bold` (children): fewer,
+    bigger shapes and thicker lines."""
+
+    MOTIFS = ("petals", "petals2", "scallops", "dots", "teardrops", "leaves", "zigzag", "lattice", "rays", "hearts")
+
+    def __init__(self, seed: int, bold: bool = False):
+        self.rng = random.Random(seed)
+        self.bold = bold
+        self.n = self.rng.choice([8, 10, 12, 12, 16] if not bold else [6, 8, 8, 10])
+        rings, r = [], self.rng.uniform(0.07, 0.11)
+        widths = (0.10, 0.17) if bold else (0.06, 0.12)
+        last = None
+        while r < 0.97:
+            w = min(0.97 - r, self.rng.uniform(*widths))
+            if w < 0.035:
+                break
+            motif = self.rng.choice([m for m in self.MOTIFS if m != last])
+            last = motif
+            mult = self.rng.choice([1, 1, 2]) if motif in ("dots", "scallops", "zigzag", "rays") else 1
+            rings.append({"r0": r, "r1": r + w, "motif": motif, "k": self.n * mult, "border": self.rng.random() < 0.88,
+                          "phase": self.rng.choice([0.0, 0.5])})
+            r += w
+        self.rings = rings
+        self.core = self.rng.choice(["flower", "circle", "star"])
+        self.line = 3.2 if bold else 1.7
+
+    # every shape as a path builder: fn(ctx, cx, cy, R)
+    def shapes(self):
+        out = []
+        r0c = self.rings[0]["r0"] if self.rings else 0.1
+        out.append(("core", -1, self._core(r0c)))
+        for i, ring in enumerate(self.rings):
+            for s in self._ring(ring):
+                motif, build = s if isinstance(s, tuple) else (ring["motif"], s)
+                out.append((motif, i, build))
+        return out
+
+    def _core(self, r):
+        kind = self.core
+        n = self.n
+
+        def draw(ctx, cx, cy, R):
+            rr = r * R
+            if kind == "circle":
+                ctx.new_sub_path()
+                ctx.arc(cx, cy, rr * 0.95, 0, 2 * math.pi)
+                ctx.close_path()
+                ctx.new_sub_path()
+                ctx.arc(cx, cy, rr * 0.45, 0, 2 * math.pi)
+                ctx.close_path()
+            elif kind == "star":
+                pts = []
+                for j in range(n * 2):
+                    a = j * math.pi / n - math.pi / 2
+                    rad = rr * (0.95 if j % 2 == 0 else 0.45)
+                    pts.append((cx + rad * math.cos(a), cy + rad * math.sin(a)))
+                ctx.move_to(*pts[0])
+                for p in pts[1:]:
+                    ctx.line_to(*p)
+                ctx.close_path()
+            else:
+                for j in range(n):
+                    a = j * 2 * math.pi / n
+                    petal(ctx, cx, cy, 0.0, rr * 0.95, a, math.pi / n * 0.95)
+        return draw
+
+    def _ring(self, ring):
+        r0, r1, k, motif, ph = ring["r0"], ring["r1"], ring["k"], ring["motif"], ring["phase"]
+        step = 2 * math.pi / k
+        shapes = []
+        if ring["border"]:
+            # a boundary, not a region: drawn, never filled
+            shapes.append(("border", lambda ctx, cx, cy, R, r=r1: circle(ctx, cx, cy, r * R)))
+        for j in range(k):
+            a = (j + ph) * step
+            if motif == "petals":
+                shapes.append(lambda ctx, cx, cy, R, a=a: petal(ctx, cx, cy, r0 * R, r1 * R, a, step * 0.48))
+            elif motif == "petals2":
+                shapes.append(lambda ctx, cx, cy, R, a=a: petal(ctx, cx, cy, r0 * R, r1 * R, a, step * 0.5))
+                shapes.append(lambda ctx, cx, cy, R, a=a: petal(ctx, cx, cy, r0 * R, (r0 + (r1 - r0) * 0.62) * R,
+                                                                a, step * 0.25))
+            elif motif == "scallops":
+                shapes.append(lambda ctx, cx, cy, R, a=a: scallop(ctx, cx, cy, r0 * R, r1 * R, a, step))
+            elif motif == "dots":
+                rad = min((r1 - r0) * 0.38, math.sin(step / 2) * (r0 + r1) / 2 * 0.8)
+                shapes.append(lambda ctx, cx, cy, R, a=a, rad=rad: circle(
+                    ctx, cx + (r0 + r1) / 2 * R * math.cos(a), cy + (r0 + r1) / 2 * R * math.sin(a), rad * R))
+            elif motif == "teardrops":
+                shapes.append(lambda ctx, cx, cy, R, a=a: teardrop(ctx, cx, cy, r0 * R, r1 * R, a, step * 0.42))
+            elif motif == "leaves":
+                shapes.append(lambda ctx, cx, cy, R, a=a: leaf(ctx, cx, cy, r0 * R, r1 * R, a, step * 0.55))
+            elif motif == "zigzag":
+                shapes.append(lambda ctx, cx, cy, R, a=a: tooth(ctx, cx, cy, r0 * R, r1 * R, a, step))
+            elif motif == "lattice":
+                shapes.append(lambda ctx, cx, cy, R, a=a: lattice_cell(ctx, cx, cy, r0 * R, r1 * R, a, step))
+            elif motif == "rays":
+                shapes.append(lambda ctx, cx, cy, R, a=a: ray(ctx, cx, cy, r0 * R, r1 * R, a))
+            elif motif == "hearts":
+                shapes.append(lambda ctx, cx, cy, R, a=a: heart(ctx, cx, cy, r0 * R, r1 * R, a, step * 0.42))
+        return shapes
+
+    def draw(self, ctx, cx: float, cy: float, R: float, fills=None, line_rgb=(0, 0, 0)) -> None:
+        """Outlines only (a page to colour), or with `fills` — a palette —
+        coloured in (the cover)."""
+        ctx.save()
+        ctx.set_line_join(1)          # round
+        ctx.set_line_cap(1)
+        ctx.set_fill_rule(1)          # even-odd: a dot inside a drop stays a hole
+        if fills:
+            # ring grounds first, outermost first, then every shape filled
+            for i in range(len(self.rings) - 1, -1, -1):
+                ctx.new_path()
+                circle(ctx, cx, cy, self.rings[i]["r1"] * R)
+                ctx.set_source_rgb(*fills[(i * 2 + 1) % len(fills)])
+                ctx.fill()
+        for motif, ring, build in self.shapes():
+            ctx.new_path()
+            build(ctx, cx, cy, R)
+            if fills and motif not in ("rays", "border"):
+                ctx.set_source_rgb(*fills[(ring + 2) % len(fills)])
+                ctx.fill_preserve()
+            ctx.set_source_rgb(*line_rgb)
+            ctx.set_line_width(self.line * (1.0 if motif != "rays" else 0.8))
+            ctx.stroke()
+        ctx.restore()
+
+
+def circle(ctx, cx, cy, r):
+    ctx.new_sub_path()
+    ctx.arc(cx, cy, r, 0, 2 * math.pi)
+    ctx.close_path()
+
+
+def polar(cx, cy, r, a):
+    return cx + r * math.cos(a), cy + r * math.sin(a)
+
+
+def petal(ctx, cx, cy, r0, r1, a, half):
+    """An almond from r0 to r1 around angle a, `half` its half-width (rad)."""
+    base = polar(cx, cy, r0, a)
+    tip = polar(cx, cy, r1, a)
+    near = r0 + (r1 - r0) * 0.15
+    mid = r0 + (r1 - r0) * 0.55
+    ctx.new_sub_path()
+    ctx.move_to(*base)
+    ctx.curve_to(*polar(cx, cy, near, a - half * 0.9), *polar(cx, cy, mid, a - half), *tip)
+    ctx.curve_to(*polar(cx, cy, mid, a + half), *polar(cx, cy, near, a + half * 0.9), *base)
+    ctx.close_path()
+
+
+def frame(ctx, cx, cy, r, a):
+    """A local frame at radius r, angle a: x along the ring, y outward.
+    (The path keeps device coordinates, so save/restore around a shape is safe.)"""
+    ctx.save()
+    ctx.translate(*polar(cx, cy, r, a))
+    ctx.rotate(a - math.pi / 2)
+
+
+def teardrop(ctx, cx, cy, r0, r1, a, half):
+    """Round at the inside, pointed outward, a dot in the round end."""
+    rm = (r0 + r1) / 2
+    h = (r1 - r0) * 0.9
+    w = min(h * 0.74, 2 * rm * math.sin(half))
+    yc = -h / 2 + w / 2
+    frame(ctx, cx, cy, rm, a)
+    ctx.new_sub_path()
+    ctx.move_to(0, h / 2)
+    ctx.curve_to(w * 0.15, h * 0.2, w / 2, yc + w * 0.4, w / 2, yc)
+    ctx.arc_negative(0, yc, w / 2, 0, math.pi)
+    ctx.curve_to(-w / 2, yc + w * 0.4, -w * 0.15, h * 0.2, 0, h / 2)
+    ctx.close_path()
+    ctx.new_sub_path()
+    ctx.arc(0, yc, w * 0.17, 0, 2 * math.pi)
+    ctx.close_path()
+    ctx.restore()
+
+
+def leaf(ctx, cx, cy, r0, r1, a, half):
+    petal(ctx, cx, cy, r0, r1, a, half)
+    ctx.move_to(*polar(cx, cy, r0 + (r1 - r0) * 0.08, a))
+    ctx.line_to(*polar(cx, cy, r1 - (r1 - r0) * 0.12, a))
+
+
+def scallop(ctx, cx, cy, r0, r1, a, step):
+    """An arch from r0 bulging to r1 across one step."""
+    p0 = polar(cx, cy, r0, a)
+    p1 = polar(cx, cy, r0, a + step)
+    ctx.move_to(*p0)
+    ctx.curve_to(*polar(cx, cy, r1 * 1.02, a + step * 0.05), *polar(cx, cy, r1 * 1.02, a + step * 0.95), *p1)
+    ctx.arc_negative(cx, cy, r0, a + step, a)
+    ctx.close_path()
+
+
+def tooth(ctx, cx, cy, r0, r1, a, step):
+    """One tooth of a zigzag band: its own region (a closed zigzag would
+    be one region over the whole middle)."""
+    ctx.new_sub_path()
+    ctx.move_to(*polar(cx, cy, r0, a))
+    ctx.line_to(*polar(cx, cy, r1, a + step / 2))
+    ctx.line_to(*polar(cx, cy, r0, a + step))
+    ctx.arc_negative(cx, cy, r0, a + step, a)
+    ctx.close_path()
+
+
+def lattice_cell(ctx, cx, cy, r0, r1, a, step):
+    """A diamond spanning the ring."""
+    ctx.move_to(*polar(cx, cy, r0, a))
+    ctx.line_to(*polar(cx, cy, (r0 + r1) / 2, a + step / 2))
+    ctx.line_to(*polar(cx, cy, r1, a))
+    ctx.line_to(*polar(cx, cy, (r0 + r1) / 2, a - step / 2))
+    ctx.close_path()
+
+
+def ray(ctx, cx, cy, r0, r1, a):
+    ctx.move_to(*polar(cx, cy, r0, a))
+    ctx.line_to(*polar(cx, cy, r1, a))
+
+
+def heart(ctx, cx, cy, r0, r1, a, half):
+    """A heart with its tip to the centre."""
+    rm = (r0 + r1) / 2
+    h = (r1 - r0) * 0.86
+    w = min(h * 1.05, 2 * rm * math.sin(half))
+    frame(ctx, cx, cy, rm, a)
+    ctx.new_sub_path()
+    ctx.move_to(0, -h / 2)
+    ctx.curve_to(-w * 0.1, -h * 0.3, -w / 2, -h * 0.05, -w / 2, h * 0.18)
+    ctx.curve_to(-w / 2, h * 0.42, -w * 0.22, h / 2, 0, h * 0.28)
+    ctx.curve_to(w * 0.22, h / 2, w / 2, h * 0.42, w / 2, h * 0.18)
+    ctx.curve_to(w / 2, -h * 0.05, w * 0.1, -h * 0.3, 0, -h / 2)
+    ctx.close_path()
+    ctx.restore()
+
+
+PALETTES = [
+    [(0.98, 0.84, 0.52), (0.95, 0.55, 0.40), (0.62, 0.30, 0.52), (0.29, 0.44, 0.67), (0.45, 0.72, 0.68), (0.99, 0.95, 0.86)],
+    [(0.97, 0.76, 0.80), (0.85, 0.47, 0.62), (0.47, 0.33, 0.60), (0.33, 0.62, 0.78), (0.70, 0.88, 0.86), (1.0, 0.97, 0.93)],
+    [(0.94, 0.86, 0.55), (0.55, 0.72, 0.42), (0.23, 0.50, 0.45), (0.98, 0.62, 0.30), (0.80, 0.33, 0.25), (0.98, 0.96, 0.88)],
+    [(0.62, 0.82, 0.95), (0.33, 0.55, 0.85), (0.20, 0.27, 0.55), (0.95, 0.78, 0.38), (0.98, 0.93, 0.80), (0.86, 0.45, 0.47)],
+]
+
+
+# ─────────────────────────────────────────────────────────────────── sudoku
+def sudoku_solutions(grid: list, limit: int = 2) -> int:
+    """How many solutions (stops at `limit`). Bitmask backtracking, the cell
+    with the fewest candidates first."""
+    rows = [0] * 9
+    cols = [0] * 9
+    boxes = [0] * 9
+    empty = []
+    for i, v in enumerate(grid):
+        r, c = divmod(i, 9)
+        if v:
+            bit = 1 << v
+            if rows[r] & bit or cols[c] & bit or boxes[(r // 3) * 3 + c // 3] & bit:
+                return 0
+            rows[r] |= bit
+            cols[c] |= bit
+            boxes[(r // 3) * 3 + c // 3] |= bit
+        else:
+            empty.append(i)
+    count = [0]
+
+    def walk():
+        if count[0] >= limit:
+            return
+        best, best_mask, best_n = -1, 0, 10
+        for i in empty:
+            if grid[i]:
+                continue
+            r, c = divmod(i, 9)
+            mask = ~(rows[r] | cols[c] | boxes[(r // 3) * 3 + c // 3]) & 0x3FE
+            n = bin(mask).count("1")
+            if n < best_n:
+                best, best_mask, best_n = i, mask, n
+                if n <= 1:
+                    break
+        if best < 0:
+            count[0] += 1
+            return
+        if best_n == 0:
+            return
+        r, c = divmod(best, 9)
+        b = (r // 3) * 3 + c // 3
+        for v in range(1, 10):
+            bit = 1 << v
+            if best_mask & bit:
+                grid[best] = v
+                rows[r] |= bit
+                cols[c] |= bit
+                boxes[b] |= bit
+                walk()
+                rows[r] &= ~bit
+                cols[c] &= ~bit
+                boxes[b] &= ~bit
+                grid[best] = 0
+                if count[0] >= limit:
+                    return
+
+    walk()
+    return count[0]
+
+
+def sudoku_full(rng: random.Random) -> list:
+    grid = [0] * 81
+
+    def fill(i=0):
+        if i == 81:
+            return True
+        r, c = divmod(i, 9)
+        vals = list(range(1, 10))
+        rng.shuffle(vals)
+        for v in vals:
+            if all(grid[r * 9 + x] != v for x in range(9)) and all(grid[x * 9 + c] != v for x in range(9)):
+                br, bc = (r // 3) * 3, (c // 3) * 3
+                if all(grid[(br + y) * 9 + bc + x] != v for y in range(3) for x in range(3)):
+                    grid[i] = v
+                    if fill(i + 1):
+                        return True
+                    grid[i] = 0
+        return False
+
+    fill()
+    return grid
+
+
+def singles_solve(grid: list) -> bool:
+    """Solvable with naked and hidden singles alone — the easy and medium
+    puzzles must be (no guessing)."""
+    g = list(grid)
+    units = [[r * 9 + c for c in range(9)] for r in range(9)] + [[r * 9 + c for r in range(9)] for c in range(9)] + \
+            [[(br + y) * 9 + bc + x for y in range(3) for x in range(3)] for br in (0, 3, 6) for bc in (0, 3, 6)]
+    peers = [set() for _ in range(81)]
+    for u in units:
+        for i in u:
+            peers[i].update(u)
+    for i in range(81):
+        peers[i].discard(i)
+    progress = True
+    while progress:
+        progress = False
+        cand = {}
+        for i in range(81):
+            if not g[i]:
+                cand[i] = set(range(1, 10)) - {g[p] for p in peers[i]}
+                if not cand[i]:
+                    return False
+        if not cand:
+            return True
+        for i, cs in cand.items():
+            if len(cs) == 1:
+                g[i] = cs.pop()
+                progress = True
+        if progress:
+            continue
+        for u in units:
+            for v in range(1, 10):
+                spots = [i for i in u if not g[i] and v in cand.get(i, ())]
+                if len(spots) == 1 and v not in {g[i] for i in u}:
+                    g[spots[0]] = v
+                    progress = True
+    return all(g)
+
+
+def sudoku_make(seed: int, level: str) -> dict:
+    """{level, puzzle, solution}: unique solution, rotationally symmetric
+    givens; leicht/mittel solvable without guessing."""
+    rng = random.Random(seed)
+    target = {"leicht": 38, "mittel": 31, "schwer": 26}.get(level, 31)
+    for _attempt in range(20):
+        solution = sudoku_full(rng)
+        puzzle = list(solution)
+        cells = list(range(41))
+        rng.shuffle(cells)
+        givens = 81
+        for i in cells:
+            if givens <= target:
+                break
+            j = 80 - i
+            keep = (puzzle[i], puzzle[j])
+            puzzle[i] = puzzle[j] = 0
+            if sudoku_solutions(list(puzzle)) != 1 or (level != "schwer" and not singles_solve(puzzle)):
+                puzzle[i], puzzle[j] = keep
+                continue
+            givens -= 2 if i != j else 1
+        if givens <= target + 4 and (level != "schwer" or not singles_solve(puzzle)):
+            return {"level": level, "puzzle": puzzle, "solution": solution, "givens": givens}
+    return {"level": level, "puzzle": puzzle, "solution": solution, "givens": givens}
+
+
+# ──────────────────────────────────────────────────────────────── word search
+WORDS_DE = {
+    "Tiere im Wald": "FUCHS HIRSCH REH WILDSCHWEIN EICHHÖRNCHEN DACHS IGEL EULE SPECHT HASE WOLF LUCHS MARDER "
+                     "BUSSARD AMEISE KÄFER FROSCH MAUS ELSTER WASCHBÄR",
+    "Obst und Gemüse": "APFEL BIRNE KIRSCHE PFLAUME ERDBEERE HIMBEERE BANANE TRAUBE KAROTTE GURKE TOMATE PAPRIKA "
+                       "ZWIEBEL KARTOFFEL BROKKOLI SPINAT KÜRBIS ZUCCHINI LAUCH RADIESCHEN",
+    "Berufe": "BÄCKER LEHRERIN ÄRZTIN GÄRTNER PILOT FÖRSTER TISCHLER KOCH FRISEUR MALER POLIZIST FEUERWEHR "
+              "TIERARZT ELEKTRIKER BAUER APOTHEKER FISCHER MUSIKER SCHNEIDER ZAHNARZT",
+    "Sport": "FUSSBALL TENNIS HANDBALL SCHWIMMEN RADFAHREN JOGGEN TURNEN REITEN SEGELN RUDERN SKIFAHREN BOXEN "
+             "GOLF JUDO KLETTERN TANZEN HOCKEY BASKETBALL VOLLEYBALL WANDERN",
+    "Wetter": "SONNE REGEN WOLKE NEBEL GEWITTER BLITZ DONNER SCHNEE HAGEL STURM WIND REGENBOGEN FROST TAU "
+              "NIESELN HITZE GLATTEIS SCHAUER BRISE ORKAN",
+    "Musikinstrumente": "GITARRE KLAVIER GEIGE FLÖTE TROMMEL HARFE TROMPETE POSAUNE CELLO ORGEL SAXOFON "
+                        "KLARINETTE TUBA XYLOFON HARMONIKA BRATSCHE OBOE FAGOTT BANJO TAMBURIN",
+    "Weihnachten": "TANNENBAUM KERZE GESCHENK STERN ENGEL KRIPPE PLÄTZCHEN LEBKUCHEN SCHLITTEN RENTIER GLOCKE "
+                   "ADVENT KRANZ LAMETTA NUSSKNACKER SCHNEEMANN STOLLEN GLÜHWEIN KUGEL BESCHERUNG",
+    "Im Garten": "ROSE TULPE GIESSKANNE SPATEN RASEN HECKE BEET GEWÄCHSHAUS GARTENZWERG SCHAUFEL HARKE "
+                 "VOGELHAUS KOMPOST SCHLAUCH SONNENBLUME LAVENDEL GÄNSEBLÜMCHEN BIENE SCHNECKE TEICH",
+    "In der Küche": "TOPF PFANNE LÖFFEL GABEL MESSER TELLER TASSE HERD OFEN SCHÜSSEL SIEB REIBE KESSEL "
+                    "MIXER TOASTER SCHNEEBESEN NUDELHOLZ BACKBLECH KÜHLSCHRANK SPÜLE",
+    "Am Meer": "STRAND WELLE MUSCHEL MÖWE LEUCHTTURM SANDBURG HAFEN SEGELBOOT KRABBE QUALLE DÜNE EBBE FLUT "
+               "SEESTERN DELFIN ANKER INSEL KÜSTE FISCHKUTTER STRANDKORB",
+    "Farben": "ROT BLAU GELB GRÜN ORANGE VIOLETT ROSA BRAUN SCHWARZ WEISS GRAU TÜRKIS BEIGE GOLD SILBER "
+              "PURPUR OCKER MINT LILA BORDEAUX",
+    "Kleidung": "HOSE HEMD JACKE MANTEL PULLOVER SCHAL MÜTZE HANDSCHUHE SOCKEN STIEFEL KLEID ROCK GÜRTEL "
+                "KRAWATTE BLUSE WESTE SANDALEN SCHLAFANZUG BADEHOSE REGENJACKE",
+    "Fahrzeuge": "AUTO BUS ZUG FAHRRAD MOTORRAD LASTWAGEN TRAKTOR FLUGZEUG SCHIFF ROLLER STRASSENBAHN "
+                 "HUBSCHRAUBER KRANKENWAGEN BAGGER KUTSCHE SEGELFLIEGER TAXI U-BAHN KAJAK WOHNMOBIL",
+    "Vögel": "AMSEL MEISE SPATZ RABE STORCH ADLER FALKE SCHWAN ENTE GANS TAUBE PAPAGEI PINGUIN KRANICH "
+             "KUCKUCK FINK STAR NACHTIGALL REIHER LERCHE",
+    "Blumen": "ROSE TULPE NELKE LILIE ASTER DAHLIE IRIS ORCHIDEE VEILCHEN MOHN KORNBLUME KROKUS NARZISSE "
+              "PFINGSTROSE GERBERA HORTENSIE LÖWENZAHN MARGERITE FLIEDER SCHNEEGLÖCKCHEN",
+    "Hobbys": "LESEN MALEN BACKEN STRICKEN ANGELN FOTOGRAFIEREN GÄRTNERN SINGEN TANZEN BASTELN SAMMELN "
+              "PUZZELN WANDERN KOCHEN NÄHEN SCHACH TÖPFERN ZEICHNEN CAMPEN MUSIZIEREN",
+    "Insekten": "BIENE HUMMEL WESPE AMEISE MARIENKÄFER SCHMETTERLING LIBELLE GRILLE HEUSCHRECKE FLIEGE "
+                "MÜCKE KÄFER RAUPE GLÜHWÜRMCHEN MOTTE ZIKADE HIRSCHKÄFER FLOH WANZE TERMITE",
+    "Herbst": "LAUB DRACHEN KASTANIE EICHEL PILZ NEBEL ERNTE KÜRBIS APFEL TRAUBE REGENSCHIRM GUMMISTIEFEL "
+              "LATERNE STURM WALNUSS ZUGVÖGEL OKTOBER NOVEMBER HAGEBUTTE MAIS",
+    "Frühling": "BLÜTE KNOSPE OSTERN TULPE KROKUS VOGELNEST LAMM KÜKEN SONNENSCHEIN REGENSCHAUER MÄRZ "
+                "APRIL MAI BIENE SCHMETTERLING GRAS FRÜHLINGSFEST KIRSCHBLÜTE PICKNICK LÖWENZAHN",
+    "Länder": "DEUTSCHLAND FRANKREICH ITALIEN SPANIEN PORTUGAL ÖSTERREICH SCHWEIZ POLEN SCHWEDEN NORWEGEN "
+              "DÄNEMARK FINNLAND GRIECHENLAND IRLAND KANADA BRASILIEN JAPAN INDIEN ÄGYPTEN MEXIKO",
+    "Städte": "BERLIN HAMBURG MÜNCHEN KÖLN FRANKFURT STUTTGART DÜSSELDORF LEIPZIG DORTMUND ESSEN BREMEN "
+              "DRESDEN HANNOVER NÜRNBERG BONN MÜNSTER KIEL ROSTOCK AUGSBURG FREIBURG",
+    "Märchen": "PRINZESSIN PRINZ HEXE ZAUBERER DRACHE RITTER SCHLOSS KÖNIG KÖNIGIN ZWERG RIESE FEE ELFE "
+               "FROSCHKÖNIG ROTKÄPPCHEN ASCHENPUTTEL RAPUNZEL SCHNEEWITTCHEN DORNRÖSCHEN WOLF",
+    "Zuhause": "SOFA SESSEL TISCH STUHL BETT SCHRANK REGAL LAMPE TEPPICH VORHANG FENSTER TÜR TREPPE "
+               "BALKON KELLER DACHBODEN BADEWANNE SPIEGEL KAMIN KISSEN",
+    "Urlaub": "KOFFER REISEPASS FLUGHAFEN HOTEL STRAND SONNENBRILLE SONNENCREME AUSFLUG ZELT WOHNWAGEN "
+              "POSTKARTE MUSEUM BERGE WANDERWEG SOUVENIR RUCKSACK FERIEN LANDKARTE CAMPING SEE",
+    "Körper": "KOPF HAAR AUGE OHR NASE MUND ZAHN ZUNGE HALS SCHULTER ARM ELLBOGEN HAND FINGER BAUCH "
+              "RÜCKEN KNIE FUSS ZEHE HERZ",
+}
+
+GERMAN_FILL = "EEEEEEENNNNNIIIIISSSSRRRRAAAAATTTTDDDHHHUUULLLCCGGMMOOBBWWFFKZPVÜÄÖJY"
+
+
+def ws_word(w: str) -> str:
+    return w.upper().replace("ß", "SS").replace("-", "").replace(" ", "")
+
+
+def wordsearch_make(seed: int, words: list, size: int, hard: bool) -> dict:
+    rng = random.Random(seed)
+    dirs = [(0, 1), (1, 0), (1, 1)] + ([(0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)] if hard else [(-1, 1)])
+    grid = [["" for _ in range(size)] for _ in range(size)]
+    placed = []
+    for word in sorted({ws_word(w) for w in words if 3 <= len(ws_word(w)) <= size}, key=len, reverse=True):
+        for _try in range(300):
+            dr, dc = rng.choice(dirs)
+            r0 = rng.randrange(size)
+            c0 = rng.randrange(size)
+            r1, c1 = r0 + dr * (len(word) - 1), c0 + dc * (len(word) - 1)
+            if not (0 <= r1 < size and 0 <= c1 < size):
+                continue
+            if all(grid[r0 + dr * i][c0 + dc * i] in ("", ch) for i, ch in enumerate(word)):
+                for i, ch in enumerate(word):
+                    grid[r0 + dr * i][c0 + dc * i] = ch
+                placed.append({"word": word, "r": r0, "c": c0, "dr": dr, "dc": dc})
+                break
+    for r in range(size):
+        for c in range(size):
+            if not grid[r][c]:
+                grid[r][c] = rng.choice(GERMAN_FILL)
+    placed.sort(key=lambda p: p["word"])
+    return {"size": size, "grid": ["".join(row) for row in grid], "words": placed}
+
+
+# ───────────────────────────────────────────────────────────────────── mazes
+def maze_make(seed: int, cols: int, rows: int) -> dict:
+    """A perfect maze (one way between any two cells), recursive backtracker;
+    walls as bits per cell: 1 north, 2 east, 4 south, 8 west."""
+    rng = random.Random(seed)
+    cells = [15] * (cols * rows)
+    seen = [False] * (cols * rows)
+    stack = [0]
+    seen[0] = True
+    moves = [(0, -1, 1, 4), (1, 0, 2, 8), (0, 1, 4, 1), (-1, 0, 8, 2)]
+    while stack:
+        cur = stack[-1]
+        x, y = cur % cols, cur // cols
+        options = [(x + dx, y + dy, a, b) for dx, dy, a, b in moves
+                   if 0 <= x + dx < cols and 0 <= y + dy < rows and not seen[(y + dy) * cols + x + dx]]
+        if not options:
+            stack.pop()
+            continue
+        nx, ny, a, b = rng.choice(options)
+        nxt = ny * cols + nx
+        cells[cur] &= ~a
+        cells[nxt] &= ~b
+        seen[nxt] = True
+        stack.append(nxt)
+    # the way through: breadth-first from the entrance (top left) to the exit (bottom right)
+    prev = {0: None}
+    queue = [0]
+    while queue:
+        cur = queue.pop(0)
+        if cur == cols * rows - 1:
+            break
+        x, y = cur % cols, cur // cols
+        for dx, dy, a, _b in moves:
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < cols and 0 <= ny < rows and not cells[cur] & a and ny * cols + nx not in prev:
+                prev[ny * cols + nx] = cur
+                queue.append(ny * cols + nx)
+    path, cur = [], cols * rows - 1
+    while cur is not None:
+        path.append(cur)
+        cur = prev.get(cur)
+    return {"cols": cols, "rows": rows, "cells": cells, "path": path[::-1]}
+
+
+# ──────────────────────────────────────────────────────────── the local brain
+#  The night writes with the LOCAL brain only: free, private, nothing leaves
+#  the PC (a cloud key would cost money while you sleep). velvet-local starts
+#  the server; the touch file keeps it up while she writes.
+def touch_night() -> None:
+    try:
+        os.makedirs(CONF_DIR, exist_ok=True)
+        with open(NIGHT_TOUCH, "a", encoding="utf-8"):
+            pass
+        os.utime(NIGHT_TOUCH, None)
+    except OSError:
+        pass
+
+
+def brain_health(timeout: float = 1.0) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{LOCAL_PORT}/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:                                              # noqa: BLE001
+        return False
+
+
+def brain_ready(wait: float = 240.0) -> bool:
+    if brain_health():
+        return True
+    if os.environ.get("VELVET_BOOKS_NO_BRAIN") or not os.path.isfile(os.path.join(DATA_DIR, "models", "brain.gguf")):
+        return False
+    local = os.path.join(BIN, "velvet-local")
+    if not os.path.isfile(local):
+        return False
+    touch_night()
+    try:
+        subprocess.Popen([sys.executable, local, "serve", "--idle", "300"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return False
+    end = time.monotonic() + wait
+    while time.monotonic() < end and not stopping():
+        if brain_health():
+            return True
+        time.sleep(1.0)
+    return False
+
+
+def brain_family() -> str:
+    running = str(read_json(os.path.join(CONF_DIR, "ai-local.json"), {}).get("model") or "")
+    if not running:
+        try:
+            running = os.path.basename(os.path.realpath(os.path.join(DATA_DIR, "models", "brain.gguf")))
+        except OSError:
+            running = ""
+    return "gpt-oss" if "oss" in running.lower() else "qwen"
+
+
+def chat(messages: list, effort: str = "high", max_tokens: int = 4000, temperature: float = 0.7) -> str:
+    """One answer from the local brain (no tools, no streaming)."""
+    if not brain_ready():
+        raise RuntimeError("the local brain is not there (Velly → SETUP)")
+    touch_night()
+    payload = {"model": "velvet", "messages": messages, "stream": False, "temperature": temperature,
+               "max_tokens": int(max_tokens) + ({"high": 6000, "medium": 2500}.get(effort, 800)
+                                                if brain_family() == "gpt-oss" else 0)}
+    if brain_family() == "gpt-oss":
+        payload["chat_template_kwargs"] = {"reasoning_effort": effort}
+        payload.update({"top_p": 1.0, "top_k": 0, "min_p": 0.0})
+    else:
+        payload.update({"top_p": 0.9, "top_k": 40, "min_p": 0.03, "repeat_penalty": 1.05})
+    req = urllib.request.Request(f"http://127.0.0.1:{LOCAL_PORT}/v1/chat/completions",
+                                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=900) as resp:
+            data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"the brain said HTTP {exc.code}") from exc
+    finally:
+        touch_night()
+    msg = ((data.get("choices") or [{}])[0].get("message") or {})
+    text = str(msg.get("content") or "")
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    text = re.sub(r"<\|[a-z_]+\|>(?:analysis|final|commentary)?", "", text)
+    return text.strip()
+
+
+def chat_json(system: str, user: str, effort: str = "high", max_tokens: int = 4000, tries: int = 3):
+    """A JSON answer: the first {...} or [...] in what comes back, asked
+    again (colder) when it does not parse."""
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    last = ""
+    for attempt in range(tries):
+        if stopping():
+            raise InterruptedError()
+        last = chat(messages, effort, max_tokens, temperature=0.7 if attempt == 0 else 0.4)
+        found = first_json(last)
+        if found is not None:
+            return found
+        messages = messages + [{"role": "assistant", "content": last[:4000]},
+                               {"role": "user", "content": "Das war kein gültiges JSON. Antworte NUR mit dem JSON, "
+                                                           "ohne Text davor oder danach."}]
+    raise RuntimeError(f"the brain gave no JSON: {last[:160]!r}")
+
+
+def first_json(text: str):
+    t = str(text or "")
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", t.strip())
+    for open_ch, close_ch in (("{", "}"), ("[", "]")):
+        start = t.find(open_ch)
+        while start >= 0:
+            depth, in_str, esc = 0, False, False
+            for i in range(start, len(t)):
+                ch = t[i]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                elif ch == '"':
+                    in_str = True
+                elif ch == open_ch:
+                    depth += 1
+                elif ch == close_ch:
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(t[start:i + 1])
+                        except ValueError:
+                            break
+            start = t.find(open_ch, start + 1)
+    return None
+
+
+# ──────────────────────────────────────────────────────────── the picture engine
+#  stable-diffusion.cpp (Vulkan) + Z-Image-Turbo (Apache-2.0 — the pictures
+#  may be sold), the FLUX VAE, and as text encoder the Qwen3-4B brain that is
+#  already on disk for Velly (brain-4b.gguf). Nothing of it downloads by
+#  itself: `velvet-books engine setup` is started by the user.
+ENGINE = {
+    "release": "master-959-d637cfb",
+    "zip": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-959-d637cfb/"
+           "sd-master-d637cfb-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip",
+    "zip_mb": 37,
+    "files": [
+        {"name": "z_image_turbo-Q8_0.gguf", "mb": 6577,
+         "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q8_0.gguf",
+         "sha256": "df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1"},
+        {"name": "ae.safetensors", "mb": 335,
+         "url": "https://huggingface.co/Comfy-Org/Z-Image-Turbo/resolve/main/split_files/vae/ae.safetensors",
+         "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"},
+    ],
+    "encoder": os.path.join(DATA_DIR, "models", "brain-4b.gguf"),
+    "encoder_url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "encoder_mb": 2497,
+}
+
+
+def engine_bin() -> str:
+    for name in ("sd-cli", "sd"):
+        hits = [p for p in glob.glob(os.path.join(ENGINE_DIR, "**", name), recursive=True)
+                if os.path.isfile(p) and os.access(p, os.X_OK)]
+        if hits:
+            return sorted(hits)[0]
+    return ""
+
+
+def engine_status() -> dict:
+    if os.environ.get("VELVET_BOOKS_FAKE_PAINT"):
+        return {"ok": True, "binary": "fake", "models": {}, "encoder": True, "missing_mb": 0, "model": "test painter"}
+    files = {f["name"]: os.path.join(IMAGE_MODELS, f["name"]) for f in ENGINE["files"]}
+    have = {n: os.path.isfile(p) and os.path.getsize(p) > 1_000_000 for n, p in files.items()}
+    encoder = os.path.isfile(ENGINE["encoder"])
+    ok = bool(engine_bin()) and all(have.values()) and encoder
+    missing_mb = (0 if engine_bin() else ENGINE["zip_mb"]) + sum(f["mb"] for f in ENGINE["files"] if not have[f["name"]]) \
+        + (0 if encoder else ENGINE["encoder_mb"])
+    return {"ok": ok, "binary": engine_bin(), "models": have, "encoder": encoder, "missing_mb": missing_mb,
+            "model": "Z-Image-Turbo (Apache-2.0)"}
+
+
+def engine_setup() -> int:
+    """The download — only ever started by the user (a button or this
+    command). Says what, from where and how big before each file, checks
+    every model against its SHA-256."""
+    os.makedirs(IMAGE_MODELS, exist_ok=True)
+    os.makedirs(ENGINE_DIR, exist_ok=True)
+    plan = []
+    if not engine_bin():
+        plan.append(("stable-diffusion.cpp (Vulkan)", ENGINE["zip"], os.path.join(ENGINE_DIR, "sd.zip"), ENGINE["zip_mb"], ""))
+    for f in ENGINE["files"]:
+        dest = os.path.join(IMAGE_MODELS, f["name"])
+        if not (os.path.isfile(dest) and os.path.getsize(dest) > 1_000_000):
+            plan.append((f["name"], f["url"], dest, f["mb"], f["sha256"]))
+    if not os.path.isfile(ENGINE["encoder"]):
+        plan.append(("Qwen3-4B (text encoder)", ENGINE["encoder_url"], ENGINE["encoder"], ENGINE["encoder_mb"], ""))
+    if not plan:
+        print("The picture engine is complete.")
+        return 0
+    print("The picture engine needs (nothing else is fetched):")
+    for label, url, _dest, mb, _sha in plan:
+        print(f"  · {label}: {mb / 1000:.2f} GB  ←  {url}")
+    for label, url, dest, mb, sha in plan:
+        print(f"\n{label} ({mb} MB) …", flush=True)
+        part = dest + ".part"
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp, open(part, "wb") as out:
+                total = int(resp.headers.get("Content-Length") or 0)
+                got, last = 0, 0.0
+                digest = hashlib.sha256()
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    digest.update(chunk)
+                    got += len(chunk)
+                    if time.monotonic() - last > 1.0:
+                        last = time.monotonic()
+                        pct = f"{got * 100 / total:5.1f} %" if total else f"{got >> 20} MB"
+                        print(f"\r  {pct}", end="", flush=True)
+            if sha and digest.hexdigest() != sha:
+                os.unlink(part)
+                print(f"\n  checksum wrong — {label} was not kept")
+                return 1
+            os.replace(part, dest)
+            print("\r  done.      ")
+        except Exception as exc:                                    # noqa: BLE001
+            print(f"\n  failed: {exc}")
+            return 1
+        if dest.endswith("sd.zip"):
+            import zipfile                                          # noqa: PLC0415
+            with zipfile.ZipFile(dest) as zf:
+                zf.extractall(ENGINE_DIR)
+            os.unlink(dest)
+            for p in glob.glob(os.path.join(ENGINE_DIR, "**", "*"), recursive=True):
+                if os.path.basename(p) in ("sd-cli", "sd", "sd-server"):
+                    os.chmod(p, 0o755)
+    print("\nThe picture engine is ready." if engine_status()["ok"] else "\nSomething is still missing.")
+    return 0 if engine_status()["ok"] else 1
+
+
+def gpu_game() -> bool:
+    try:
+        sys.path.insert(0, BIN)
+        import _gpu                                                 # noqa: PLC0415
+        return bool(_gpu.game_running())
+    except Exception:                                               # noqa: BLE001
+        return False
+
+
+def free_gpu_for_pictures() -> None:
+    """The brain holds ~12 GB of the card; the painter needs it. Only when no
+    Velly session is open (then she is talking to someone)."""
+    session = read_json(os.path.join(CONF_DIR, "ai-session.json"), {})
+    if isinstance(session, dict) and session.get("active") and float(session.get("until") or 0) > time.time() * 1000:
+        return
+    if brain_health(0.5):
+        subprocess.run([sys.executable, os.path.join(BIN, "velvet-local"), "stop"], capture_output=True, timeout=60)
+
+
+def paint(prompt: str, out: str, width: int, height: int, seed: int, steps: int = 9) -> bool:
+    """One picture with the engine (PNG). Stops (and kills the painter) when
+    the studio is told to stop."""
+    status = engine_status()
+    if not status["ok"]:
+        raise RuntimeError("the picture engine is not installed")
+    if status["binary"] == "fake":
+        return fake_paint(prompt, out, width, height, seed)
+    cmd = ["nice", "-n", "8", status["binary"],
+           "--diffusion-model", os.path.join(IMAGE_MODELS, ENGINE["files"][0]["name"]),
+           "--vae", os.path.join(IMAGE_MODELS, ENGINE["files"][1]["name"]),
+           "--llm", ENGINE["encoder"],
+           "-p", prompt, "--cfg-scale", "1.0", "--steps", str(steps), "-W", str(width), "-H", str(height),
+           "-s", str(seed), "-o", out]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+    while proc.poll() is None:
+        if stopping() or gpu_game():
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=20)
+            raise InterruptedError()
+        time.sleep(0.5)
+    if proc.returncode != 0 or not os.path.isfile(out):
+        err = (proc.stderr.read() if proc.stderr else b"").decode("utf-8", "replace").strip().splitlines()
+        raise RuntimeError(f"the painter failed: {err[-1][:160] if err else proc.returncode}")
+    return True
+
+
+def fake_paint(prompt: str, out: str, width: int, height: int, seed: int) -> bool:
+    """Tests only (VELVET_BOOKS_FAKE_PAINT=1): a soft gradient, a few round
+    shapes and the scene's words — enough to check every page and the cover."""
+    from PIL import Image, ImageDraw                                # noqa: PLC0415
+    rng = random.Random(seed)
+    a = [rng.randrange(90, 230) for _ in range(3)]
+    b = [rng.randrange(40, 200) for _ in range(3)]
+    im = Image.new("RGB", (width, height))
+    px = im.load()
+    for y in range(height):
+        t = y / max(1, height - 1)
+        row = tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(3))
+        for x in range(width):
+            px[x, y] = row
+    d = ImageDraw.Draw(im)
+    for _ in range(9):
+        r = rng.randrange(40, 220)
+        x, y = rng.randrange(width), rng.randrange(height)
+        d.ellipse((x - r, y - r, x + r, y + r), fill=tuple(rng.randrange(60, 255) for _ in range(3)))
+    scene = re.sub(r".*Scene: ", "", prompt)[:140]
+    d.rectangle((40, height - 160, width - 40, height - 40), fill=(255, 255, 255))
+    d.text((60, height - 140), scene[:70], fill=(0, 0, 0))
+    d.text((60, height - 110), scene[70:140], fill=(0, 0, 0))
+    im.save(out)
+    return True
+
+
+def to_print(src: str, dest: str, w_px: int, h_px: int) -> None:
+    """A painted picture at print size (300 dpi): Lanczos up, a light
+    unsharp mask, saved as a high-quality JPEG."""
+    from PIL import Image, ImageFilter                              # noqa: PLC0415
+    im = Image.open(src).convert("RGB")
+    scale = max(w_px / im.width, h_px / im.height)
+    im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+    left, top = (im.width - w_px) // 2, (im.height - h_px) // 2
+    im = im.crop((left, top, left + w_px, top + h_px))
+    im = im.filter(ImageFilter.UnsharpMask(radius=2, percent=60, threshold=2))
+    im.save(dest, quality=94, subsampling=0, dpi=(DPI, DPI))
+
+
+# ───────────────────────────────────────────────────────────────── the shelf
+# The listing comes before the pages: it may sharpen the title, and the title
+# page, the cover and KDP's metadata must say the same (KDP rejects a book
+# whose cover title differs from the listing).
+STEPS = {
+    "coloring": ["plan", "listing", "interior", "cover", "review"],
+    "puzzle": ["plan", "puzzles", "listing", "interior", "cover", "review"],
+    "picture": ["plan", "story", "edit", "art", "listing", "interior", "cover", "review"],
+}
+
+# What she makes, in turn — evergreen kinds people buy again and again. Each
+# idea is made once; then the next. (A book a night at most: KDP takes three
+# new titles a day per account, and every one needs your look and upload.)
+IDEAS = {
+    "coloring": [
+        {"key": "mandala-adults", "audience": "adults", "style": "mixed", "count": 50,
+         "title": "Mandala Malbuch für Erwachsene",
+         "subtitle": "50 entspannende Mandalas zum Ausmalen – Achtsamkeit, Ruhe und Stressabbau"},
+        {"key": "mandala-kids", "audience": "kids", "style": "mixed", "count": 40,
+         "title": "Mandalas für Kinder ab 6 Jahren",
+         "subtitle": "40 einfache Mandalas mit dicken Linien zum Ausmalen und Entspannen"},
+        {"key": "mandala-flowers", "audience": "adults", "style": "flower", "count": 50,
+         "title": "Blumen-Mandalas zum Ausmalen",
+         "subtitle": "50 florale Mandalas für Erwachsene – Blüten, Blätter und Ranken"},
+        {"key": "mandala-seniors", "audience": "seniors", "style": "mixed", "count": 40,
+         "title": "Mandala Malbuch für Senioren",
+         "subtitle": "40 klare Mandalas mit großen Flächen – leicht zu malen, schön zu sehen"},
+        {"key": "mandala-geo", "audience": "adults", "style": "geo", "count": 50,
+         "title": "Geometrische Mandalas",
+         "subtitle": "50 Muster-Mandalas zum Ausmalen für Erwachsene"},
+        {"key": "mandala-hearts", "audience": "adults", "style": "heart", "count": 40,
+         "title": "Herz-Mandalas zum Ausmalen",
+         "subtitle": "40 liebevolle Mandalas – ein Geschenk für Mama, Oma und beste Freundinnen"},
+    ],
+    "puzzle": [
+        {"key": "seniors-mix", "audience": "seniors", "mix": {"sudoku": 30, "wordsearch": 30, "maze": 10},
+         "large": True, "levels": ["leicht", "mittel"], "title": "Rätselbuch für Senioren in Großdruck",
+         "subtitle": "70 Rätsel zum Entspannen und Gedächtnistraining – Sudoku, Suchsel und Labyrinthe mit Lösungen"},
+        {"key": "sudoku-adults", "audience": "adults", "mix": {"sudoku": 150}, "large": False,
+         "levels": ["leicht", "mittel", "schwer"], "title": "Sudoku für Erwachsene",
+         "subtitle": "150 Sudokus von leicht bis schwer – mit allen Lösungen"},
+        {"key": "wordsearch-kids", "audience": "kids", "mix": {"wordsearch": 50}, "large": False,
+         "levels": ["leicht"], "title": "Suchsel für Kinder ab 8 Jahren",
+         "subtitle": "50 Wortsuchrätsel zu Tieren, Natur und Alltag – mit Lösungen"},
+        {"key": "maze-kids", "audience": "kids", "mix": {"maze": 60}, "large": False,
+         "levels": ["leicht", "mittel"], "title": "Labyrinthe für Kinder ab 6 Jahren",
+         "subtitle": "60 Irrgärten von leicht bis knifflig – mit Lösungen"},
+        {"key": "mix-adults", "audience": "adults", "mix": {"sudoku": 40, "wordsearch": 40, "maze": 20},
+         "large": False, "levels": ["leicht", "mittel", "schwer"], "title": "Rätselbuch für Erwachsene",
+         "subtitle": "100 Rätsel – Sudoku, Suchsel und Labyrinthe mit Lösungen"},
+        {"key": "wordsearch-seniors", "audience": "seniors", "mix": {"wordsearch": 60}, "large": True,
+         "levels": ["leicht"], "title": "Suchsel in Großdruck für Senioren",
+         "subtitle": "60 Wortsuchrätsel mit großer Schrift – mit Lösungen"},
+    ],
+    "picture": [
+        {"key": "fox-sleep", "idea": "Ein kleiner Fuchs kann nicht einschlafen und lernt von den Tieren der Nacht, "
+                                     "dass die Dunkelheit freundlich ist."},
+        {"key": "hedgehog-friend", "idea": "Ein schüchterner Igel findet am ersten Tag im neuen Wald eine Freundin."},
+        {"key": "dragon-dark", "idea": "Ein kleiner Drache hat Angst im Dunkeln – bis er sein eigenes Leuchten entdeckt."},
+        {"key": "cloud-rain", "idea": "Eine kleine Wolke lernt, dass ihr Regen die Blumen glücklich macht."},
+        {"key": "bear-share", "idea": "Ein Bärenkind lernt beim Picknick, dass Teilen doppelt so viel Freude macht."},
+        {"key": "rabbit-angry", "idea": "Ein Hase ist wütend und lernt mit seiner Oma, wie man die Wut sanft ziehen lässt."},
+    ],
+}
+
+
+def load_index() -> dict:
+    ix = read_json(INDEX_PATH, {})
+    if not isinstance(ix, dict):
+        ix = {}
+    ix.setdefault("books", [])
+    ix.setdefault("next", 1)
+    ix.setdefault("made", [])          # idea keys already made
+    return ix
+
+
+def save_index(ix: dict) -> None:
+    write_json(INDEX_PATH, ix)
+
+
+def book_path(book: dict, name: str = "") -> str:
+    return os.path.join(book["dir"], name) if name else book["dir"]
+
+
+def load_book(bid: str) -> dict:
+    ix = load_index()
+    for entry in ix["books"]:
+        if entry["id"] == bid or entry["id"] == str(bid).zfill(3):
+            book = read_json(os.path.join(entry["dir"], "book.json"), None)
+            if isinstance(book, dict):
+                return book
+    raise KeyError(f"no book {bid}")
+
+
+def save_book(book: dict) -> None:
+    book["updated"] = datetime.datetime.now().isoformat(timespec="seconds")
+    write_json(book_path(book, "book.json"), book)
+    ix = load_index()
+    row = {"id": book["id"], "dir": book["dir"], "kind": book["kind"], "title": book.get("title", ""),
+           "state": book.get("state", ""), "step": book.get("step", ""), "created": book.get("created", ""),
+           "uploaded": book.get("uploaded", "")}
+    ix["books"] = [b for b in ix["books"] if b["id"] != book["id"]] + [row]
+    ix["books"].sort(key=lambda b: b["id"])
+    save_index(ix)
+
+
+def note(book: dict, text: str) -> None:
+    book.setdefault("log", []).append(f"{datetime.datetime.now().strftime('%d.%m. %H:%M')} · {text}")
+    book["log"] = book["log"][-60:]
+    log(f"{book['id']}: {text}")
+
+
+def next_idea(kind: str, made: list):
+    for idea in IDEAS[kind]:
+        if idea["key"] not in made:
+            return dict(idea)
+    # all made once: the first again, with another seed (a "Band 2")
+    idea = dict(IDEAS[kind][len(made) % len(IDEAS[kind])])
+    idea["key"] = f"{idea['key']}-{len(made) + 1}"
+    idea["volume"] = 2 + len([m for m in made if m.startswith(idea["key"].rsplit("-", 1)[0])]) // 1
+    return idea
+
+
+def new_book(kind: str = "", idea_text: str = "", lang: str = "", audience: str = "") -> dict:
+    cfg = config()
+    ix = load_index()
+    if not kind:
+        kinds = [k for k in cfg.get("kinds") or KINDS if k in KINDS]
+        if not engine_status()["ok"]:
+            kinds = [k for k in kinds if k != "picture"] or ["puzzle"]
+        made_by_kind = {k: sum(1 for b in ix["books"] if b["kind"] == k) for k in kinds}
+        kind = min(kinds, key=lambda k: made_by_kind[k])
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind {kind!r}: coloring, puzzle or picture")
+    idea = next_idea(kind, ix["made"]) if not idea_text else {"key": f"own-{ix['next']}", "idea": idea_text}
+    if idea_text and kind != "picture":
+        idea.update(next_idea(kind, ix["made"]), key=f"own-{ix['next']}", wish=idea_text)
+    bid = str(ix["next"]).zfill(3)
+    title = idea.get("title") or ("Bilderbuch" if kind == "picture" else KINDS[kind]["label"]["de"])
+    folder = os.path.join(studio_dir(), f"{bid} {slug(title)}")
+    os.makedirs(folder, exist_ok=True)
+    spec = KINDS[kind]
+    book = {"id": bid, "kind": kind, "dir": folder, "lang": lang or cfg.get("lang") or "de",
+            "audience": audience or idea.get("audience") or cfg.get("audience") or "adults", "idea": idea,
+            "title": idea.get("title", ""), "subtitle": idea.get("subtitle", ""), "author": author_name(),
+            "trim": list(spec["trim"]), "ink": spec["ink"], "bleed": spec["bleed"],
+            "created": datetime.datetime.now().isoformat(timespec="seconds"), "seed": random.randrange(1, 2 ** 31),
+            "step": STEPS[kind][0], "done": [], "state": "working", "log": []}
+    ix["next"] += 1
+    ix["made"].append(idea["key"])
+    save_index(ix)
+    note(book, f"new {kind}: {book['title'] or idea.get('idea', '')}")
+    save_book(book)
+    return book
+
+
+def waiting_count() -> int:
+    """Finished books that still wait for your upload."""
+    return sum(1 for b in load_index()["books"] if b.get("state") == "ready")
+
+
+# ─────────────────────────────────────────────────────────── shared page parts
+INK = (0.08, 0.08, 0.10)
+SOFT = (0.42, 0.42, 0.46)
+
+
+def lang_of(book: dict) -> str:
+    return "en" if book.get("lang") == "en" else "de"
+
+
+def T(book: dict, de: str, en: str) -> str:
+    return en if lang_of(book) == "en" else de
+
+
+def copyright_page(doc: Doc, book: dict, x: float, w: float, y_bottom: float, ai_text: bool, ai_images: bool) -> None:
+    year = datetime.date.today().year
+    lines = [f"© {year} {book['author']}", T(book, "Alle Rechte vorbehalten.", "All rights reserved."), ""]
+    if ai_text or ai_images:
+        what = []
+        if ai_text:
+            what.append(T(book, "Text", "text"))
+        if ai_images:
+            what.append(T(book, "Illustrationen", "illustrations"))
+        lines.append(T(book, f"{' und '.join(what)} wurden mit Hilfe künstlicher Intelligenz erstellt "
+                             f"und von der Herausgeberin geprüft.",
+                       f"The {' and '.join(what)} were created with the help of artificial intelligence and "
+                       f"reviewed by the publisher."))
+    lines.append(T(book, "Unabhängig veröffentlicht.", "Independently published."))
+    text = "\n".join(lines)
+    _tw, th = doc.measure(text, "Noto Sans", 8.5, w, 1.25)
+    doc.text(x, y_bottom - th, text, "Noto Sans", 8.5, w, "left", SOFT, 1.25)
+
+
+def thanks_page(doc: Doc, book: dict, w: float, h: float) -> None:
+    msg = T(book, "Danke, dass du dieses Buch gewählt hast!\n\nHat es dir Freude gemacht? Eine kurze Bewertung "
+                  "auf Amazon hilft sehr – und zeigt anderen, ob es zu ihnen passt.",
+            "Thank you for choosing this book!\n\nDid you enjoy it? A short review on Amazon helps a lot – and "
+            "tells others whether it is for them.")
+    bw = w * 0.62
+    _tw, th = doc.measure(msg, "Noto Serif", 15, bw, 1.3)
+    doc.text((w - bw) / 2, h * 0.42 - th / 2, msg, "Noto Serif", 15, bw, "center", INK, 1.3)
+
+
+# ─────────────────────────────────────────────────────────────── coloring book
+def mandala_for(book: dict, i: int) -> Mandala:
+    idea = book["idea"]
+    bold = book["audience"] in ("kids", "seniors")
+    md = Mandala(book["seed"] + i * 7919, bold=bold)
+    style = idea.get("style", "mixed")
+    if style != "mixed":
+        favour = {"flower": ("petals", "petals2", "leaves", "teardrops", "dots", "scallops"),
+                  "geo": ("lattice", "zigzag", "rays", "dots", "scallops", "petals"),
+                  "heart": ("hearts", "petals", "dots", "scallops", "hearts", "teardrops")}[style]
+        rng = random.Random(book["seed"] + i)
+        for ring in md.rings:
+            if rng.random() < 0.75:
+                ring["motif"] = rng.choice(favour)
+        if style == "flower":
+            md.core = "flower"
+    return md
+
+
+def coloring_plan(book: dict) -> None:
+    idea = book["idea"]
+    count = int(idea.get("count", 50))
+    # title, copyright, "belongs to", colour test, then each mandala on a right
+    # page with an empty back (no bleeding through), a thank-you, an end page
+    book["count"] = count
+    book["pages"] = even(4 + count * 2 + 2)
+    if not book.get("title"):
+        book["title"] = idea.get("title", "Mandala Malbuch")
+        book["subtitle"] = idea.get("subtitle", "")
+    note(book, f"{count} mandalas, {book['pages']} pages")
+
+
+def coloring_interior(book: dict) -> None:
+    w_in, h_in = book["trim"]
+    path = book_path(book, "interior.pdf")
+    doc = Doc(path + ".part", w_in, h_in)
+    W, H = doc.w, doc.h
+    inside, outside = gutter_for(book["pages"]) * PT + 0.25 * PT, 0.5 * PT
+    # 1 · title
+    doc.page()
+    tw = W - 2 * 0.9 * PT
+    y = H * 0.16
+    y += doc.text(0.9 * PT, y, book["title"], "Noto Serif Bold", doc.fit(book["title"], "Noto Serif Bold", 34, tw, 120),
+                  tw, "center", INK, 1.1) + 14
+    if book.get("subtitle"):
+        y += doc.text(0.9 * PT, y, book["subtitle"], "Noto Sans", 13, tw, "center", SOFT, 1.25) + 10
+    mandala_for(book, 999).draw(doc.ctx, W / 2, H * 0.62, min(W, H) * 0.26)
+    doc.text(0.9 * PT, H - 1.1 * PT, book["author"], "Noto Sans SemiBold", 12, tw, "center", INK)
+    # 2 · copyright
+    doc.page()
+    copyright_page(doc, book, 0.9 * PT, W - 1.8 * PT, H - 0.9 * PT, False, False)
+    tip = T(book, "Tipp: Leg beim Malen mit Filzstiften ein Blatt Papier unter die Seite.",
+            "Tip: with felt pens, put a sheet of paper under the page.")
+    doc.text(0.9 * PT, H * 0.4, tip, "Noto Sans Italic", 10, W - 1.8 * PT, "center", SOFT)
+    # 3 · this book belongs to
+    doc.page()
+    doc.text(0.9 * PT, H * 0.36, T(book, "Dieses Buch gehört", "This book belongs to"), "Noto Serif SemiBold", 24,
+             W - 1.8 * PT, "center", INK)
+    doc.ctx.set_source_rgb(*SOFT)
+    doc.ctx.set_line_width(1)
+    doc.ctx.move_to(W * 0.25, H * 0.5)
+    doc.ctx.line_to(W * 0.75, H * 0.5)
+    doc.ctx.stroke()
+    mandala_for(book, 998).draw(doc.ctx, W / 2, H * 0.72, W * 0.12)
+    # 4 · test your colours
+    doc.page()
+    doc.text(0.9 * PT, 0.9 * PT, T(book, "Farben ausprobieren", "Test your colours"), "Noto Serif SemiBold", 20,
+             W - 1.8 * PT, "center", INK)
+    doc.ctx.set_line_width(1.2)
+    for r in range(7):
+        for c in range(6):
+            cx = 1.3 * PT + c * (W - 2.6 * PT) / 5
+            cy = 2.0 * PT + r * (H - 3.2 * PT) / 6.5
+            doc.ctx.new_path()
+            doc.ctx.arc(cx, cy, 0.42 * PT, 0, 2 * math.pi)
+            doc.ctx.set_source_rgb(*INK)
+            doc.ctx.stroke()
+    # the mandalas: right pages, empty backs
+    R = min(W - inside - outside, H - 1.2 * PT) / 2
+    for i in range(book["count"]):
+        if stopping():
+            raise InterruptedError()
+        doc.page()
+        cx = inside + (W - inside - outside) / 2           # right page: the gutter is on the left
+        mandala_for(book, i).draw(doc.ctx, cx, H / 2, R)
+        doc.text(0, H - 0.55 * PT, f"{i + 1}", "Noto Sans", 8, W - outside, "right", SOFT)
+        doc.page()                                           # the empty back
+    doc.page()
+    thanks_page(doc, book, W, H)
+    while doc.count < book["pages"]:
+        doc.page()
+    n = doc.close()
+    os.replace(path + ".part", path)
+    book["pages"] = n
+    note(book, f"interior.pdf: {n} pages")
+
+
+# ──────────────────────────────────────────────────────────────── puzzle book
+def puzzle_plan(book: dict) -> None:
+    idea = book["idea"]
+    rng = random.Random(book["seed"])
+    levels = idea.get("levels") or ["leicht", "mittel"]
+    items = []
+    for kind, count in idea["mix"].items():
+        for i in range(count):
+            level = levels[min(len(levels) - 1, i * len(levels) // max(1, count))]
+            items.append({"kind": kind, "level": level, "seed": rng.randrange(1, 2 ** 31)})
+    # mixed books alternate the kinds so it never gets dull; levels rise
+    if len(idea["mix"]) > 1:
+        order = {"leicht": 0, "mittel": 1, "schwer": 2}
+        items.sort(key=lambda it: (order.get(it["level"], 1), rng.random()))
+    themes = list(WORDS_DE.keys())
+    rng.shuffle(themes)
+    t = 0
+    for it in items:
+        if it["kind"] == "wordsearch":
+            it["theme"] = themes[t % len(themes)]
+            t += 1
+    book["items"] = items
+    note(book, f"{len(items)} puzzles: " + ", ".join(f"{n} {k}" for k, n in idea["mix"].items()))
+
+
+def puzzle_make(book: dict) -> None:
+    """Every puzzle with its solution, saved as it is made (resumable)."""
+    large = bool(book["idea"].get("large"))
+    made = 0
+    for it in book["items"]:
+        if "data" in it:
+            continue
+        if stopping():
+            raise InterruptedError()
+        if it["kind"] == "sudoku":
+            it["data"] = sudoku_make(it["seed"], it["level"])
+        elif it["kind"] == "wordsearch":
+            size = 13 if large else (14 if book["audience"] == "kids" else 15)
+            words = WORDS_DE[it["theme"]].split()
+            pick = random.Random(it["seed"]).sample(words, min(len(words), 12 if large else 16))
+            it["data"] = wordsearch_make(it["seed"], pick, size, hard=it["level"] == "schwer" or
+                                         (book["audience"] == "adults" and it["level"] != "leicht"))
+        elif it["kind"] == "maze":
+            dims = {"leicht": (12, 15), "mittel": (18, 23), "schwer": (24, 31)}[it["level"]]
+            if book["audience"] == "kids":
+                dims = {"leicht": (9, 11), "mittel": (13, 16), "schwer": (17, 21)}[it["level"]]
+            it["data"] = maze_make(it["seed"], *dims)
+        made += 1
+        if made % 10 == 0:
+            save_book(book)
+    pages = 4 + puzzle_pages(book) + 2
+    book["pages"] = even(pages)
+    note(book, f"puzzles made, {book['pages']} pages")
+
+
+def puzzle_pages(book: dict) -> int:
+    """Pages for puzzles and solutions, as puzzle_interior lays them out."""
+    large = bool(book["idea"].get("large"))
+    count = {"sudoku": 0, "wordsearch": 0, "maze": 0}
+    for it in book["items"]:
+        count[it["kind"]] += 1
+    per_page = {"sudoku": 1 if large else 2, "wordsearch": 1, "maze": 1}
+    per_sol = {"sudoku": 4 if large else 6, "wordsearch": 2 if large else 4, "maze": 4}
+    pages = 0
+    for kind, n in count.items():
+        if n:
+            pages += math.ceil(n / per_page[kind]) + math.ceil(n / per_sol[kind])
+    return pages + 1      # the solutions' title page
+
+
+def draw_sudoku(doc: Doc, grid: list, x: float, y: float, size: float, givens: list = None, big: bool = False) -> None:
+    ctx = doc.ctx
+    cell = size / 9
+    for i in range(10):
+        ctx.set_source_rgb(*INK)
+        ctx.set_line_width(2.4 if i % 3 == 0 else 0.7)
+        ctx.move_to(x + i * cell, y)
+        ctx.line_to(x + i * cell, y + size)
+        ctx.move_to(x, y + i * cell)
+        ctx.line_to(x + size, y + i * cell)
+        ctx.stroke()
+    font = cell * (0.56 if big else 0.52)
+    for idx, v in enumerate(grid):
+        if not v:
+            continue
+        r, c = divmod(idx, 9)
+        given = givens is None or givens[idx]
+        doc.text(x + c * cell, y + r * cell + cell * 0.18, str(v), "Noto Sans SemiBold" if given else "Noto Sans",
+                 font * 0.75, cell, "center", INK if given else (0.35, 0.45, 0.75))
+
+
+def draw_wordsearch(doc: Doc, data: dict, x: float, y: float, size: float, solved: bool = False) -> None:
+    ctx = doc.ctx
+    n = data["size"]
+    cell = size / n
+    if solved:
+        ctx.save()
+        ctx.set_line_cap(1)
+        for p in data["words"]:
+            L = len(p["word"]) - 1
+            x0, y0 = x + (p["c"] + 0.5) * cell, y + (p["r"] + 0.5) * cell
+            x1, y1 = x0 + p["dc"] * L * cell, y0 + p["dr"] * L * cell
+            ctx.set_source_rgb(0.80, 0.80, 0.84)
+            ctx.set_line_width(cell * 0.78)
+            ctx.move_to(x0, y0)
+            ctx.line_to(x1, y1)
+            ctx.stroke()
+        ctx.restore()
+    ctx.set_source_rgb(*INK)
+    ctx.set_line_width(1.2)
+    ctx.rectangle(x - cell * 0.15, y - cell * 0.15, size + cell * 0.3, size + cell * 0.3)
+    ctx.stroke()
+    for r, row in enumerate(data["grid"]):
+        for c, ch in enumerate(row):
+            doc.text(x + c * cell, y + r * cell + cell * 0.12, ch, "Noto Sans SemiBold", cell * 0.5, cell, "center", INK)
+
+
+def draw_maze(doc: Doc, data: dict, x: float, y: float, w: float, h: float, solved: bool = False,
+              labels=("START", "ZIEL")) -> None:
+    ctx = doc.ctx
+    cols, rows = data["cols"], data["rows"]
+    cell = min(w / cols, h / rows)
+    ox, oy = x + (w - cols * cell) / 2, y + (h - rows * cell) / 2
+    if solved:
+        ctx.save()
+        ctx.set_source_rgb(0.55, 0.58, 0.75)
+        ctx.set_line_width(cell * 0.28)
+        ctx.set_line_cap(1)
+        ctx.set_line_join(1)
+        for k, idx in enumerate(data["path"]):
+            cx, cy = ox + (idx % cols + 0.5) * cell, oy + (idx // cols + 0.5) * cell
+            (ctx.move_to if k == 0 else ctx.line_to)(cx, cy)
+        ctx.stroke()
+        ctx.restore()
+    ctx.set_source_rgb(*INK)
+    ctx.set_line_width(max(1.0, cell * 0.09))
+    ctx.set_line_cap(2)
+    for idx, walls in enumerate(data["cells"]):
+        cx, cy = ox + (idx % cols) * cell, oy + (idx // cols) * cell
+        if walls & 1 and idx != 0:
+            ctx.move_to(cx, cy)
+            ctx.line_to(cx + cell, cy)
+        if walls & 8:
+            ctx.move_to(cx, cy)
+            ctx.line_to(cx, cy + cell)
+        if idx // cols == rows - 1 and walls & 4 and idx != cols * rows - 1:
+            ctx.move_to(cx, cy + cell)
+            ctx.line_to(cx + cell, cy + cell)
+        if idx % cols == cols - 1 and walls & 2:
+            ctx.move_to(cx + cell, cy)
+            ctx.line_to(cx + cell, cy + cell)
+    ctx.stroke()
+    if labels and not solved:
+        doc.text(ox - 10, oy - 22, labels[0], "Noto Sans Bold", 10, 80, "left", INK)
+        doc.text(ox + cols * cell - 70, oy + rows * cell + 6, labels[1], "Noto Sans Bold", 10, 80, "right", INK)
+
+
+PUZZLE_NAMES = {"sudoku": ("Sudoku", "Sudoku"), "wordsearch": ("Suchsel", "Word search"), "maze": ("Labyrinth", "Maze")}
+LEVEL_EN = {"leicht": "easy", "mittel": "medium", "schwer": "hard"}
+
+
+def puzzle_interior(book: dict) -> None:
+    w_in, h_in = book["trim"]
+    large = bool(book["idea"].get("large"))
+    path = book_path(book, "interior.pdf")
+    doc = Doc(path + ".part", w_in, h_in)
+    W, H = doc.w, doc.h
+    gut = gutter_for(book["pages"]) * PT + 0.3 * PT
+    out = 0.55 * PT
+    top, bottom = 0.75 * PT, 0.75 * PT
+
+    def margins():
+        right_page = doc.count % 2 == 1
+        left = gut if right_page else out
+        return left, W - (out if right_page else gut)
+
+    def footer():
+        left, right = margins()
+        doc.text(left, H - 0.5 * PT, str(doc.count), "Noto Sans", 9, right - left,
+                 "right" if doc.count % 2 == 1 else "left", SOFT)
+
+    # front matter
+    doc.page()
+    tw = W - 1.8 * PT
+    y = H * 0.22
+    y += doc.text(0.9 * PT, y, book["title"], "Noto Serif Bold", doc.fit(book["title"], "Noto Serif Bold", 34, tw, 130),
+                  tw, "center", INK, 1.1) + 16
+    if book.get("subtitle"):
+        doc.text(0.9 * PT, y, book["subtitle"], "Noto Sans", 13, tw, "center", SOFT, 1.25)
+    doc.text(0.9 * PT, H - 1.2 * PT, book["author"], "Noto Sans SemiBold", 12, tw, "center", INK)
+    doc.page()
+    copyright_page(doc, book, 0.9 * PT, W - 1.8 * PT, H - 0.9 * PT, False, False)
+    doc.page()
+    left, right = margins()
+    y = top
+    y += doc.text(left, y, T(book, "So geht's", "How to play"), "Noto Serif Bold", 24, right - left, "left", INK) + 18
+    kinds = [k for k in ("sudoku", "wordsearch", "maze") if any(it["kind"] == k for it in book["items"])]
+    rules = {
+        "sudoku": T(book, "Sudoku: Trage die Ziffern 1 bis 9 so ein, dass jede Zeile, jede Spalte und jedes "
+                          "3×3-Kästchen jede Ziffer genau einmal enthält.",
+                    "Sudoku: fill in 1 to 9 so that every row, column and 3×3 box holds each digit exactly once."),
+        "wordsearch": T(book, "Suchsel: Finde alle Wörter der Liste im Buchstabengitter – waagerecht, senkrecht "
+                              "oder schräg" + (", auch rückwärts." if any(it["kind"] == "wordsearch" and it["level"] != "leicht"
+                                                                       for it in book["items"]) else "."),
+                        "Word search: find every word of the list in the grid — across, down or diagonal."),
+        "maze": T(book, "Labyrinth: Finde den Weg vom START zum ZIEL, ohne eine Wand zu kreuzen.",
+                  "Maze: find the way from START to FINISH without crossing a wall."),
+    }
+    for k in kinds:
+        y += doc.text(left, y, rules[k], "Noto Serif", 14 if large else 12, right - left, "left", INK, 1.3) + 14
+    y += 10
+    doc.text(left, y, T(book, "Alle Lösungen findest du am Ende des Buches.", "All solutions are at the back."),
+             "Noto Sans Italic", 11, right - left, "left", SOFT)
+    doc.page()                                               # an empty left page: puzzles start on the right
+    # the puzzles
+    numbers = {}
+    pending_sudoku = []
+
+    def flush_sudokus():
+        if not pending_sudoku:
+            return
+        doc.page()
+        lft, rgt = margins()
+        avail_w = rgt - lft
+        if large or len(pending_sudoku) == 1:
+            size = min(avail_w, H - top - bottom - 60) * (0.92 if large else 0.62)
+            for no, it in pending_sudoku:
+                doc.text(lft, top, f"{T(book, 'Rätsel', 'Puzzle')} {no} · Sudoku · {level_name(book, it['level'])}",
+                         "Noto Sans SemiBold", 14 if large else 12, avail_w, "left", INK)
+                draw_sudoku(doc, it["data"]["puzzle"], lft + (avail_w - size) / 2, top + 50, size, None, large)
+        else:
+            size = min(avail_w * 0.62, (H - top - bottom - 80) / 2 - 30)
+            for k, (no, it) in enumerate(pending_sudoku):
+                yy = top + k * (H - top - bottom) / 2
+                doc.text(lft, yy, f"{T(book, 'Rätsel', 'Puzzle')} {no} · Sudoku · {level_name(book, it['level'])}",
+                         "Noto Sans SemiBold", 12, avail_w, "left", INK)
+                draw_sudoku(doc, it["data"]["puzzle"], lft + (avail_w - size) / 2, yy + 28, size)
+        footer()
+        pending_sudoku.clear()
+
+    for no, it in enumerate(book["items"], start=1):
+        if stopping():
+            raise InterruptedError()
+        numbers[id(it)] = no
+        if it["kind"] == "sudoku":
+            pending_sudoku.append((no, it))
+            if large or len(pending_sudoku) == 2:
+                flush_sudokus()
+            continue
+        flush_sudokus()
+        doc.page()
+        lft, rgt = margins()
+        avail_w = rgt - lft
+        name = PUZZLE_NAMES[it["kind"]][0 if lang_of(book) == "de" else 1]
+        head = f"{T(book, 'Rätsel', 'Puzzle')} {no} · {name} · {level_name(book, it['level'])}"
+        if it["kind"] == "wordsearch":
+            head += f" · {it['theme']}"
+        doc.text(lft, top, head, "Noto Sans SemiBold", 14 if large else 12, avail_w, "left", INK)
+        if it["kind"] == "wordsearch":
+            size = avail_w * (0.98 if large else 0.9)
+            gx = lft + (avail_w - size) / 2
+            draw_wordsearch(doc, it["data"], gx, top + 44, size)
+            words = [p["word"] for p in it["data"]["words"]]
+            per = math.ceil(len(words) / 3)
+            colw = avail_w / 3
+            ybase = top + 44 + size + 26
+            for c in range(3):
+                col = "\n".join(words[c * per:(c + 1) * per])
+                doc.text(lft + c * colw, ybase, col, "Noto Sans", 14 if large else 11, colw, "left", INK, 1.35)
+        else:
+            draw_maze(doc, it["data"], lft, top + 50, avail_w, H - top - bottom - 70, False,
+                      (T(book, "START", "START"), T(book, "ZIEL", "FINISH")))
+        footer()
+    flush_sudokus()
+    # solutions
+    doc.page()
+    doc.text(0.9 * PT, H * 0.42, T(book, "Lösungen", "Solutions"), "Noto Serif Bold", 34, W - 1.8 * PT, "center", INK)
+    for kind in ("sudoku", "wordsearch", "maze"):
+        group = [it for it in book["items"] if it["kind"] == kind]
+        if not group:
+            continue
+        cols, rows = {"sudoku": (2, 2) if large else (2, 3), "wordsearch": (1, 2) if large else (2, 2),
+                      "maze": (2, 2)}[kind]
+        per = cols * rows
+        for start in range(0, len(group), per):
+            doc.page()
+            lft, rgt = margins()
+            cw, ch = (rgt - lft) / cols, (H - top - bottom) / rows
+            for k, it in enumerate(group[start:start + per]):
+                cx, cy = lft + (k % cols) * cw, top + (k // cols) * ch
+                no = numbers[id(it)]
+                doc.text(cx, cy, f"{T(book, 'Rätsel', 'Puzzle')} {no}", "Noto Sans SemiBold", 10, cw, "left", INK)
+                box = min(cw, ch - 24) * 0.9
+                if kind == "sudoku":
+                    draw_sudoku(doc, it["data"]["solution"], cx + (cw - box) / 2, cy + 18, box,
+                                [bool(v) for v in it["data"]["puzzle"]])
+                elif kind == "wordsearch":
+                    draw_wordsearch(doc, it["data"], cx + (cw - box) / 2, cy + 20, box, solved=True)
+                else:
+                    draw_maze(doc, it["data"], cx, cy + 18, cw * 0.95, ch - 30, solved=True, labels=None)
+            footer()
+    doc.page()
+    thanks_page(doc, book, W, H)
+    if doc.count % 2:
+        doc.page()
+    n = doc.close()
+    os.replace(path + ".part", path)
+    book["pages"] = n
+    note(book, f"interior.pdf: {n} pages")
+
+
+def level_name(book: dict, level: str) -> str:
+    return LEVEL_EN.get(level, level) if lang_of(book) == "en" else level
+
+
+# ─────────────────────────────────────────────────────────────── picture book
+PICTURE_BEATS = 14
+PAINT_W, PAINT_H = 1344, 1360           # /16; ~ the bleed page's shape (8.625 × 8.75)
+
+AUTHOR_SYSTEM = ("Du bist eine preisgekrönte Bilderbuchautorin. Du schreibst warme, kluge Geschichten zum "
+                 "Vorlesen für Kinder von 3 bis 6 Jahren: kurze Sätze, lebendige Verben, ein klarer Bogen, ein "
+                 "bisschen Humor, ein tröstliches Ende, nie belehrend. Deine Illustratorin braucht genaue, "
+                 "englische Bildbeschreibungen. Du antwortest immer NUR mit gültigem JSON.")
+EDITOR_SYSTEM = ("Du bist eine strenge, erfahrene Lektorin für Bilderbücher (3–6 Jahre). Du prüfst Sprache "
+                 "(Grammatik, Rechtschreibung, Klang beim Vorlesen), Altersgerechtheit, roten Faden, Logik, "
+                 "Spannung, Wärme und ob die Hauptfigur selbst das Problem löst. Du antwortest NUR mit JSON.")
+
+
+def picture_plan(book: dict) -> None:
+    idea = book["idea"].get("idea") or book["idea"].get("wish") or "Eine warmherzige Geschichte über Freundschaft."
+    lang = "Englisch" if lang_of(book) == "en" else "Deutsch"
+    plan = chat_json(AUTHOR_SYSTEM, f"""Entwirf ein Bilderbuch. Sprache des Buches: {lang}.
+Idee: {idea}
+
+JSON mit genau diesen Feldern:
+{{"title": "kurzer, einprägsamer Titel (max. 6 Wörter)",
+ "subtitle": "Untertitel, der sagt, worum es geht und für wen (z. B. 'Eine Gute-Nacht-Geschichte für Kinder ab 3')",
+ "hero": {{"name": "Vorname", "species": "Tierart oder Wesen",
+          "look": "ENGLISH, one sentence, very concrete and always the same: species, size, fur/skin colours, eye colour, one or two unmistakable clothes or marks (e.g. 'a small round orange fox cub with a cream belly, amber eyes and a blue knitted scarf')",
+          "personality": "zwei, drei Eigenschaften"}},
+ "friends": [{{"name": "...", "look": "ENGLISH, one concrete sentence"}}],
+ "setting": "wo die Geschichte spielt",
+ "message": "was Kinder mitnehmen (ein Satz)",
+ "style": "ENGLISH: the illustration style, e.g. 'soft watercolour and gouache children's book illustration, warm light, gentle textures'",
+ "palette": "ENGLISH: three to five colours",
+ "cover_scene": "ENGLISH: the cover picture — the hero in a typical, happy moment, the top third calm (sky or wall) for the title"}}""",
+                     effort="high", max_tokens=1800)
+    for key in ("title", "hero", "style"):
+        if not plan.get(key):
+            raise RuntimeError(f"the plan has no {key}")
+    book["plan"] = plan
+    book["title"] = str(plan["title"]).strip()
+    book["subtitle"] = str(plan.get("subtitle") or "").strip()
+    book["pages"] = 32
+    note(book, f"plan: {book['title']} — {plan['hero'].get('name')} the {plan['hero'].get('species')}")
+
+
+EN_COMMON = {"the", "and", "he", "she", "they", "is", "are", "was", "his", "her", "with", "to", "of", "it", "says",
+             "said", "in", "on", "a", "an", "you", "i", "not", "just", "little", "night", "dark"}
+DE_COMMON = {"der", "die", "das", "und", "er", "sie", "ist", "war", "sein", "ihre", "mit", "zu", "von", "es", "sagt",
+             "in", "auf", "ein", "eine", "du", "ich", "nicht", "nur", "kleine", "nacht", "dunkel", "den", "dem"}
+
+
+def language_of(text: str) -> str:
+    """'de', 'en' or '' — by the little words every sentence has."""
+    words = re.findall(r"[a-zäöüß']+", str(text or "").lower())
+    if len(words) < 4:
+        return ""
+    de = sum(1 for w in words if w in DE_COMMON) + 2 * len(re.findall(r"[äöüß]", " ".join(words)))
+    en = sum(1 for w in words if w in EN_COMMON)
+    return "de" if de > en else "en" if en > de else ""
+
+
+def aspell_dict(lang: str) -> str:
+    """The installed aspell dictionary for the book's language ('' when none)."""
+    if not shutil.which("aspell"):
+        return ""
+    try:
+        have = subprocess.run(["aspell", "dicts"], capture_output=True, text=True, timeout=10).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    for want in (["de_DE", "de"] if lang == "de" else ["en_US", "en_GB", "en"]):
+        if want in have:
+            return want
+    return ""
+
+
+def unknown_words(texts: list, lang: str, allow=()) -> list:
+    """Words the dictionary does not know — slips like "Fuchskub", English
+    in a German sentence ("hops", "Lullabies"). Names are allowed; German
+    compounds are tried as joined words."""
+    dic = aspell_dict(lang)
+    if not dic:
+        return []
+    cmd = ["aspell", f"--lang={dic}", "--encoding=utf-8", "list"]
+    if lang == "de":
+        cmd[1:1] = ["--run-together", "--run-together-limit=4", "--run-together-min=3"]
+    try:
+        out = subprocess.run(cmd, input="\n".join(str(t or "") for t in texts), capture_output=True, text=True,
+                             timeout=30).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    names = [str(a).lower() for a in allow if a]
+    odd = []
+    for w in out.split():
+        low = w.lower()
+        # a name with an ending ("Flicks") is the name
+        if len(w) <= 2 or w in odd or any(low.startswith(n) and len(low) - len(n) <= 2 for n in names):
+            continue
+        odd.append(w)
+    if not odd or lang != "de":
+        return odd
+    # German endings the dictionary does not list for every word ("moosigen"):
+    # a word whose stem it knows is a word
+    stems = {}
+    for w in odd:
+        for end in ("en", "er", "es", "em", "e", "n", "s"):
+            if w.lower().endswith(end) and len(w) - len(end) >= 4:
+                stems.setdefault(w, []).append(w[:-len(end)])
+    if stems:
+        try:
+            known_not = set(subprocess.run(cmd, input="\n".join(x for v in stems.values() for x in v),
+                                           capture_output=True, text=True, timeout=30).stdout.split())
+        except (OSError, subprocess.TimeoutExpired):
+            known_not = set()
+        odd = [w for w in odd if not any(st not in known_not for st in stems.get(w, []))]
+    return odd
+
+
+def story_checks(book: dict, beats: list, strict: bool = True) -> list:
+    """What a machine can see is wrong with a draft (the editor sees the rest).
+    strict=False is the final gate: two words a dictionary does not know are
+    forgiven there (dictionaries miss rare words that are right)."""
+    problems = []
+    plan = book.get("plan") or {}
+    names = [str(plan.get("hero", {}).get("name") or "")] + [str(f.get("name") or "") for f in plan.get("friends") or []]
+    odd = unknown_words([b.get("text") for b in beats], lang_of(book), names)
+    if len(odd) > (0 if strict else 2):
+        problems.append(("Diese Wörter gibt es so nicht (Tippfehler, erfundene oder englische Wörter) — ersetze sie "
+                         "durch richtige deutsche Wörter: " if lang_of(book) == "de" else
+                         "These words are not in the dictionary — replace them: ") + ", ".join(odd[:20]))
+    want = lang_of(book)
+    wrong = [i for i, b in enumerate(beats, start=1) if language_of(b.get("text")) not in ("", want)]
+    if wrong:
+        problems.append(("Diese Abschnitte sind nicht auf Deutsch geschrieben — der ganze Text MUSS Deutsch sein: "
+                         if want == "de" else "These parts are not in English — every word must be English: ")
+                        + ", ".join(map(str, wrong)))
+    if len(beats) != PICTURE_BEATS:
+        problems.append(f"genau {PICTURE_BEATS} Abschnitte nötig, es sind {len(beats)}")
+    words = 0
+    hero = str((book.get("plan") or {}).get("hero", {}).get("name") or "")
+    named = 0
+    for i, b in enumerate(beats, start=1):
+        text = str(b.get("text") or "").strip()
+        n = len(re.findall(r"\w+", text))
+        words += n
+        if n < 8:
+            problems.append(f"Abschnitt {i} ist zu kurz ({n} Wörter)")
+        if n > 60:
+            problems.append(f"Abschnitt {i} ist zu lang ({n} Wörter, höchstens 55)")
+        if not str(b.get("scene") or "").strip():
+            problems.append(f"Abschnitt {i} hat keine Bildbeschreibung")
+        if hero and hero.lower() in text.lower():
+            named += 1
+    if words > 800:
+        problems.append(f"insgesamt zu lang ({words} Wörter, höchstens 750)")
+    if hero and named < PICTURE_BEATS // 2:
+        problems.append(f"{hero} kommt zu selten vor")
+    return problems
+
+
+def picture_story(book: dict) -> None:
+    plan = book["plan"]
+    draft = chat_json(AUTHOR_SYSTEM, f"""Schreibe die Geschichte zu diesem Plan:
+{json.dumps(plan, ensure_ascii=False)}
+
+Sprache: der Text jedes Abschnitts ist {"Deutsch" if lang_of(book) == "de" else "Englisch"} (nur das Feld scene ist Englisch).
+Genau {PICTURE_BEATS} Abschnitte, einer pro Doppelseite. Jeder Abschnitt: 2 bis 4 kurze Sätze, 15 bis 50 Wörter,
+zum Vorlesen (Rhythmus, eine kleine Wiederholung darf wiederkehren, keine erzwungenen Reime).
+Bogen: 1–2 Anfang und Held, 3–4 das Problem, 5–10 Versuche und Begegnungen, 11–12 der Höhepunkt,
+13–14 die Lösung durch den Helden selbst und ein warmes Ende.
+
+JSON: {{"beats": [{{"text": "der Text dieser Seite", "scene": "ENGLISH, 1–2 sentences: exactly what the picture shows — who, where, doing what, the mood, the light, wide or close"}}]}}""",
+                      effort="high", max_tokens=5000)
+    beats = draft.get("beats") if isinstance(draft, dict) else draft
+    if not isinstance(beats, list):
+        raise RuntimeError("the story came back without beats")
+    book["story"] = {"beats": beats, "rounds": 0, "score": 0, "notes": []}
+    words = sum(len(re.findall(r"\w+", str(b.get("text") or ""))) for b in beats)
+    note(book, f"draft: {len(beats)} beats, {words} words")
+
+
+def picture_edit(book: dict) -> None:
+    """Editor and author in turns until the editor gives 8 of 10 with nothing
+    that must be fixed — at most three rounds."""
+    story = book["story"]
+    plan = book["plan"]
+    lang = "Deutsch" if lang_of(book) == "de" else "Englisch"
+    while story["rounds"] < 3:
+        if stopping():
+            raise InterruptedError()
+        checks = story_checks(book, story["beats"])
+        review = chat_json(EDITOR_SYSTEM, f"""Plan: {json.dumps(plan, ensure_ascii=False)}
+Geschichte (Abschnitt für Abschnitt): {json.dumps([b.get('text') for b in story['beats']], ensure_ascii=False)}
+Die Maschine hat schon gefunden: {json.dumps(checks, ensure_ascii=False)}
+
+Die Sprache des Buches ist {lang} — jeder Satz in einer anderen Sprache ist ein must_fix.
+Bewerte streng von 1 bis 10: 10 = ein großer Verlag würde es so drucken, 7 = ordentlich, aber austauschbar,
+5 = Fehler. Prüfe jeden Satz: Grammatik, Logik (kann eine Maus mit den Augen winken?), Bildhaftigkeit,
+Rhythmus beim Vorlesen, ob die Hauptfigur das Problem SELBST löst, ein Höhepunkt, ein warmes Ende.
+JSON:
+{{"score": 7, "must_fix": ["was falsch ist und so nicht gedruckt werden darf"], "better": ["mindestens drei konkrete Verbesserungen"]}}""",
+                           effort="high", max_tokens=1500)
+        score = int(review.get("score") or 0) if isinstance(review, dict) else 0
+        must = [str(x) for x in (review.get("must_fix") or [])] + checks if isinstance(review, dict) else checks
+        better = [str(x) for x in (review.get("better") or [])] if isinstance(review, dict) else []
+        story["score"] = score
+        story["notes"].append({"round": story["rounds"] + 1, "score": score, "must": must[:8], "better": better[:6]})
+        note(book, f"editor round {story['rounds'] + 1}: {score}/10, {len(must)} must-fix")
+        # done only after at least one round of improvements, at 9 and nothing to fix
+        if story["rounds"] >= 1 and score >= 9 and not must:
+            break
+        revised = chat_json(AUTHOR_SYSTEM, f"""Überarbeite deine Geschichte. Plan: {json.dumps(plan, ensure_ascii=False)}
+Bisherige Fassung: {json.dumps(story['beats'], ensure_ascii=False)}
+Die Lektorin sagt — das MUSS behoben werden: {json.dumps(must, ensure_ascii=False)}
+— und das würde es besser machen: {json.dumps(better, ensure_ascii=False)}
+
+Behebe alles. Gleiche Form wie vorher: {{"beats": [{{"text": "...", "scene": "..."}}]}} mit genau {PICTURE_BEATS} Abschnitten.""",
+                            effort="high", max_tokens=5000)
+        beats = revised.get("beats") if isinstance(revised, dict) else revised
+        if isinstance(beats, list) and len(beats) >= PICTURE_BEATS - 1:
+            story["beats"] = beats[:PICTURE_BEATS]
+        story["rounds"] += 1
+        save_book(book)
+    weak = story["score"] < 8 or bool(story_checks(book, story["beats"], strict=False))
+    if weak and story["rounds"] >= 3:
+        # Three rounds without getting there: a fresh draft is better than a fourth patch on this
+        # one — twice; then the book stops and says why.
+        book["restarts"] = int(book.get("restarts") or 0) + 1
+        why = "; ".join(story_checks(book, story["beats"], strict=False)) or f"the editor gives {story['score']}/10"
+        if book["restarts"] <= 2:
+            book["done"] = [s for s in book.get("done", []) if s != "story"]
+            note(book, f"three rounds were not enough ({why[:120]}) — a fresh draft (start {book['restarts'] + 1})")
+            raise RuntimeError("a fresh draft")
+        raise RuntimeError(f"after three drafts still not good enough: {why}"[:240])
+    note(book, f"story final: {story['score']}/10 after {story['rounds']} round(s)")
+
+
+def art_prompt(book: dict, scene: str, cover: bool = False) -> str:
+    plan = book["plan"]
+    hero = plan.get("hero") or {}
+    friends = "; ".join(str(f.get("look") or "") for f in (plan.get("friends") or []) if f.get("look"))
+    parts = [str(plan.get("style") or "soft watercolour children's book illustration"),
+             f"The main character: {hero.get('look')}",
+             f"Other characters when they appear: {friends}" if friends else "",
+             f"Scene: {scene}",
+             f"Colour palette: {plan.get('palette')}" if plan.get("palette") else "",
+             "Composition with calm open space in the top third for a title." if cover else
+             "Full-page picture book illustration, the characters well inside the frame.",
+             "No text, no letters, no words, no numbers, no watermark, no signature, no border."]
+    return " ".join(p for p in parts if p)
+
+
+def picture_art(book: dict) -> None:
+    if not engine_status()["ok"]:
+        book["state"] = "waiting-engine"
+        raise RuntimeError("needs the picture engine — velvet-books engine (Settings → VELLY → BOOK STUDIO)")
+    free_gpu_for_pictures()
+    art = book.setdefault("art", {})
+    jobs = [(f"page-{i + 1:02d}", b.get("scene") or "", False) for i, b in enumerate(book["story"]["beats"])]
+    jobs.append(("cover", book["plan"].get("cover_scene") or book["story"]["beats"][0].get("scene", ""), True))
+    folder = book_path(book, "art")
+    os.makedirs(folder, exist_ok=True)
+    w_px, h_px = round(8.625 * DPI), round(8.75 * DPI)
+    for n, (name, scene, cover) in enumerate(jobs):
+        final = os.path.join(folder, f"{name}.jpg")
+        if os.path.isfile(final) and art.get(name):
+            continue
+        if stopping():
+            raise InterruptedError()
+        raw = os.path.join(folder, f"{name}.raw.png")
+        seed = (book["seed"] + n * 101) % (2 ** 31)
+        say_state(book=book["id"], doing=f"painting {name} ({n + 1}/{len(jobs)})")
+        began = time.monotonic()
+        paint(art_prompt(book, scene, cover), raw, PAINT_W, PAINT_H, seed)
+        to_print(raw, final, w_px, h_px)
+        os.unlink(raw)
+        art[name] = {"seed": seed, "seconds": round(time.monotonic() - began, 1)}
+        save_book(book)
+    note(book, f"{len(jobs)} pictures painted")
+
+
+def avg_colour(path: str):
+    from PIL import Image                                           # noqa: PLC0415
+    r, g, b = Image.open(path).convert("RGB").resize((1, 1), Image.BOX).getpixel((0, 0))
+    return r / 255, g / 255, b / 255
+
+
+def mix(a, b, t: float):
+    return tuple(a[i] * (1 - t) + b[i] * t for i in range(3))
+
+
+def picture_interior(book: dict) -> None:
+    """32 pages, 8.5 × 8.5 with bleed: title · copyright · dedication, then 14
+    spreads (text left, picture right), the end."""
+    path = book_path(book, "interior.pdf")
+    doc = Doc(path + ".part", 8.625, 8.75)
+    W, H = doc.w, doc.h
+    b = KDP["bleed"] * PT
+    safe = 0.5 * PT                                                   # well inside the 0.375 in minimum
+    art = book_path(book, "art")
+    cover = os.path.join(art, "cover.jpg")
+    cream = (0.99, 0.97, 0.92)
+
+    def page_box():
+        """(left, top, width, height) of the live area of the current page:
+        a right (odd) page bleeds on the right, a left page on the left."""
+        right = doc.count % 2 == 1
+        left = safe if right else b + safe
+        return left, b + safe, W - b - 2 * safe, H - 2 * b - 2 * safe
+
+    # 1 · title
+    doc.page()
+    x, y, w, h = page_box()
+    tsize = doc.fit(book["title"], "Noto Serif Bold", 40, w, 140, 1.05)
+    yy = y + h * 0.08
+    yy += doc.text(x, yy, book["title"], "Noto Serif Bold", tsize, w, "center", INK, 1.05) + 12
+    if book.get("subtitle"):
+        yy += doc.text(x, yy, book["subtitle"], "Noto Sans", 12, w, "center", SOFT, 1.2)
+    d = min(w, h) * 0.5
+    doc.ctx.save()
+    doc.ctx.arc(x + w / 2, y + h * 0.62, d / 2, 0, 2 * math.pi)
+    doc.ctx.clip()
+    doc.image(cover, x + w / 2 - d / 2, y + h * 0.62 - d / 2, d, d)
+    doc.ctx.restore()
+    doc.text(x, y + h - 20, book["author"], "Noto Sans SemiBold", 12, w, "center", INK)
+    # 2 · copyright
+    doc.page()
+    x, y, w, h = page_box()
+    copyright_page(doc, book, x, w, y + h, True, True)
+    # 3 · for you
+    doc.page()
+    x, y, w, h = page_box()
+    hero = book["plan"].get("hero", {}).get("name", "")
+    doc.text(x, y + h * 0.4, T(book, f"Für alle, die so mutig sind wie {hero}." if hero else "Für dich.",
+                               f"For everyone as brave as {hero}." if hero else "For you."),
+             "Noto Serif Italic", 16, w, "center", SOFT)
+    # 4–31 · the story
+    for i, beat in enumerate(book["story"]["beats"]):
+        pic = os.path.join(art, f"page-{i + 1:02d}.jpg")
+        tint = mix(avg_colour(pic), cream, 0.86)
+        doc.page()                                                    # left: the words
+        ctx = doc.ctx
+        ctx.set_source_rgb(*tint)
+        ctx.paint()
+        x, y, w, h = page_box()
+        ctx.set_source_rgb(*mix(tint, INK, 0.25))
+        ctx.set_line_width(1.2)
+        rr = 18
+        ctx.new_path()
+        ctx.arc(x + rr, y + rr, rr, math.pi, 1.5 * math.pi)
+        ctx.arc(x + w - rr, y + rr, rr, 1.5 * math.pi, 2 * math.pi)
+        ctx.arc(x + w - rr, y + h - rr, rr, 0, 0.5 * math.pi)
+        ctx.arc(x + rr, y + h - rr, rr, 0.5 * math.pi, math.pi)
+        ctx.close_path()
+        ctx.stroke()
+        text = str(beat.get("text") or "").strip()
+        tw = w * 0.78
+        size = doc.fit(text, "Noto Serif SemiBold", 24, tw, h * 0.7, 1.35, least=14)
+        _ww, th = doc.measure(text, "Noto Serif SemiBold", size, tw, 1.35)
+        doc.text(x + (w - tw) / 2, y + (h - th) / 2, text, "Noto Serif SemiBold", size, tw, "center", INK, 1.35)
+        doc.text(x, y + h + 8, str(doc.count), "Noto Sans", 9, w, "left", SOFT)
+        doc.page()                                                    # right: the picture, full bleed
+        doc.image(pic, 0, 0, W, H)
+    # 32 · the end
+    doc.page()
+    x, y, w, h = page_box()
+    doc.text(x, y + h * 0.38, T(book, "Ende", "The End"), "Noto Serif Bold", 34, w, "center", INK)
+    doc.text(x, y + h * 0.55, book["plan"].get("message", ""), "Noto Serif Italic", 13, w, "center", SOFT, 1.3)
+    n = doc.close()
+    os.replace(path + ".part", path)
+    book["pages"] = n
+    note(book, f"interior.pdf: {n} pages")
+
+
+# ──────────────────────────────────────────────────────────────────── covers
+def cover_geometry(book: dict) -> dict:
+    w_in, h_in = book["trim"]
+    spine = spine_width(book["pages"], book["ink"])
+    bleed = KDP["bleed"]
+    return {"w": bleed * 2 + w_in * 2 + spine, "h": h_in + bleed * 2, "spine": spine, "bleed": bleed,
+            "trim_w": w_in, "trim_h": h_in}
+
+
+def cover_pdf(book: dict, front_art=None, back_text: str = "", back_art=None) -> None:
+    """The full wrap: back · spine · front, with bleed all round; the barcode
+    corner on the back is kept free. `front_art(doc, x, y, w, h)` paints the
+    front panel, `back_art(doc, x, y, w, h)` the samples on the back (the
+    middle band of the back's live area)."""
+    g = cover_geometry(book)
+    path = book_path(book, "cover.pdf")
+    doc = Doc(path + ".part", g["w"], g["h"])
+    W, H = doc.w, doc.h
+    bleed, spine, trim_w = g["bleed"] * PT, g["spine"] * PT, g["trim_w"] * PT
+    front_x = bleed + trim_w + spine
+    ctx = doc.page()
+    base = book.setdefault("cover", {}).get("base") or (0.16, 0.22, 0.36)
+    ctx.set_source_rgb(*base)
+    ctx.paint()
+    if front_art:
+        front_art(doc, front_x, 0, trim_w + bleed, H)
+    # back: the blurb, samples of the inside, the author — the barcode corner kept free
+    safe = 0.5 * PT
+    bx, by, bw = bleed + safe, bleed + safe, trim_w - 2 * safe
+    live_h = g["trim_h"] * PT - 2 * safe
+    if back_text:
+        size = doc.fit(back_text, "Noto Serif", 13, bw, live_h * (0.42 if back_art else 0.6), 1.35, least=9)
+        doc.text(bx, by + 0.2 * PT, back_text, "Noto Serif", size, bw, "left", (1, 1, 1), 1.35)
+    if back_art:
+        back_art(doc, bx, by + live_h * 0.47, bw, live_h * 0.30)
+    doc.text(bx, H - bleed - safe - 16, book["author"], "Noto Sans SemiBold", 11, bw * 0.5, "left", (1, 1, 1))
+    bw_in, bh_in = KDP["barcode"]
+    ctx.set_source_rgb(1, 1, 1)
+    ctx.rectangle(bleed + trim_w - 0.25 * PT - bw_in * PT, H - bleed - 0.25 * PT - bh_in * PT, bw_in * PT, bh_in * PT)
+    ctx.fill()
+    # spine text only from 80 pages (KDP), small and centred, read top to bottom
+    if book["pages"] >= KDP["spineTextMin"] and spine >= 0.2 * PT:
+        size = max(6.0, min(14.0, (spine - 0.125 * PT) * 0.72))
+        label = f"{book['title']}  ·  {book['author']}"
+        ctx.save()
+        ctx.translate(bleed + trim_w + spine / 2, H / 2)
+        ctx.rotate(math.pi / 2)
+        tw, th = doc.measure(label, "Noto Sans SemiBold", size)
+        avail = g["trim_h"] * PT - 1.0 * PT
+        if tw > avail:
+            size = size * avail / tw
+            tw, th = doc.measure(label, "Noto Sans SemiBold", size)
+        doc.text(-tw / 2, -th / 2, label, "Noto Sans SemiBold", size, 0, "left", (1, 1, 1))
+        ctx.restore()
+    doc.close()
+    os.replace(path + ".part", path)
+    book["cover"].update({"w_in": round(g["w"], 4), "h_in": round(g["h"], 4), "spine_in": round(g["spine"], 4)})
+    note(book, f"cover.pdf: {g['w']:.3f} × {g['h']:.3f} in, spine {g['spine']:.4f} in")
+
+
+def title_block(doc: Doc, book: dict, x: float, y: float, w: float, rgb=(1, 1, 1), shadow=None, band=None) -> float:
+    """Title and subtitle centred in a box at the top of the front."""
+    tsize = doc.fit(book["title"], "Noto Sans Black", 46, w, 150, 1.0, least=20)
+    _tw, th = doc.measure(book["title"], "Noto Sans Black", tsize, w, 1.0)
+    sub = book.get("subtitle") or ""
+    ssize = doc.fit(sub, "Noto Sans SemiBold", 15, w, 60, 1.15, least=9) if sub else 0
+    _sw, sh = doc.measure(sub, "Noto Sans SemiBold", ssize, w, 1.15) if sub else (0, 0)
+    if band:
+        doc.ctx.save()
+        doc.ctx.set_source_rgba(*band)
+        doc.ctx.rectangle(x - 0.3 * PT, y - 0.25 * PT, w + 0.6 * PT, th + sh + 0.8 * PT)
+        doc.ctx.fill()
+        doc.ctx.restore()
+    if shadow:
+        doc.text(x + 2, y + 2, book["title"], "Noto Sans Black", tsize, w, "center", shadow, 1.0)
+    doc.text(x, y, book["title"], "Noto Sans Black", tsize, w, "center", rgb, 1.0)
+    if sub:
+        if shadow:
+            doc.text(x + 1.5, y + th + 11.5, sub, "Noto Sans SemiBold", ssize, w, "center", shadow, 1.15)
+        doc.text(x, y + th + 10, sub, "Noto Sans SemiBold", ssize, w, "center", rgb, 1.15)
+    return th + sh + 10
+
+
+def coloring_cover(book: dict) -> None:
+    pal = PALETTES[int(book["id"]) % len(PALETTES)]
+    base = mix(pal[3], (0.05, 0.05, 0.1), 0.35)
+    book.setdefault("cover", {})["base"] = base
+    md = mandala_for(book, 997)
+
+    def art(doc, x, y, w, h):
+        ctx = doc.ctx
+        ctx.set_source_rgb(*mix(pal[5], (1, 1, 1), 0.3))
+        ctx.rectangle(x, y, w, h)
+        ctx.fill()
+        bleed = KDP["bleed"] * PT
+        live_w = w - bleed
+        R = live_w * 0.47
+        md.draw(ctx, x + live_w / 2, y + h * 0.58, R, fills=pal, line_rgb=(0.12, 0.10, 0.14))
+        title_block(doc, book, x + 0.55 * PT, y + bleed + 0.55 * PT, live_w - 1.1 * PT, rgb=(1, 1, 1),
+                    band=(*base, 0.92))
+        author_band(doc, book, x, y + h - bleed - 0.78 * PT, w, base)
+
+    def samples(doc, x, y, w, h):
+        cards(doc, x, y, w, h, 3, lambda d, cx, cy, r, n: mandala_for(book, n * 11 + 3).draw(d.ctx, cx, cy, r * 0.92))
+
+    blurb = book.get("listing", {}).get("back") or coloring_back(book)
+    cover_pdf(book, art, blurb, samples)
+    front_jpg(book, art)
+
+
+def coloring_back(book: dict) -> str:
+    n = book.get("count", 50)
+    return T(book, f"{n} Mandalas zum Ausmalen – zum Abschalten, Durchatmen und Genießen.\n\n"
+                   "• jedes Motiv auf einer eigenen Seite, die Rückseiten bleiben frei\n"
+                   "• klare Linien, von einfach bis detailreich\n"
+                   "• großes Format, 21,6 × 27,9 cm\n\nEin schönes Geschenk für alle, die gern malen.",
+             f"{n} mandalas to colour — to switch off, breathe and enjoy.\n\n"
+             "• every design on its own page, the backs left blank\n• clean lines, from simple to detailed\n"
+             "• large format, 8.5 × 11 in\n\nA lovely gift for everyone who likes to colour.")
+
+
+def author_band(doc: Doc, book: dict, x: float, y: float, w: float, base) -> None:
+    doc.ctx.save()
+    doc.ctx.set_source_rgb(*base)
+    doc.ctx.rectangle(x, y, w, doc.h - y)
+    doc.ctx.fill()
+    doc.ctx.restore()
+    doc.text(x, y + 0.2 * PT, book["author"], "Noto Sans SemiBold", 14, w - KDP["bleed"] * PT, "center", (1, 1, 1))
+
+
+def cards(doc: Doc, x: float, y: float, w: float, h: float, n: int, draw) -> None:
+    """n white cards in a row, gently tilted, each with draw(doc, cx, cy, r, i)."""
+    ctx = doc.ctx
+    gap = w * 0.04
+    side = min(h, (w - gap * (n - 1)) / n)
+    total = side * n + gap * (n - 1)
+    for i in range(n):
+        cx = x + (w - total) / 2 + side / 2 + i * (side + gap)
+        cy = y + h / 2
+        ctx.save()
+        ctx.translate(cx, cy)
+        ctx.rotate((-0.05, 0.03, -0.02, 0.05)[i % 4])
+        ctx.set_source_rgba(0, 0, 0, 0.22)
+        ctx.rectangle(-side / 2 + 3, -side / 2 + 4, side, side)
+        ctx.fill()
+        ctx.set_source_rgb(1, 1, 1)
+        ctx.rectangle(-side / 2, -side / 2, side, side)
+        ctx.fill()
+        draw(doc, 0, 0, side * 0.42, i)
+        ctx.restore()
+
+
+def puzzle_cover(book: dict) -> None:
+    pal = PALETTES[(int(book["id"]) + 1) % len(PALETTES)]
+    base = mix(pal[2], (0.04, 0.05, 0.1), 0.25)
+    book.setdefault("cover", {})["base"] = base
+    first = {k: next((it for it in book["items"] if it["kind"] == k), None) for k in ("sudoku", "wordsearch", "maze")}
+
+    def art(doc, x, y, w, h):
+        ctx = doc.ctx
+        bleed = KDP["bleed"] * PT
+        live_w = w - bleed
+        ctx.set_source_rgb(*mix(pal[5], (1, 1, 1), 0.2))
+        ctx.rectangle(x, y, w, h)
+        ctx.fill()
+        # the puzzles themselves as the picture, tilted cards
+        cards_ = [k for k in ("sudoku", "wordsearch", "maze") if first[k]]
+        for n, k in enumerate(cards_):
+            ctx.save()
+            cx = x + live_w * (0.29 + 0.42 * (n / max(1, len(cards_) - 1))) if len(cards_) > 1 else x + live_w / 2
+            cy = y + h * (0.64 + 0.04 * (n % 2))
+            ctx.translate(cx, cy)
+            ctx.rotate((-0.08, 0.06, -0.03)[n % 3])
+            s = live_w * (0.40 if len(cards_) > 1 else 0.6)
+            ctx.set_source_rgba(0, 0, 0, 0.18)
+            ctx.rectangle(-s / 2 + 5, -s / 2 + 7, s, s)
+            ctx.fill()
+            ctx.set_source_rgb(1, 1, 1)
+            ctx.rectangle(-s / 2, -s / 2, s, s)
+            ctx.fill()
+            inner = s * 0.86
+            if k == "sudoku":
+                draw_sudoku(doc, first[k]["data"]["puzzle"], -inner / 2, -inner / 2, inner)
+            elif k == "wordsearch":
+                draw_wordsearch(doc, first[k]["data"], -inner / 2, -inner / 2, inner, solved=True)
+            else:
+                draw_maze(doc, first[k]["data"], -inner / 2, -inner / 2, inner, inner, solved=True, labels=None)
+            ctx.restore()
+        title_block(doc, book, x + 0.55 * PT, y + bleed + 0.55 * PT, live_w - 1.1 * PT, rgb=(1, 1, 1),
+                    band=(*base, 0.95))
+        author_band(doc, book, x, y + h - bleed - 0.78 * PT, w, base)
+
+    def samples(doc, x, y, w, h):
+        kinds = [k for k in ("sudoku", "wordsearch", "maze") if first[k]] or ["sudoku"]
+        picks = (kinds * 3)[:3]
+
+        def one(d, cx, cy, r, i):
+            it = [t for t in book["items"] if t["kind"] == picks[i]][i // len(kinds) + 1:][:1] or [first[picks[i]]]
+            data = it[0]["data"]
+            box = r * 2
+            if picks[i] == "sudoku":
+                draw_sudoku(d, data["puzzle"], cx - r, cy - r, box)
+            elif picks[i] == "wordsearch":
+                draw_wordsearch(d, data, cx - r, cy - r, box)
+            else:
+                draw_maze(d, data, cx - r, cy - r, box, box, labels=None)
+
+        cards(doc, x, y, w, h, 3, one)
+
+    blurb = book.get("listing", {}).get("back") or puzzle_back(book)
+    cover_pdf(book, art, blurb, samples)
+    front_jpg(book, art)
+
+
+def puzzle_back(book: dict) -> str:
+    mix_ = book["idea"].get("mix", {})
+    names = {"sudoku": ("Sudokus", "sudokus"), "wordsearch": ("Suchsel", "word searches"), "maze": ("Labyrinthe", "mazes")}
+    parts = [f"• {n} {names[k][0 if lang_of(book) == 'de' else 1]}" for k, n in mix_.items()]
+    large = book["idea"].get("large")
+    return T(book, f"{sum(mix_.values())} Rätsel für entspannte Stunden.\n\n" + "\n".join(parts)
+             + ("\n• große, gut lesbare Schrift" if large else "") + "\n• alle Lösungen hinten im Buch"
+             + "\n\nTrainiert Kopf und Gedächtnis – und macht einfach Spaß.",
+             f"{sum(mix_.values())} puzzles for relaxed hours.\n\n" + "\n".join(parts)
+             + ("\n• large, easy-to-read print" if large else "") + "\n• all solutions at the back")
+
+
+def picture_cover(book: dict) -> None:
+    pic = book_path(book, os.path.join("art", "cover.jpg"))
+    base = mix(avg_colour(pic), (0.05, 0.05, 0.08), 0.45)
+    book.setdefault("cover", {})["base"] = base
+
+    def art(doc, x, y, w, h):
+        doc.image(pic, x, y, w, h)
+        bleed = KDP["bleed"] * PT
+        title_block(doc, book, x + 0.5 * PT, y + bleed + 0.45 * PT, w - bleed - 1.0 * PT, rgb=(1, 1, 1),
+                    shadow=(0.05, 0.05, 0.08))
+        doc.text(x + 2, y + h - bleed - 0.7 * PT + 2, book["author"], "Noto Sans Bold", 14, w - bleed, "center",
+                 (0.05, 0.05, 0.08))
+        doc.text(x, y + h - bleed - 0.7 * PT, book["author"], "Noto Sans Bold", 14, w - bleed, "center", (1, 1, 1))
+
+    blurb = book.get("listing", {}).get("back") or book.get("subtitle") or ""
+    cover_pdf(book, art, blurb)
+    front_jpg(book, art)
+
+
+def front_jpg(book: dict, art) -> None:
+    """The front alone as a picture (the review page, ads, your shop):
+    rendered from the same drawing, 1600 px high."""
+    cairo, _P, _PC = cairo_mods()
+    w_in, h_in = book["trim"]
+    tmp_pdf = book_path(book, ".front.pdf")
+    doc = Doc(tmp_pdf, w_in + KDP["bleed"], h_in + 2 * KDP["bleed"])
+    doc.page()
+    art(doc, 0, 0, doc.w, doc.h)
+    doc.close()
+    out = book_path(book, "cover-front")
+    subprocess.run(["pdftoppm", "-jpeg", "-jpegopt", "quality=90", "-scale-to-y", "1600", "-scale-to-x", "-1",
+                    "-singlefile", tmp_pdf, out], capture_output=True, timeout=120)
+    os.unlink(tmp_pdf)
+
+
+# ────────────────────────────────────────────────────────────────── listing
+def listing(book: dict) -> None:
+    """Title, subtitle, description, seven keywords, three categories, age —
+    from the local brain when it is there (an editor's eye), else from the
+    idea's own words."""
+    idea = book["idea"]
+    facts = {"kind": book["kind"], "title": book["title"], "subtitle": book.get("subtitle", ""),
+             "audience": book["audience"], "pages": book["pages"], "language": lang_of(book)}
+    if book["kind"] == "puzzle":
+        facts["contents"] = {k: sum(1 for it in book["items"] if it["kind"] == k) for k in ("sudoku", "wordsearch", "maze")}
+        facts["large_print"] = bool(idea.get("large"))
+    if book["kind"] == "coloring":
+        facts["contents"] = f"{book['count']} mandalas, single-sided, style {idea.get('style')}"
+    if book["kind"] == "picture":
+        facts["story"] = [b.get("text") for b in book["story"]["beats"]]
+        facts["message"] = book["plan"].get("message")
+    data = None
+    if brain_ready(wait=120):
+        try:
+            data = chat_json("Du bist Expertin für Amazon-KDP-Buchlistings im deutschsprachigen Markt. Du schreibst "
+                             "ehrlich, konkret und verkaufsstark — keine Superlative ohne Beleg, keine Wörter wie "
+                             "'Bestseller', 'kostenlos', 'Kindle', keine Marken oder Namen anderer Autoren. NUR JSON.",
+                             f"""Buch: {json.dumps(facts, ensure_ascii=False)}
+
+Regeln (KDP prüft sie): Titel und Untertitel sind natürliche Sätze, KEINE Aufzählung von Suchwörtern;
+korrekte Grammatik ("für Kinder ab 3 Jahren"). Die 7 Schlüsselwörter sind sieben verschiedene, natürliche
+Suchphrasen, die Käufer wirklich tippen — ohne Wörter aus dem Titel zu wiederholen.
+Sprache aller Texte: {"Deutsch" if lang_of(book) == "de" else "Englisch"}.
+
+JSON:
+{{"title": "der Titel (darf den bisherigen verbessern, max. 8 Wörter)",
+ "subtitle": "ein kurzer, natürlicher Untertitel, max. 90 Zeichen",
+ "description": "Beschreibung für die Produktseite, 900–1600 Zeichen, mit <b>, <br>, <ul><li> (KDP erlaubt einfaches HTML): wer es lieben wird, was drin ist, warum es gut ist",
+ "back": "Klappentext für die Rückseite, 300–450 Zeichen, ohne HTML",
+ "keywords": ["7 Suchbegriffe, je max. 50 Zeichen, Wörter des Titels nicht wiederholen"],
+ "categories": ["3 passende Amazon.de-Buchkategorien als Pfad, z. B. 'Bücher › Kinderbücher › Tiere'"],
+ "age": "Altersangabe z. B. '3–6' oder '' für Erwachsene"}}""", effort="medium", max_tokens=2500)
+        except (RuntimeError, InterruptedError) as exc:
+            if isinstance(exc, InterruptedError):
+                raise
+            data = None
+    book["listing_by"] = "brain" if isinstance(data, dict) else "template"
+    fallback = default_listing(book) if book["kind"] != "picture" else None
+    if not isinstance(data, dict):
+        data = fallback or {"title": book["title"], "subtitle": book.get("subtitle", ""), "description": "",
+                            "back": book.get("subtitle", ""), "keywords": [], "categories": [], "age": "3–6"}
+    # seven distinct keywords, always (KDP has seven boxes; fewer wastes reach)
+    kws = []
+    for k in [str(k).strip()[:50] for k in (data.get("keywords") or [])] + (fallback or {}).get("keywords", []) + \
+            picture_keywords(book):
+        if k and k.lower() not in {x.lower() for x in kws}:
+            kws.append(k)
+    data["keywords"] = kws[:7]
+    data["categories"] = [str(c) for c in (data.get("categories") or [])][:3]
+    if data.get("title"):
+        book["title"] = str(data["title"]).strip()
+    if data.get("subtitle"):
+        book["subtitle"] = str(data["subtitle"]).strip()[:200]
+    book["listing"] = data
+    market = config().get("market", "EUR")
+    book["price"] = {cur: suggest_price(book["pages"], book["ink"], cur) for cur in ("EUR", "USD")}
+    book["price"]["market"] = market
+    write_listing_txt(book)
+    note(book, f"listing ({book['listing_by']}): {book['title']} · {money(book['price']['EUR']['price'], 'EUR')} → "
+               f"~{money(book['price']['EUR']['royalty'], 'EUR')} per copy")
+
+
+def picture_keywords(book: dict) -> list:
+    if book["kind"] != "picture":
+        return []
+    hero = str((book.get("plan") or {}).get("hero", {}).get("species") or "Tiere")
+    return ["Bilderbuch ab 3 Jahren", "Vorlesebuch für Kinder", "Gute-Nacht-Geschichte", f"Kinderbuch {hero}"[:50],
+            "Geschenk für Kinder", "Bilderbuch Gefühle", "Kita Vorlesen"]
+
+
+def default_listing(book: dict) -> dict:
+    idea = book["idea"]
+    if book["kind"] == "coloring":
+        n = book.get("count", 50)
+        desc = (f"<b>{book['title']}</b><br><br>{n} Mandalas zum Ausmalen – jedes auf einer eigenen Seite, die "
+                "Rückseiten bleiben frei, damit nichts durchdrückt.<br><br><ul><li>großes Format 21,6 × 27,9 cm</li>"
+                "<li>klare, saubere Linien</li><li>vom einfachen bis zum detailreichen Muster</li>"
+                "<li>ideal zum Entspannen und als Geschenk</li></ul>")
+        kws = {"kids": ["Ausmalbuch Kinder ab 6", "Malbuch für Mädchen und Jungen", "Kinder Beschäftigung Ferien",
+                        "dicke Linien malen", "Geschenk Einschulung", "Konzentration Kinder", "kreativ ab 5 Jahren"],
+               "seniors": ["Ausmalbuch Senioren", "Beschäftigung für Senioren", "Demenz Beschäftigung malen",
+                           "große Flächen Ausmalbilder", "Geschenk Oma Opa", "Malen zur Entspannung", "Seniorenheim Ideen"]
+               }.get(book["audience"], ["Ausmalbuch für Frauen", "Malbuch zum Entspannen", "Achtsamkeit und Meditation",
+                                        "Geschenk Geburtstag Freundin", "Kreativ entspannen Stressabbau",
+                                        "Ausmalbilder anspruchsvoll", "Anti Stress Malbuch"])
+        cats = ["Bücher › Freizeit, Haus & Garten › Malbücher für Erwachsene",
+                "Bücher › Kunst & Kultur › Malerei", "Bücher › Ratgeber › Entspannung & Meditation"]
+    else:
+        mix_ = idea.get("mix", {})
+        parts = ", ".join(f"{n} {PUZZLE_NAMES[k][0]}" for k, n in mix_.items())
+        desc = (f"<b>{book['title']}</b><br><br>{parts} – mit allen Lösungen am Ende des Buches.<br><br><ul>"
+                + ("<li>große, gut lesbare Schrift</li>" if idea.get("large") else "")
+                + "<li>Format 21,6 × 27,9 cm</li><li>vom leichten Einstieg bis zur kniffligen Aufgabe</li>"
+                  "<li>ein schönes Geschenk</li></ul>")
+        kws = ["Rätselbuch Erwachsene", "Sudoku leicht mittel schwer", "Suchsel Großdruck", "Gedächtnistraining",
+               "Geschenk für Oma und Opa", "Labyrinth Rätsel", "Rätsel mit Lösungen"]
+        cats = ["Bücher › Freizeit, Haus & Garten › Rätsel & Spiele › Sudoku",
+                "Bücher › Freizeit, Haus & Garten › Rätsel & Spiele › Kreuzworträtsel",
+                "Bücher › Freizeit, Haus & Garten › Rätsel & Spiele"]
+    return {"title": book["title"], "subtitle": book.get("subtitle", ""), "description": desc,
+            "back": coloring_back(book) if book["kind"] == "coloring" else puzzle_back(book), "keywords": kws, "categories": cats,
+            "age": "" if book["audience"] != "kids" else "6–10"}
+
+
+def write_listing_txt(book: dict) -> None:
+    L = book["listing"]
+    price = book["price"]
+    lines = [f"TITEL\n{book['title']}\n", f"UNTERTITEL\n{book.get('subtitle', '')}\n", f"AUTOR\n{book['author']}\n",
+             f"BESCHREIBUNG (HTML)\n{L.get('description', '')}\n",
+             "SCHLÜSSELWÖRTER\n" + "\n".join(f"{i + 1}. {k}" for i, k in enumerate(L.get("keywords", []))) + "\n",
+             "KATEGORIEN (in KDP auswählen)\n" + "\n".join(L.get("categories", [])) + "\n",
+             f"ALTER\n{L.get('age') or '–'}\n",
+             f"DRUCK\n{trim_words(book)} · "
+             f"{'Premium-Farbe, weißes Papier, Anschnitt (Bleed)' if book['ink'] == 'premium' else 'Schwarzweiß, weißes Papier, ohne Anschnitt'}"
+             f" · {book['pages']} Seiten · Cover matt\n",
+             f"PREIS (Vorschlag)\namazon.de: {money(price['EUR']['price'], 'EUR')} → Druck {money(price['EUR']['printing'], 'EUR')}, "
+             f"Tantieme ~{money(price['EUR']['royalty'], 'EUR')} je Buch ({price['EUR']['rate']})\n"
+             f"amazon.com: {money(price['USD']['price'], 'USD')} → printing {money(price['USD']['printing'], 'USD')}, "
+             f"royalty ~{money(price['USD']['royalty'], 'USD')}\n",
+             "KI-ANGABEN (KDP fragt danach)\n" + ai_disclosure(book) + "\n"]
+    with open(book_path(book, "listing.txt"), "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+
+
+def ai_disclosure(book: dict) -> str:
+    """What KDP's three questions (text, images, translation) get as an
+    answer — honestly, by what really made the book."""
+    if book["kind"] == "picture":
+        return ("Text: KI-generiert — Ja (lokales Sprachmodell; von dir gelesen und freigegeben).\n"
+                "Bilder: KI-generiert — Ja (Z-Image-Turbo).\nÜbersetzung: Nein.")
+    if book.get("listing_by") == "brain":
+        return ("Text: Die Seiten enthalten keinen KI-Text; Titel und Beschreibung hat eine KI vorgeschlagen — "
+                "fragt KDP nach KI-generiertem Text, im Zweifel Ja angeben.\n"
+                "Bilder: Nein — die Muster/Rätsel berechnet ein Programm, kein KI-Bildmodell.\nÜbersetzung: Nein.")
+    return ("Text: Nein (Vorlagen).\nBilder: Nein — die Muster/Rätsel berechnet ein Programm, kein KI-Bildmodell.\n"
+            "Übersetzung: Nein.")
+
+
+def money(value: float, currency: str) -> str:
+    return f"{value:.2f} €".replace(".", ",") if currency == "EUR" else f"${value:.2f}"
+
+
+def trim_words(book: dict) -> str:
+    w, h = book["trim"]
+    cm = f"{w * 2.54:.1f} × {h * 2.54:.1f} cm".replace(".", ",")
+    return f"{w:g} × {h:g} in ({cm})".replace(".", ",") if lang_of(book) == "de" else f"{w:g} × {h:g} in"
+
+
+# ─────────────────────────────────────────────────────────────── review page
+CHECKLIST = """# {title} — auf KDP hochladen
+
+Dauer: etwa 10 Minuten. Alles, was du eintragen musst, steht in `listing.txt` (und auf der Prüfseite
+`review.html` mit Kopier-Knöpfen).
+
+## 0. Vorher: ansehen
+- [ ] `review.html` öffnen und jede Seite ansehen. Passt alles? Sonst: „Velly, mach Seite N neu“ oder
+      `velvet-books redo {id} --page N`.
+- [ ] Bei Bilderbüchern: den ganzen Text einmal laut lesen.
+
+## 1. kdp.amazon.com → „+ Erstellen“ → „Taschenbuch“
+- [ ] Sprache: {lang} · Titel und Untertitel aus `listing.txt`
+- [ ] Autor: {author}  (dein Pseudonym; in Velvet: VELLY → BOOK STUDIO → AUTHOR NAME)
+- [ ] Beschreibung: den HTML-Block einfügen
+- [ ] Veröffentlichungsrechte: „Ich besitze das Urheberrecht …“
+- [ ] Die 7 Schlüsselwörter, die 3 Kategorien{age}
+- [ ] Inhalte für Erwachsene: Nein
+
+## 2. Inhalt
+- [ ] ISBN: „Kostenlose KDP-ISBN zuweisen“
+- [ ] Druckoptionen: {print}
+- [ ] Manuskript: `interior.pdf` hochladen
+- [ ] Buchcover: „Ein bereits vorhandenes Cover hochladen“ → `cover.pdf` (Maße {cover})
+- [ ] KI-Inhalte: so beantworten, wie es in `listing.txt` unter KI-ANGABEN steht ({ai})
+- [ ] Im Vorschauprogramm jede Seite durchblättern, Warnungen lesen
+
+## 3. Preis
+- [ ] Gebiete: alle · Hauptmarktplatz: amazon.de
+- [ ] Preis: {price} (KDP rechnet dir die Tantieme aus — prüf sie dort, die Zahlen hier sind vom {checked})
+- [ ] „Erweiterter Vertrieb“: aus (er senkt die Tantieme auf 40 %)
+
+## 4. Veröffentlichen
+- [ ] „Ihr Taschenbuch veröffentlichen“ — die Prüfung dauert bis zu 72 Stunden.
+- [ ] Danach Velly sagen: „Buch {id} ist online“ (oder `velvet-books uploaded {id}`), dann macht sie das nächste.
+
+Ehrlich: Ein Buch auf KDP verkauft sich nicht von allein. Was hilft: ein klarer Nutzen im Titel, ein Cover,
+das in Briefmarkengröße wirkt, eine Nische mit Nachfrage — und Geduld. KDP nimmt höchstens drei neue
+Titel pro Tag an.
+"""
+
+
+def review(book: dict) -> None:
+    pages = preview_pdf(book_path(book, "interior.pdf"), book_path(book, ".preview"), dpi=36)
+    rel = [os.path.relpath(p, book["dir"]) for p in pages]
+    L = book["listing"]
+    price = book["price"]["EUR"]
+    g = book.get("cover", {})
+    fields = [("Titel", book["title"]), ("Untertitel", book.get("subtitle", "")), ("Autor", book["author"]),
+              ("Beschreibung (HTML)", L.get("description", ""))] + \
+             [(f"Schlüsselwort {i + 1}", k) for i, k in enumerate(L.get("keywords", []))] + \
+             [(f"Kategorie {i + 1}", c) for i, c in enumerate(L.get("categories", []))]
+    rows = "\n".join(f'<div class="f"><div class="k">{html.escape(k)}</div><pre id="f{i}">{html.escape(v)}</pre>'
+                     f'<button onclick="cp(\'f{i}\', this)">Kopieren</button></div>' for i, (k, v) in enumerate(fields))
+    thumbs = "\n".join(f'<figure><img src="{html.escape(p)}" loading="lazy"><figcaption>{i + 1}</figcaption></figure>'
+                       for i, p in enumerate(rel))
+    page = f"""<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>{html.escape(book['title'])} · Prüfen</title><style>
+:root{{color-scheme:light dark;--bg:#f6f4ef;--ink:#1c1b20;--soft:#6b6872;--card:#fff;--line:#ddd8cf;--acc:#6b4fd6}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#15141a;--ink:#ecebf0;--soft:#a3a0ad;--card:#1f1e26;--line:#33313d;--acc:#a48cff}}}}
+body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}}
+main{{max-width:1100px;margin:0 auto;padding:28px 16px 80px}} h1{{font-size:28px;margin:0 0 4px}}
+.sub{{color:var(--soft);margin:0 0 22px}} .top{{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}}
+.top img{{width:300px;max-width:100%;border-radius:6px;box-shadow:0 8px 30px #0003}}
+.facts{{flex:1;min-width:260px}} .facts b{{display:inline-block;min-width:150px}}
+h2{{margin:34px 0 12px;font-size:19px}} .f{{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0;display:grid;grid-template-columns:170px 1fr auto;gap:12px;align-items:start}}
+.k{{color:var(--soft);font-size:13px;padding-top:3px}} pre{{margin:0;white-space:pre-wrap;font:14px/1.45 ui-monospace,monospace;max-height:220px;overflow:auto}}
+button{{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:600}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}}
+figure{{margin:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px;text-align:center}}
+figure img{{width:100%;display:block;border-radius:4px}} figcaption{{color:var(--soft);font-size:12px}}
+@media (max-width:640px){{.f{{grid-template-columns:1fr}}}}
+</style></head><body><main>
+<h1>{html.escape(book['title'])}</h1><p class="sub">{html.escape(book.get('subtitle', ''))}</p>
+<div class="top"><img src="cover-front.jpg" alt="Cover"><div class="facts">
+<p><b>Art</b>{html.escape(KINDS[book['kind']]['label']['de'])} · {book['pages']} Seiten · {html.escape(trim_words(book))}</p>
+<p><b>Druck</b>{'Premium-Farbe, Anschnitt' if book['ink'] == 'premium' else 'Schwarzweiß, ohne Anschnitt'}</p>
+<p><b>Cover-PDF</b>{g.get('w_in', '?')} × {g.get('h_in', '?')} in (Rücken {g.get('spine_in', '?')} in)</p>
+<p><b>Preis-Vorschlag</b>{money(price['price'], 'EUR')} → Druck {money(price['printing'], 'EUR')}, Tantieme ~{money(price['royalty'], 'EUR')} je Buch</p>
+<p><b>Dateien</b>interior.pdf · cover.pdf · listing.txt · CHECKLIST.md</p>
+<p style="color:var(--soft)">KDP-Zahlen vom {KDP['checked']} — vor dem Preis in KDP prüfen.</p></div></div>
+<h2>Für KDP — zum Kopieren</h2>{rows}
+<h2>KI-Angaben</h2><pre>{html.escape(ai_disclosure(book))}</pre>
+<h2>Alle Seiten</h2><div class="grid">{thumbs}</div>
+</main><script>
+function cp(id,b){{const t=document.getElementById(id).innerText;navigator.clipboard.writeText(t).then(()=>{{b.textContent='Kopiert';setTimeout(()=>b.textContent='Kopieren',1400)}})}}
+</script></body></html>"""
+    with open(book_path(book, "review.html"), "w", encoding="utf-8") as fh:
+        fh.write(page)
+    age = f" · Alter: {L.get('age')}" if L.get("age") else ""
+    printing = ("Premium-Farbe · weißes Papier · 8.5 × 8.5 in · Anschnitt: JA · Cover: matt" if book["ink"] == "premium"
+                else "Schwarzweiß · weißes Papier · 8.5 × 11 in · Anschnitt: NEIN · Cover: matt")
+    with open(book_path(book, "CHECKLIST.md"), "w", encoding="utf-8") as fh:
+        fh.write(CHECKLIST.format(title=book["title"], id=book["id"], lang="Deutsch" if lang_of(book) == "de" else "Englisch",
+                                  author=book["author"], age=age, print=printing,
+                                  cover=f"{g.get('w_in')} × {g.get('h_in')} in", price=money(price["price"], "EUR"),
+                                  checked=KDP["checked"],
+                                  ai="Bilderbuch: Text und Bilder Ja" if book["kind"] == "picture" else
+                                  ("Bilder Nein, Text im Zweifel Ja" if book.get("listing_by") == "brain" else "alles Nein")))
+    note(book, "review.html and CHECKLIST.md written")
+
+
+# ──────────────────────────────────────────────────────────────── the worker
+def run_step(book: dict, step: str) -> None:
+    kind = book["kind"]
+    if step == "plan":
+        {"coloring": coloring_plan, "puzzle": puzzle_plan, "picture": picture_plan}[kind](book)
+    elif step == "puzzles":
+        puzzle_make(book)
+    elif step == "story":
+        picture_story(book)
+    elif step == "edit":
+        picture_edit(book)
+    elif step == "art":
+        picture_art(book)
+    elif step == "interior":
+        {"coloring": coloring_interior, "puzzle": puzzle_interior, "picture": picture_interior}[kind](book)
+    elif step == "cover":
+        {"coloring": coloring_cover, "puzzle": puzzle_cover, "picture": picture_cover}[kind](book)
+        # the real page count is known now: the price and listing.txt follow it
+        book["price"] = {cur: suggest_price(book["pages"], book["ink"], cur) for cur in ("EUR", "USD")}
+        book["price"]["market"] = config().get("market", "EUR")
+        write_listing_txt(book)
+    elif step == "listing":
+        listing(book)
+    elif step == "review":
+        review(book)
+    else:
+        raise ValueError(f"unknown step {step}")
+
+
+def advance(book: dict) -> bool:
+    """One step of one book. True when it moved."""
+    steps = STEPS[book["kind"]]
+    todo = [s for s in steps if s not in book.get("done", [])]
+    if not todo:
+        book["state"] = "ready"
+        save_book(book)
+        return False
+    step = todo[0]
+    book["step"] = step
+    book["state"] = "working"
+    book["error"] = ""
+    save_book(book)
+    say_state(book=book["id"], title=book.get("title", ""), doing=step)
+    began = time.monotonic()
+    try:
+        run_step(book, step)
+    except InterruptedError:
+        note(book, f"{step}: stopped — goes on next time")
+        save_book(book)
+        raise
+    except Exception as exc:                                         # noqa: BLE001
+        book["error"] = f"{step}: {exc}"[:300]
+        if book.get("state") != "waiting-engine":
+            book["state"] = "failed" if book.get("fails", 0) >= 2 else "working"
+        book["fails"] = int(book.get("fails") or 0) + 1
+        note(book, f"{step} failed: {exc}")
+        save_book(book)
+        return False
+    book.setdefault("done", []).append(step)
+    book["fails"] = 0
+    note(book, f"{step} done in {time.monotonic() - began:.0f} s")
+    if len(book["done"]) == len(steps):
+        book["state"] = "ready"
+        note(book, "READY — waiting for your look and the upload")
+    save_book(book)
+    return True
+
+
+def open_books() -> list:
+    out = []
+    for row in load_index()["books"]:
+        if row.get("state") in ("working", "waiting-engine"):
+            try:
+                out.append(load_book(row["id"]))
+            except KeyError:
+                continue
+    return out
+
+
+def work(minutes: float = 0, only: str = "", until_done: bool = False) -> int:
+    """Steps of the open books until the time is up, the studio is told to
+    stop, a game starts — or there is nothing left that may be done."""
+    lock = open(os.path.join(CONF_DIR, "books.lock"), "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("another studio run is already working")
+        return 0
+    end = time.monotonic() + minutes * 60 if minutes else None
+    moved = 0
+    try:
+        while not stopping():
+            if end and time.monotonic() > end:
+                break
+            if gpu_game():
+                log("a game is running — the studio waits")
+                return 75
+            books = [b for b in open_books() if not only or b["id"] == only.zfill(3)]
+            books = [b for b in books if b.get("state") != "waiting-engine" or engine_status()["ok"]]
+            if not books:
+                if only or waiting_count() >= int(config().get("maxWaiting") or 3):
+                    break
+                if until_done and moved:
+                    break
+                new_book()
+                continue
+            book = books[0]
+            if advance(book):
+                moved += 1
+            elif book.get("error") and book.get("state") in ("failed", "working") and int(book.get("fails") or 0) >= 3:
+                book["state"] = "failed"
+                save_book(book)
+            if until_done and load_book(book["id"]).get("state") == "ready":
+                break
+    except InterruptedError:
+        pass
+    finally:
+        say_state(doing="", book="")
+    return 0
+
+
+# ────────────────────────────────────────────────────────────────── the CLI
+def status() -> dict:
+    ix = load_index()
+    books = ix["books"]
+    return {"studio": studio_dir(), "books": books, "ready": [b for b in books if b.get("state") == "ready"],
+            "working": [b for b in books if b.get("state") == "working"],
+            "uploaded": [b for b in books if b.get("state") == "uploaded"],
+            "failed": [b for b in books if b.get("state") == "failed"],
+            "engine": engine_status(), "brain": brain_health(0.4) or os.path.isfile(os.path.join(DATA_DIR, "models", "brain.gguf")),
+            "now": read_json(STATE_PATH, {}), "maxWaiting": int(config().get("maxWaiting") or 3)}
+
+
+def show(bid: str) -> dict:
+    b = load_book(bid)
+    return {k: b.get(k) for k in ("id", "kind", "title", "subtitle", "author", "state", "step", "done", "error",
+                                  "pages", "dir", "price", "listing", "log")}
+
+
+def redo(bid: str, what: str, page: int = 0) -> int:
+    book = load_book(bid)
+    if what == "page" and book["kind"] == "picture":
+        for name in (f"page-{page:02d}",):
+            for p in glob.glob(book_path(book, os.path.join("art", f"{name}*"))):
+                os.unlink(p)
+            (book.get("art") or {}).pop(name, None)
+        drop = ["art", "interior", "cover", "review"]
+    elif what == "cover":
+        if book["kind"] == "picture":
+            for p in glob.glob(book_path(book, os.path.join("art", "cover*"))):
+                os.unlink(p)
+            (book.get("art") or {}).pop("cover", None)
+            drop = ["art", "cover", "review"]
+        else:
+            drop = ["cover", "review"]
+    elif what == "listing":
+        drop = ["listing", "interior", "cover", "review"]
+    else:
+        drop = list(STEPS[book["kind"]])[1:]
+        book["seed"] = random.randrange(1, 2 ** 31)
+    book["done"] = [s for s in book.get("done", []) if s not in drop]
+    book["state"] = "working"
+    book["error"] = ""
+    note(book, f"redo {what}{' ' + str(page) if page else ''}")
+    save_book(book)
+    return 0
+
+
+def selftest() -> int:
+    fails = []
+    if spine_width(32, "premium") != 32 * 0.002347 or abs(spine_width(106, "black") - 0.238712) > 1e-6:
+        fails.append("spine")
+    if print_cost(32, "premium", "EUR") != 3.61 or print_cost(106, "black", "EUR") != 2.48 or \
+            print_cost(130, "black", "EUR") != round(0.75 + 130 * 0.016, 2) or print_cost(32, "premium", "USD") != 4.20:
+        fails.append("printing cost")
+    if royalty(9.99, 106, "black", "EUR") != round(0.6 * 9.99 - 2.48, 2) or royalty(8.99, 106, "black", "EUR") != round(0.5 * 8.99 - 2.48, 2):
+        fails.append("royalty")
+    p = suggest_price(32, "premium", "EUR")
+    if p["price"] < 9.99 or p["royalty"] < 3.0 or abs(p["price"] * 100 % 100 - 99) > 0.5:
+        fails.append(f"price {p}")
+    if gutter_for(100) != 0.375 or gutter_for(200) != 0.5:
+        fails.append("gutter")
+    s = sudoku_make(7, "leicht")
+    if sudoku_solutions(list(s["puzzle"])) != 1 or not singles_solve(s["puzzle"]) or s["givens"] < 34:
+        fails.append("sudoku leicht")
+    h = sudoku_make(9, "schwer")
+    if sudoku_solutions(list(h["puzzle"])) != 1 or h["givens"] > 32:
+        fails.append("sudoku schwer")
+    if any(h["solution"][i] != v for i, v in enumerate(h["puzzle"]) if v):
+        fails.append("sudoku: the solution must agree with the givens")
+    ws = wordsearch_make(3, WORDS_DE["Tiere im Wald"].split(), 15, False)
+    for pl in ws["words"]:
+        got = "".join(ws["grid"][pl["r"] + pl["dr"] * i][pl["c"] + pl["dc"] * i] for i in range(len(pl["word"])))
+        if got != pl["word"]:
+            fails.append(f"wordsearch {pl['word']} → {got}")
+    if len(ws["words"]) < 14:
+        fails.append(f"wordsearch placed only {len(ws['words'])}")
+    mz = maze_make(5, 12, 15)
+    if mz["path"][0] != 0 or mz["path"][-1] != 12 * 15 - 1:
+        fails.append("maze has no way through")
+    if ws_word("Fuß-Ball") != "FUSSBALL":
+        fails.append("word folding")
+    if first_json('Sure! ```json\n{"a": [1, {"b": "}"}]}\n```') != {"a": [1, {"b": "}"}]}:
+        fails.append("json extraction")
+    if language_of("Flick the little red fox cub curls on a mossy log. The night is quiet.") != "en" or \
+            language_of("Der kleine Fuchs rollt sich auf dem moosigen Baumstamm zusammen. Die Nacht ist still.") != "de":
+        fails.append("language of a sentence")
+    english = [{"text": "Flick the little fox is not scary. He says hello to the night and the stars.", "scene": "x"}] * 14
+    if not any("Deutsch" in pr for pr in story_checks({"lang": "de", "plan": {"hero": {"name": "Flick"}}}, english)):
+        fails.append("an English story in a German book must not pass")
+    if [p for p in story_checks({"lang": "de", "plan": {"hero": {"name": "Flick"}}},
+                                [{"text": "Flick sitzt auf dem Moos und schaut in die Nacht. Die Sterne sind schön.",
+                                  "scene": "x"}] * 14) if "Deutsch" in p]:
+        fails.append("a German story flagged as foreign")
+    if fails:
+        print("velvet-books selftest: FAILED\n  · " + "\n  · ".join(fails))
+        return 1
+    print("velvet-books selftest: ok")
+    return 0
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGINT, on_term)
+    cmd, rest = argv[0], argv[1:]
+
+    def opt(name, default=""):
+        return rest[rest.index(name) + 1] if name in rest and rest.index(name) + 1 < len(rest) else default
+
+    if cmd == "--selftest":
+        return selftest()
+    if cmd == "status":
+        print(json.dumps(status(), ensure_ascii=False, indent=1))
+        return 0
+    if cmd == "new":
+        kind = rest[0] if rest and not rest[0].startswith("--") else ""
+        book = new_book(kind, opt("--idea"), opt("--lang"), opt("--audience"))
+        print(json.dumps({"ok": True, "id": book["id"], "kind": book["kind"], "dir": book["dir"]}, ensure_ascii=False))
+        return 0
+    if cmd == "work":
+        os.nice(5)
+        return work(float(opt("--minutes", "0") or 0), opt("--book"), "--until-done" in rest)
+    if cmd == "shelf":
+        os.makedirs(studio_dir(), exist_ok=True)
+        subprocess.Popen(["xdg-open", studio_dir()], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+        return 0
+    if cmd == "list":
+        for b in load_index()["books"]:
+            print(f"{b['id']}  {b['state']:<14} {b['kind']:<9} {b.get('title') or '…'}")
+        return 0
+    if cmd == "show":
+        print(json.dumps(show(rest[0]), ensure_ascii=False, indent=1))
+        return 0
+    if cmd == "open":
+        b = load_book(rest[0])
+        target = book_path(b, "review.html")
+        subprocess.Popen(["xdg-open", target if os.path.isfile(target) else b["dir"]], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        return 0
+    if cmd == "redo":
+        what = "page" if "--page" in rest else "cover" if "--cover" in rest else "listing" if "--listing" in rest else "all"
+        return redo(rest[0], what, int(opt("--page", "0") or 0))
+    if cmd == "uploaded":
+        b = load_book(rest[0])
+        b["state"] = "uploaded"
+        b["uploaded"] = datetime.date.today().isoformat()
+        if opt("--asin"):
+            b["asin"] = opt("--asin")
+        note(b, "uploaded to KDP")
+        save_book(b)
+        print(json.dumps({"ok": True, "id": b["id"], "title": b["title"]}, ensure_ascii=False))
+        return 0
+    if cmd == "engine":
+        if rest[:1] == ["setup"]:
+            return engine_setup()
+        st = engine_status()
+        st["download"] = [{"file": "stable-diffusion.cpp (Vulkan)", "mb": ENGINE["zip_mb"], "url": ENGINE["zip"]}] + \
+                         [{"file": f["name"], "mb": f["mb"], "url": f["url"]} for f in ENGINE["files"]]
+        print(json.dumps(st, ensure_ascii=False, indent=1))
+        return 0
+    print(f"velvet-books: unknown command {cmd!r} — see --help", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

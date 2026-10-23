@@ -82,6 +82,26 @@ SESSION_GRACE = 8.0        # seconds a session file may lag behind its heartbeat
 MAX_TOOL_ROUNDS = 6
 CONFIRM_WINDOW = 120.0     # how long "yes" stays valid for a dangerous action
 
+# How she was asked decides how she answers. SPOKEN (the microphone): speed
+# first — the quickest thinking that does the job, a few spoken sentences, her
+# voice. TYPED: as long as it takes — deep thinking, as many tool steps as the
+# task needs, a second look at her own answer before it goes out (`reviews`),
+# written text with line breaks and lists, and no voice at all (the shell
+# speaks only a turn whose state says via "voice").
+MODES = {
+    "voice": {"rounds": MAX_TOOL_ROUNDS, "answer_chars": 0, "history_chars": 600, "reviews": 0},
+    "text": {"rounds": 16, "answer_chars": 16000, "history_chars": 4000, "reviews": 2},
+}
+# The turn being answered right now — for what outlives it (a reminder is
+# spoken when due only when it was asked for out loud).
+TURN = {"via": "text"}
+# How much of a tool's result goes back to her (characters of JSON; a typed
+# turn gets twice as much). Everything not named here: 700.
+TOOL_RESULT_CAPS = {"web.lookup": 3000, "web.read": 3400, "clipboard.read": 2700, "weather.forecast": 1800,
+                    "notifs.list": 1400, "cmd.run": 2000, "pkg.search": 1400, "file.read": 6000, "files.list": 3000,
+                    "files.find": 3000, "screen.read": 5000, "proc.list": 1600, "bt.devices": 1200,
+                    "audio.outputs": 1000}
+
 DEFAULTS = {
     "provider": "auto",
     "model": "",
@@ -776,6 +796,7 @@ class Provider:
         out = []
         thought = []
         native = {}
+        beat = time.monotonic()
         for line in self._read_lines(resp, cancel):
             if not line.startswith("data:"):
                 continue
@@ -794,6 +815,13 @@ class Provider:
             delta = choices[0].get("delta") or {}
             if delta.get("reasoning_content"):
                 thought.append(str(delta["reasoning_content"]))
+                # A long think writes no answer: keep the state's stamp moving
+                # — the island reads a stamp older than 20 s as a brain that
+                # died, and a typed turn at high effort thinks that long.
+                now = time.monotonic()
+                if now - beat > 1.0:
+                    beat = now
+                    on_delta("".join(out))
             piece = delta.get("content")
             if piece:
                 out.append(piece)
@@ -1422,6 +1450,37 @@ ARG_DOCS = {
                      "value": "true/false, a number, or one of the option values from settings.find"},
     "history.search": {"query": "words from what was said back then; empty lists the latest"},
     "look.apply": {"look": "a look's id or name from look.list, e.g. 'win11', 'glass', 'paper'; 'velvet' is the original"},
+    "files.list": {"path": "a folder: ~/…, absolute, or by name (Downloads, Bilder, Dokumente, Schreibtisch …); empty = home",
+                   "hidden": "true also lists hidden entries (names starting with a dot)"},
+    "files.find": {"query": "part of the file or folder name", "where": "optional: the folder to search in",
+                   "kind": ("what to find", ["any", "file", "folder"])},
+    "file.read": {"path": "the file: ~/…, absolute, or 'Downloads/name.pdf'", "max_chars": "how much text at most"},
+    "files.move": {"src": "what to move or rename", "dst": "a folder to move it into, or the new name/path"},
+    "files.copy": {"src": "what to copy", "dst": "a folder to copy it into, or the new name/path"},
+    "files.mkdir": {"path": "the new folder"},
+    "files.trash": {"path": "the file or folder to put into the trash"},
+    "files.open": {"path": "the file or folder to open with its usual app"},
+    "input.type": {"text": "exactly the text to type", "window": "the window's class or title; empty = the active window",
+                   "enter": "true presses Enter at the end"},
+    "input.keys": {"combo": "a key or keys joined by +: enter, esc, tab, ctrl+s, ctrl+shift+t, alt+tab, super+2, f5",
+                   "window": "the window's class or title; empty = the active window"},
+    "input.click": {"x": "screen x in pixels", "y": "screen y in pixels",
+                    "button": ("which button", ["left", "right", "middle"]), "double": "true double-clicks",
+                    "text": "instead of x/y: the label on the screen to click on"},
+    "input.scroll": {"amount": "notches: positive scrolls down, negative up", "x": "optional: where", "y": "optional: where"},
+    "screen.read": {"screen": "optional: a screen's name; empty = the one in use"},
+    "proc.list": {"sort": ("what to sort by", ["cpu", "ram"])},
+    "proc.stop": {"name": "the program's name as proc.list shows it", "pid": "or its pid", "force": "true kills it hard"},
+    "audio.output": {"name": "part of the output's name: Kopfhörer, HDMI, JBL, Lautsprecher …"},
+    "bt.connect": {"name": "part of the device's name"},
+    "books.make": {"kind": ("what kind of book", ["", "coloring", "puzzle", "picture"]),
+                   "idea": "for a picture book: the story idea in one sentence; else empty"},
+    "books.open": {"id": "the book's number from books.status; empty opens the shelf folder"},
+    "books.uploaded": {"id": "the book's number from books.status"},
+    "bt.disconnect": {"name": "part of the device's name"},
+    "win.fullscreen": {"match": "window class or part of its title; empty = the active window", "on": "true fullscreen, false normal"},
+    "win.place": {"match": "window class or part of its title; empty = the active window", "x": "left edge in screen pixels",
+                  "y": "top edge in screen pixels", "w": "width (0 keeps it)", "h": "height (0 keeps it)"},
 }
 # Arguments a call is useless without.
 REQUIRED = {"apps.search": ["query"], "apps.launch": ["name"], "win.focus": ["match"], "win.close": ["match"],
@@ -1433,7 +1492,10 @@ REQUIRED = {"apps.search": ["query"], "apps.launch": ["name"], "win.focus": ["ma
             "pkg.install": ["name"], "web.lookup": ["query"], "web.read": ["url"], "web.open": ["url"],
             "web.search": ["query"], "web.download": ["url"], "file.write": ["name", "text"], "calc.eval": ["expr"],
             "date.lookup": ["when"], "clipboard.write": ["text"], "settings.find": ["query"],
-            "settings.set": ["key"], "look.apply": ["look"]}
+            "settings.set": ["key"], "look.apply": ["look"], "files.find": ["query"], "file.read": ["path"],
+            "files.move": ["src", "dst"], "files.copy": ["src", "dst"], "files.mkdir": ["path"], "files.trash": ["path"],
+            "files.open": ["path"], "input.type": ["text"], "input.keys": ["combo"], "audio.output": ["name"],
+            "bt.connect": ["name"], "bt.disconnect": ["name"]}
 
 
 def tool_schema() -> list:
@@ -1945,7 +2007,12 @@ def t_weather_forecast(place="", when=""):
 # ── the clipboard ─────────────────────────────────────────────────────────
 @tool("clipboard.read", "", "read", "What the user copied last (text in the clipboard) — for 'übersetz/erklär/fass zusammen, was ich kopiert habe'.")
 def t_clipboard_read():
-    code, out, err = run(["wl-paste", "--no-newline", "--type", "text"], timeout=3)
+    if shutil.which("wl-paste"):
+        code, out, err = run(["wl-paste", "--no-newline", "--type", "text"], timeout=3)
+    else:
+        # no wl-clipboard here: velvet-input speaks the clipboard protocol itself
+        code, out, err = run([sys.executable, INPUT_SCRIPT, "paste"], timeout=5)
+        err = err or ("nothing" if code != 0 else "")
     if code != 0:
         return {"ok": False, "error": "die Zwischenablage ist leer" if "nothing" in (err or "").lower() or not err else err[:120]}
     text = out.strip()
@@ -1957,11 +2024,14 @@ def t_clipboard_write(text=""):
     body = str(text or "")
     if not body.strip():
         return {"ok": False, "error": "was soll in die Zwischenablage?"}
+    cmd = ["wl-copy"] if shutil.which("wl-copy") else [sys.executable, INPUT_SCRIPT, "copy"]
     try:
-        proc = subprocess.run(["wl-copy"], input=body.encode("utf-8"), timeout=3)
+        proc = subprocess.run(cmd, input=body.encode("utf-8"), timeout=5, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.PIPE)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"ok": False, "error": str(exc)[:120]}
-    return {"ok": proc.returncode == 0, "chars": len(body)}
+    return {"ok": proc.returncode == 0, "chars": len(body),
+            "error": (proc.stderr or b"").decode("utf-8", "replace").strip()[:120] if proc.returncode else ""}
 
 
 # ── notifications: what she can tell you that you missed ─────────────────
@@ -2852,6 +2922,18 @@ def t_screenshot():
         return {"ok": False, "error": "no screenshot command configured"}
     missing = missing_programs(command)
     if missing:
+        # The configured command cannot run (no grim/slurp here): the whole
+        # screen in use, as a file, through velvet-input.
+        folder = os.path.join(resolve_path("Bilder"), "Screenshots")
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            folder = HOME
+        target = os.path.join(folder, time.strftime("Velly %Y-%m-%d %H-%M-%S.png"))
+        res = input_run(["shot", target], timeout=20)
+        if res.get("ok"):
+            return {"ok": True, "file": shown_path(target), "how": "the whole screen in use, saved as a file "
+                    f"(for an area to pick: install {', '.join(missing)} with pkg.install)"}
         return {"ok": False, "missing": missing,
                 "error": f"für Screenshots fehlt {', '.join(missing)} — mit pkg.install nachinstallierbar "
                          f"(grim slurp wl-clipboard)"}
@@ -3380,6 +3462,1000 @@ def t_file_write(name="", text=""):
     return {"ok": True, "file": target, "name": os.path.basename(target)}
 
 
+# ── the PC itself: files, the keyboard and the mouse, the screen, programs,
+#  sound and Bluetooth. What a person at this PC can do, she can do; what
+#  cannot be taken back asks first (files.trash, proc.stop — and typing or
+#  keys that would run or close something, see risky_call()).
+INPUT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "velvet-input")
+
+# Never read into a prompt (a cloud brain would see them), never moved or
+# trashed: keys, passwords, tokens, browser profiles, her own key files.
+SECRET_PARTS = (".ssh", ".gnupg", ".password-store", ".local/share/keyrings", ".mozilla", ".config/google-chrome",
+                ".config/chromium", ".config/BraveSoftware", ".config/vivaldi", ".aws", ".kube", ".docker/config.json",
+                ".netrc", ".git-credentials", ".config/velvet/ai.json", ".config/velvet/composio.json",
+                ".config/velvet/ai-memory.json")
+SECRET_NAME = re.compile(r"(?i)(^id_(rsa|ed25519|ecdsa|dsa)|\.(pem|key|kdbx|p12|pfx|gpg|asc)$|^\.env(\..+)?$|"
+                         r"passw|kennw|zugangsdaten|credential|secret|^wallet|seed.?phrase|mnemonic)")
+# Where a search never looks (hidden folders are skipped anyway): build
+# trees and game libraries.
+FIND_SKIP = ("node_modules", "__pycache__", "steamapps", "site-packages", ".git")
+FOLDER_WORDS = {"DESKTOP": ("desktop", "schreibtisch"), "DOWNLOAD": ("downloads", "download"),
+                "DOCUMENTS": ("dokumente", "documents", "docs"), "PICTURES": ("bilder", "pictures", "fotos", "photos"),
+                "MUSIC": ("musik", "music"), "VIDEOS": ("videos", "filme"), "TEMPLATES": ("vorlagen", "templates"),
+                "PUBLICSHARE": ("öffentlich", "public")}
+IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif")
+TEXT_EXT = (".txt", ".md", ".py", ".qml", ".js", ".ts", ".json", ".csv", ".lua", ".conf", ".ini", ".toml", ".yaml",
+            ".yml", ".sh", ".log", ".html", ".css", ".xml", ".c", ".cpp", ".h", ".rs", ".go", ".java", ".srt")
+
+
+def user_dirs() -> dict:
+    """xdg-user-dirs: DESKTOP, DOWNLOAD, PICTURES … — the folders people name."""
+    out = {}
+    path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "user-dirs.dirs")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r'\s*XDG_(\w+)_DIR="(.*)"', line)
+                if m:
+                    out[m.group(1)] = m.group(2).replace("$HOME", HOME)
+    except OSError:
+        pass
+    return out
+
+
+def resolve_path(p: str) -> str:
+    """~/…, $HOME/…, absolute, or a folder by the name people say it
+    ("Downloads/rechnung.pdf", "Bilder", "Schreibtisch") — relative to home."""
+    raw = str(p or "").strip().strip("\"'")
+    if not raw or raw in ("~", "home", "zuhause"):
+        return HOME
+    raw = os.path.expanduser(os.path.expandvars(raw))
+    if os.path.isabs(raw):
+        return os.path.normpath(raw)
+    head, _, tail = raw.replace("\\", "/").partition("/")
+    dirs = user_dirs()
+    for key, words in FOLDER_WORDS.items():
+        if head.lower() in words:
+            base = dirs.get(key) or os.path.join(HOME, head)
+            if not os.path.isdir(base):
+                alt = [os.path.join(HOME, w.capitalize()) for w in words if os.path.isdir(os.path.join(HOME, w.capitalize()))]
+                base = alt[0] if alt else base
+            return os.path.normpath(os.path.join(base, tail)) if tail else base
+    return os.path.normpath(os.path.join(HOME, raw))
+
+
+def shown_path(path: str) -> str:
+    return "~" + path[len(HOME):] if path == HOME or path.startswith(HOME + os.sep) else path
+
+
+def is_secret(path: str) -> bool:
+    real = os.path.realpath(path)
+    rel = os.path.relpath(real, HOME) if real.startswith(HOME + os.sep) else real
+    if any(rel == part or rel.startswith(part + "/") for part in SECRET_PARTS):
+        return True
+    return any(SECRET_NAME.search(part) for part in rel.split(os.sep)[-2:])
+
+
+def inside_home(path: str) -> bool:
+    """The home folder itself or anything in it (symlinks followed)."""
+    real = os.path.realpath(path)
+    return real == HOME or real.startswith(HOME + os.sep)
+
+
+def keep_out(path: str) -> str:
+    """Why `path` must not be moved, renamed or trashed — "" when it may."""
+    real = os.path.realpath(path)
+    if real == HOME:
+        return "das ist dein Home-Ordner selbst — den fasse ich nicht an"
+    if not inside_home(real):
+        return "das liegt außerhalb deines Home-Ordners — da ändere ich nichts"
+    if is_secret(real):
+        return "das ist eine geschützte Datei (Schlüssel, Passwörter, Zugangsdaten)"
+    if real in {os.path.realpath(d) for d in user_dirs().values()} or os.path.dirname(real) == HOME and \
+            os.path.basename(real).startswith("."):
+        return "das ist einer deiner Hauptordner (oder eine Einstellung im Home) — den fasse ich nicht an"
+    return ""
+
+
+def human_size(n: float) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}".replace(".", ",")
+        n /= 1024.0
+    return f"{n:.1f} TB"
+
+
+def entry_of(path: str) -> dict:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {"path": shown_path(path)}
+    isdir = os.path.isdir(path)
+    return {"path": shown_path(path) + ("/" if isdir else ""), "size": "" if isdir else human_size(st.st_size),
+            "modified": time.strftime("%d.%m.%Y %H:%M", time.localtime(st.st_mtime))}
+
+
+@tool("files.list", '{"path": "Downloads", "hidden": false}', "read",
+      "List a folder: names, sizes, dates, folders first. path: ~/…, absolute, or a folder by name (Downloads, "
+      "Bilder, Dokumente, Schreibtisch, Musik, Videos), empty = home.")
+def t_files_list(path="", hidden=False):
+    where = resolve_path(path)
+    if not os.path.isdir(where):
+        return {"ok": False, "error": (f"{shown_path(where)} ist eine Datei — file.read liest sie" if os.path.isfile(where)
+                                       else f"{shown_path(where)} gibt es nicht")}
+    try:
+        names = os.listdir(where)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:140]}
+    rows = []
+    for name in names:
+        if name.startswith(".") and not hidden:
+            continue
+        full = os.path.join(where, name)
+        try:
+            st = os.stat(full)
+        except OSError:
+            continue
+        isdir = os.path.isdir(full)
+        rows.append((not isdir, name.lower(), {"name": name + ("/" if isdir else ""),
+                                              "size": "" if isdir else human_size(st.st_size),
+                                              "modified": time.strftime("%d.%m.%Y %H:%M", time.localtime(st.st_mtime))}))
+    rows.sort(key=lambda r: (r[0], r[1]))
+    return {"ok": True, "path": shown_path(where), "count": len(rows), "entries": [r[2] for r in rows[:80]],
+            "more": max(0, len(rows) - 80)}
+
+
+@tool("files.find", '{"query": "rechnung", "where": "", "kind": "any"}', "read",
+      "Find files or folders by part of their name — everywhere in the user's home, or under 'where'. "
+      "kind: any | file | folder. The newest come first.")
+def t_files_find(query="", where="", kind="any"):
+    q = str(query or "").strip().strip("*")
+    if not q:
+        return {"ok": False, "error": "wonach soll ich suchen?"}
+    root = resolve_path(where) if str(where or "").strip() else HOME
+    if not os.path.isdir(root):
+        return {"ok": False, "error": f"{shown_path(root)} gibt es nicht"}
+    want = str(kind or "any").lower()
+    hits = []
+    fd = shutil.which("fd")
+    if fd:
+        cmd = [fd, "--ignore-case", "--fixed-strings", "--absolute-path", "--no-ignore", "--max-results", "600"]
+        for skip in FIND_SKIP:
+            cmd += ["--exclude", skip]
+        if want in ("file", "datei", "f"):
+            cmd += ["--type", "f"]
+        elif want in ("folder", "ordner", "dir", "directory", "d"):
+            cmd += ["--type", "d"]
+        cmd += ["--", q, root]
+        _code, out, _err = run(cmd, timeout=15)
+        hits = [h.rstrip("/") for h in out.splitlines() if h.strip()]
+    else:
+        end = time.monotonic() + 8
+        low = q.lower()
+        for top, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in FIND_SKIP]
+            pool = (files if want in ("file", "datei", "f") else []) + (dirs if want in ("folder", "ordner", "dir", "d") else [])
+            if want not in ("file", "datei", "f", "folder", "ordner", "dir", "d"):
+                pool = files + dirs
+            hits += [os.path.join(top, n) for n in pool if low in n.lower()]
+            if len(hits) > 600 or time.monotonic() > end:
+                break
+    low = q.lower()
+
+    def rank(path):
+        name = os.path.basename(path).lower()
+        stem = os.path.splitext(name)[0]
+        try:
+            age = -os.path.getmtime(path)
+        except OSError:
+            age = 0
+        return (0 if stem == low or name == low else 1 if name.startswith(low) else 2, age)
+
+    hits.sort(key=rank)
+    return {"ok": True, "query": q, "where": shown_path(root), "count": len(hits),
+            "found": [entry_of(h) for h in hits[:25]], "more": max(0, len(hits) - 25)}
+
+
+def ocr_langs() -> tuple:
+    """(tessdata dir or "", the languages to read with) — Velly's own copy in
+    ~/.local/share/velvet/tessdata first, then the system's."""
+    own = os.path.join(DATA_DIR, "tessdata")
+    if os.path.isdir(own) and any(f.endswith(".traineddata") for f in os.listdir(own)):
+        have = {f[:-12] for f in os.listdir(own) if f.endswith(".traineddata")}
+        prefix = own
+    else:
+        prefix = ""
+        _code, out, _err = run(["tesseract", "--list-langs"], timeout=8)
+        have = {line.strip() for line in out.splitlines()[1:] if line.strip()}
+    langs = [lang for lang in ("deu", "eng") if lang in have]
+    return prefix, "+".join(langs)
+
+
+OCR_MISSING = ("für die Texterkennung fehlen die Sprachdaten — einmal installieren: "
+               "pkg.install tesseract-data-deu und tesseract-data-eng (oder im Terminal: "
+               "sudo pacman -S tesseract-data-deu tesseract-data-eng)")
+
+
+def ocr_words(image: str) -> dict:
+    """tesseract over a picture: {ok, words: [(text, conf, x, y, w, h, line key)], error}."""
+    if not shutil.which("tesseract"):
+        return {"ok": False, "error": "für die Texterkennung fehlt tesseract — pkg.install tesseract tesseract-data-deu"}
+    prefix, langs = ocr_langs()
+    if not langs:
+        return {"ok": False, "error": OCR_MISSING}
+    env = dict(os.environ, OMP_THREAD_LIMIT="4")
+    if prefix:
+        env["TESSDATA_PREFIX"] = prefix
+    try:
+        proc = subprocess.run(["nice", "-n", "5", "tesseract", image, "stdout", "-l", langs, "--psm", "3", "tsv"],
+                              capture_output=True, text=True, timeout=90, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": f"die Texterkennung ging nicht: {exc}"[:160]}
+    words = []
+    for line in (proc.stdout or "").splitlines()[1:]:
+        cols = line.split("\t")
+        if len(cols) < 12 or cols[0] != "5" or not cols[11].strip():
+            continue
+        try:
+            conf = float(cols[10])
+            x, y, w, h = (int(cols[6]), int(cols[7]), int(cols[8]), int(cols[9]))
+        except ValueError:
+            continue
+        if conf < 35:
+            continue
+        words.append((cols[11].strip(), conf, x, y, w, h, (cols[1], cols[2], cols[3], cols[4])))
+    return {"ok": True, "words": words}
+
+
+def ocr_lines(words: list) -> list:
+    lines = {}
+    for text, _conf, x, y, w, h, key in words:
+        cur = lines.setdefault(key, {"text": [], "x0": x, "y0": y, "x1": x + w, "y1": y + h})
+        cur["text"].append(text)
+        cur["x0"], cur["y0"] = min(cur["x0"], x), min(cur["y0"], y)
+        cur["x1"], cur["y1"] = max(cur["x1"], x + w), max(cur["y1"], y + h)
+    out = [{"text": " ".join(v["text"]), "x": v["x0"], "y": v["y0"], "w": v["x1"] - v["x0"], "h": v["y1"] - v["y0"]}
+           for v in lines.values()]
+    out.sort(key=lambda l: (l["y"] // 12, l["x"]))
+    return out
+
+
+@tool("file.read", '{"path": "~/Dokumente/notizen.txt"}', "read",
+      "Read a file: text and code as they are, a PDF as its text, a picture as the text in it. Long files come "
+      "back cut (cut: true). Keys, passwords and browser data are never read.")
+def t_file_read(path="", max_chars=12000):
+    p = resolve_path(path)
+    if is_secret(p):
+        return {"ok": False, "error": "das ist eine geschützte Datei (Schlüssel, Passwörter, Zugangsdaten) — die lese ich nicht"}
+    if os.path.isdir(p):
+        return t_files_list(p)
+    if not os.path.isfile(p):
+        return {"ok": False, "error": f"{shown_path(p)} gibt es nicht — files.find sucht danach"}
+    try:
+        limit = max(500, min(40000, int(max_chars or 12000)))
+    except (TypeError, ValueError):
+        limit = 12000
+    ext = os.path.splitext(p)[1].lower()
+    size = os.path.getsize(p)
+    kind = "text"
+    if ext == ".pdf":
+        code, out, err = run(["pdftotext", "-layout", "-l", "40", p, "-"], timeout=40)
+        if code != 0:
+            return {"ok": False, "error": f"das PDF lässt sich nicht lesen: {err[:120]}"}
+        text, kind = out, "pdf"
+        if len(text.strip()) < 20:
+            return {"ok": True, "path": shown_path(p), "kind": "pdf", "text": "",
+                    "note": "das PDF enthält keinen Text (nur Bilder/Scans)"}
+    elif ext in IMAGE_EXT:
+        res = ocr_words(p)
+        if not res.get("ok"):
+            return {"ok": False, "path": shown_path(p), "kind": "image", "error": res.get("error")}
+        text, kind = "\n".join(line["text"] for line in ocr_lines(res["words"])), "image (text recognised)"
+    else:
+        try:
+            with open(p, "rb") as fh:
+                raw = fh.read(limit * 4 + 4)
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)[:140]}
+        if b"\0" in raw[:4096] and ext not in TEXT_EXT:
+            _c, what, _e = run(["file", "-b", p], timeout=5)
+            return {"ok": False, "path": shown_path(p), "size": human_size(size),
+                    "error": f"das ist keine Textdatei ({what[:80] or 'binär'})"}
+        text = raw.decode("utf-8", "replace")
+    return {"ok": True, "path": shown_path(p), "kind": kind, "size": human_size(size),
+            "text": text[:limit], "cut": len(text) > limit}
+
+
+def free_target(src: str, dst: str) -> tuple:
+    """(final path, error). A folder as target means "into it"; an existing
+    file is never overwritten."""
+    target = dst
+    if os.path.isdir(dst):
+        target = os.path.join(dst, os.path.basename(src.rstrip("/")))
+    if os.path.exists(target):
+        return "", f"{shown_path(target)} gibt es schon — ich überschreibe nichts; nimm einen anderen Namen"
+    if not os.path.isdir(os.path.dirname(target) or "/"):
+        return "", f"den Ordner {shown_path(os.path.dirname(target))} gibt es nicht (files.mkdir legt ihn an)"
+    return target, ""
+
+
+@tool("files.move", '{"src": "Downloads/rechnung.pdf", "dst": "Dokumente/Rechnungen"}', "write",
+      "Move or rename a file or folder. dst: a folder (into it) or a new name. Never overwrites.")
+def t_files_move(src="", dst=""):
+    a, b = resolve_path(src), resolve_path(dst)
+    if not os.path.exists(a):
+        return {"ok": False, "error": f"{shown_path(a)} gibt es nicht"}
+    why = keep_out(a) or (keep_out(b) if not os.path.isdir(b) else ("" if inside_home(b) else "das Ziel liegt außerhalb deines Home-Ordners"))
+    if why:
+        return {"ok": False, "error": why}
+    target, err = free_target(a, b)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        shutil.move(a, target)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:160]}
+    return {"ok": True, "from": shown_path(a), "to": shown_path(target)}
+
+
+@tool("files.copy", '{"src": "Bilder/urlaub.jpg", "dst": "Schreibtisch"}', "write",
+      "Copy a file or a whole folder. dst: a folder (into it) or a new name. Never overwrites.")
+def t_files_copy(src="", dst=""):
+    a, b = resolve_path(src), resolve_path(dst)
+    if not os.path.exists(a):
+        return {"ok": False, "error": f"{shown_path(a)} gibt es nicht"}
+    if is_secret(a):
+        return {"ok": False, "error": "das ist eine geschützte Datei — die kopiere ich nicht"}
+    if not inside_home(b if os.path.isdir(b) else os.path.dirname(b) or b):
+        return {"ok": False, "error": "das Ziel liegt außerhalb deines Home-Ordners"}
+    target, err = free_target(a, b)
+    if err:
+        return {"ok": False, "error": err}
+    try:
+        if os.path.isdir(a):
+            shutil.copytree(a, target, symlinks=True)
+        else:
+            shutil.copy2(a, target)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:160]}
+    return {"ok": True, "from": shown_path(a), "to": shown_path(target)}
+
+
+@tool("files.mkdir", '{"path": "Dokumente/Rechnungen 2026"}', "write", "Make a new folder (with the folders above it).")
+def t_files_mkdir(path=""):
+    p = resolve_path(path)
+    if not inside_home(os.path.dirname(p) if not os.path.exists(p) else p) or is_secret(p):
+        return {"ok": False, "error": "außerhalb deines Home-Ordners lege ich nichts an"}
+    if os.path.exists(p):
+        return {"ok": True, "path": shown_path(p), "note": "den Ordner gibt es schon"}
+    try:
+        os.makedirs(p)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:160]}
+    return {"ok": True, "path": shown_path(p)}
+
+
+@tool("files.trash", '{"path": "Downloads/alt.zip"}', "danger",
+      "Put a file or folder into the trash (it can be taken back out there). Asks first.")
+def t_files_trash(path=""):
+    p = resolve_path(path)
+    if not os.path.exists(p):
+        return {"ok": False, "error": f"{shown_path(p)} gibt es nicht"}
+    why = keep_out(p)
+    if why:
+        return {"ok": False, "error": why}
+    code, _out, err = run(["gio", "trash", p], timeout=30)
+    if code != 0:
+        return {"ok": False, "error": f"der Papierkorb hat es nicht genommen: {err[:120]}"}
+    return {"ok": True, "trashed": shown_path(p), "note": "liegt im Papierkorb — von dort holbar"}
+
+
+@tool("files.open", '{"path": "Dokumente/brief.pdf"}', "write",
+      "Open a file with its usual app (a PDF in the viewer, a picture in the image viewer), or a folder in the file manager.")
+def t_files_open(path=""):
+    p = resolve_path(path)
+    if not os.path.exists(p):
+        return {"ok": False, "error": f"{shown_path(p)} gibt es nicht — files.find sucht danach"}
+    if is_secret(p):
+        return {"ok": False, "error": "das ist eine geschützte Datei — die öffne ich nicht"}
+    ok = hctl_dispatch(f"hl.dsp.exec_cmd({lua_str('gio open ' + shlex.quote(p))})")
+    return {"ok": ok, "opened": shown_path(p)}
+
+
+# ── the keyboard and the mouse: bin/velvet-input
+TERMINAL_RE = re.compile(r"(?i)^(kitty|foot|footclient|alacritty|wezterm|org\.wezfurlong\.wezterm|konsole|"
+                         r"org\.kde\.konsole|gnome-terminal|org\.gnome\.terminal|org\.gnome\.console|kgx|xterm|urxvt|"
+                         r"st|terminator|tilix|com\.gexperts\.tilix|ghostty|com\.mitchellh\.ghostty|blackbox|ptyxis|"
+                         r"org\.gnome\.ptyxis|warp|tabby)$")
+# Keys that close, quit or delete for good — asked first.
+CLOSING_KEYS = re.compile(r"(?i)^(alt\+f4|ctrl\+q|ctrl\+w|ctrl\+shift\+w|ctrl\+shift\+q|super\+q|super\+shift\+q|"
+                          r"super\+c|super\+m|super\+shift\+e|ctrl\+alt\+(delete|del|entf|backspace)|"
+                          r"shift\+(delete|del|entf))$")
+
+
+def input_run(args: list, text: str = None, timeout: float = 30) -> dict:
+    try:
+        proc = subprocess.run([sys.executable, INPUT_SCRIPT] + list(args), input=text, capture_output=True,
+                              text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"ok": False, "error": str(exc)[:160]}
+    lines = (proc.stdout or "").strip().splitlines()
+    try:
+        out = json.loads(lines[-1]) if lines else {}
+    except ValueError:
+        out = {}
+    if not isinstance(out, dict):
+        out = {}
+    if not out:
+        out = {"ok": proc.returncode == 0, "error": (proc.stderr or "").strip()[-200:]}
+    return out
+
+
+def active_window() -> dict:
+    data = hctl_json("activewindow")
+    return data if isinstance(data, dict) else {}
+
+
+def keys_to(window: str):
+    """The window the keys should reach, focused — the island folded first:
+    while it is open it holds the keyboard (exclusive), and her keys would
+    land in her own text field. (window dict, error)."""
+    shell_ipc("island", "expand", "-1", timeout=2)
+    shell_ipc("island", "hide", timeout=2)
+    win = None
+    if str(window or "").strip():
+        win = match_window(window)
+        if not win:
+            return None, f"kein Fenster passt zu {window!r} — win.list zeigt, was offen ist"
+        hctl_dispatch(f'hl.dsp.focus({{ window = "address:{win["address"]}" }})')
+    time.sleep(0.3)
+    return (win or active_window()), ""
+
+
+def typed_into_terminal(args: dict) -> bool:
+    text = str((args or {}).get("text") or "")
+    runs = bool((args or {}).get("enter")) or "\n" in text or "\r" in text
+    if not runs:
+        return False
+    window = str((args or {}).get("window") or "").strip()
+    win = match_window(window) if window else active_window()
+    return bool(TERMINAL_RE.match(str((win or {}).get("class") or "")))
+
+
+def risky_call(name: str, args: dict) -> str:
+    """Why an otherwise harmless tool call needs a yes this time — "" when it
+    does not: typing that would RUN a command in a terminal, keys that close
+    or quit, Enter in a terminal."""
+    if name == "input.type" and typed_into_terminal(args):
+        return "runs a command in a terminal"
+    if name == "input.keys":
+        combo = re.sub(r"\s+", "", str((args or {}).get("combo") or "")).lower()
+        if CLOSING_KEYS.match(combo):
+            return "closes or deletes something"
+        if combo in ("enter", "return") and typed_into_terminal({"enter": True, "window": (args or {}).get("window")}):
+            return "runs a command in a terminal"
+    return ""
+
+
+@tool("input.type", '{"text": "Hallo zusammen!", "window": "", "enter": false}', "write",
+      "Type text into a window as if on the keyboard — any characters. window: its class or title (it is focused "
+      "first); empty = the window the user works in. enter: press Enter at the end (sends a message, runs a command).")
+def t_input_type(text="", window="", enter=False):
+    body = str(text or "")
+    if not body.strip() and not enter:
+        return {"ok": False, "error": "was soll ich tippen?"}
+    win, err = keys_to(window)
+    if err:
+        return {"ok": False, "error": err}
+    res = input_run(["type"], body + ("\n" if enter else ""), timeout=max(20, len(body) / 30))
+    return {"ok": bool(res.get("ok")), "typed": res.get("typed", 0), "window": (win or {}).get("class", ""),
+            "title": str((win or {}).get("title") or "")[:80], "error": res.get("error", "")}
+
+
+@tool("input.keys", '{"combo": "ctrl+s", "window": ""}', "write",
+      "Press a key or a shortcut as if on the keyboard: enter, esc, tab, ctrl+s, ctrl+t, ctrl+shift+t, alt+tab, "
+      "super+2, f5, ctrl+plus … window: focus that window first; empty = the window the user works in.")
+def t_input_keys(combo="", window=""):
+    spec = str(combo or "").strip()
+    if not spec:
+        return {"ok": False, "error": "welche Taste?"}
+    win, err = keys_to(window)
+    if err:
+        return {"ok": False, "error": err}
+    res = input_run(["key", spec], timeout=10)
+    return {"ok": bool(res.get("ok")), "key": spec, "window": (win or {}).get("class", ""), "error": res.get("error", "")}
+
+
+def find_on_screen(label: str) -> dict:
+    """Where `label` is written on the focused screen: {ok, x, y, text} in
+    layout pixels, from screen.read."""
+    seen = t_screen_read()
+    if not seen.get("ok"):
+        return seen
+    want = fold(label)
+    best, score = None, 0.0
+    for line in seen.get("lines") or []:
+        have = fold(line["text"])
+        if not have:
+            continue
+        s = 1.0 if have == want else 0.9 if want and want in have.split() else \
+            0.8 if want and want in have else difflib.SequenceMatcher(None, want, have).ratio()
+        if s > score:
+            best, score = line, s
+    if not best or score < 0.6:
+        return {"ok": False, "error": f"„{label}“ sehe ich gerade nicht auf dem Bildschirm"}
+    return {"ok": True, "x": best["x"] + best["w"] // 2, "y": best["y"] + best["h"] // 2, "text": best["text"]}
+
+
+@tool("input.click", '{"x": 960, "y": 540, "button": "left", "double": false, "text": ""}', "write",
+      "Click with the mouse: at x, y (screen pixels, as win.list and screen.read give them) — or, with text, on "
+      "that label as it is written on the screen (read by text recognition).")
+def t_input_click(x=None, y=None, button="left", double=False, text=""):
+    label = str(text or "").strip()
+    found = ""
+    if label:
+        spot = find_on_screen(label)
+        if not spot.get("ok"):
+            return spot
+        x, y, found = spot["x"], spot["y"], spot["text"]
+    try:
+        px, py = float(x), float(y)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "wohin? x und y, oder der Text, auf den ich klicken soll"}
+    args = ["click", str(px), str(py), "--button", str(button or "left").lower()]
+    if double:
+        args.append("--double")
+    res = input_run(args, timeout=10)
+    return {"ok": bool(res.get("ok")), "x": round(px), "y": round(py), "on": found, "error": res.get("error", "")}
+
+
+@tool("input.scroll", '{"amount": 5, "x": 0, "y": 0}', "write",
+      "Scroll with the mouse wheel: amount > 0 down, < 0 up (notches). x, y: where — empty = where the pointer is.")
+def t_input_scroll(amount=3, x=None, y=None):
+    try:
+        notches = max(-50, min(50, int(float(amount))))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "wie weit?"}
+    if x not in (None, "", 0) and y not in (None, "", 0):
+        input_run(["move", str(x), str(y)], timeout=8)
+    res = input_run(["scroll", str(notches)], timeout=20)
+    return {"ok": bool(res.get("ok")), "scrolled": notches, "error": res.get("error", "")}
+
+
+# ── the screen
+def monitor_of(name: str) -> dict:
+    mons = hctl_json("monitors")
+    for m in mons if isinstance(mons, list) else []:
+        if m.get("name") == name or (not name and m.get("focused")):
+            return m
+    return (mons[0] if isinstance(mons, list) and mons else {}) or {}
+
+
+@tool("screen.read", '{"screen": ""}', "read",
+      "Read what is on the screen right now (text recognition): every line of text with where it is (x, y, w, h in "
+      "screen pixels). For 'was steht da', 'lies vor, was auf dem Bildschirm ist', and before clicking on a label.")
+def t_screen_read(screen=""):
+    # in the private runtime dir (0700), and gone again after the reading
+    shot_path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), f"velly-screen-{os.getpid()}.png")
+    res = input_run(["shot", shot_path] + (["--output", str(screen)] if screen else []), timeout=20)
+    if not res.get("ok"):
+        return {"ok": False, "error": f"der Bildschirm ließ sich nicht aufnehmen: {res.get('error', '')}"[:200]}
+    try:
+        seen = ocr_words(shot_path)
+    finally:
+        try:
+            os.unlink(shot_path)
+        except OSError:
+            pass
+    if not seen.get("ok"):
+        return seen
+    mon = monitor_of(res.get("output", ""))
+    scale = float(mon.get("scale") or 1) or 1
+    ox, oy = float(mon.get("x") or 0), float(mon.get("y") or 0)
+    lines = []
+    for line in ocr_lines(seen["words"]):
+        lines.append({"text": line["text"], "x": round(ox + line["x"] / scale), "y": round(oy + line["y"] / scale),
+                      "w": round(line["w"] / scale), "h": round(line["h"] / scale)})
+    active = active_window()
+    return {"ok": True, "screen": res.get("output", ""), "window": active.get("class", ""),
+            "title": str(active.get("title") or "")[:80], "lines": lines[:120], "more": max(0, len(lines) - 120)}
+
+
+# ── programs
+PROTECTED_PROCS = {"systemd", "init", "hyprland", "xwayland", "quickshell", "qs", "dbus-daemon", "dbus-broker",
+                   "dbus-broker-launch", "pipewire", "pipewire-pulse", "wireplumber", "sddm", "gdm", "greetd",
+                   "login", "agetty", "kwin_wayland", "polkitd", "networkmanager", "bluetoothd", "systemd-logind",
+                   "xorg", "velvet-session", "velvet-ai", "velvet-local", "velvet-voice", "velvet-ears", "hyprlock",
+                   "sshd", "xdg-desktop-portal", "xdg-desktop-portal-hyprland", "kthreadd", "llama-server"}
+
+
+def proc_rows() -> list:
+    """Every user process with a name a person would use for it: the
+    program, or the script a python/node runs."""
+    me = {os.getpid(), os.getppid()}
+    rows = []
+    uid = os.getuid()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) in me:
+            continue
+        try:
+            if os.stat(f"/proc/{pid}").st_uid != uid:
+                continue
+            with open(f"/proc/{pid}/stat", "rb") as fh:
+                stat = fh.read().decode("utf-8", "replace")
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                argv = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
+            with open(f"/proc/{pid}/statm") as fh:
+                rss_pages = int(fh.read().split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        comm = stat[stat.index("(") + 1:stat.rindex(")")]
+        fields = stat[stat.rindex(")") + 2:].split()
+        ticks = int(fields[11]) + int(fields[12])
+        name = os.path.basename(argv[0]) if argv else comm
+        if name.startswith("python") or name in ("node", "bash", "sh", "perl", "ruby"):
+            script = next((os.path.basename(a) for a in argv[1:] if not a.startswith("-")), "")
+            if script:
+                name = script
+        rows.append({"pid": int(pid), "name": name, "comm": comm, "ticks": ticks,
+                     "rss": rss_pages * os.sysconf("SC_PAGE_SIZE")})
+    return rows
+
+
+@tool("proc.list", '{"sort": "cpu"}', "read",
+      "The programs using the most CPU (right now) or memory: name, pid, CPU %, RAM. sort: cpu | ram.")
+def t_proc_list(sort="cpu"):
+    first = {r["pid"]: r["ticks"] for r in proc_rows()}
+    time.sleep(0.6)
+    rows = proc_rows()
+    hz = os.sysconf("SC_CLK_TCK") or 100
+    for r in rows:
+        r["cpu"] = round(max(0, r["ticks"] - first.get(r["pid"], r["ticks"])) / hz / 0.6 * 100, 1)
+    key = "rss" if str(sort or "").lower() in ("ram", "memory", "mem", "speicher") else "cpu"
+    rows.sort(key=lambda r: r[key], reverse=True)
+    return {"ok": True, "sorted_by": key, "top": [{"name": r["name"], "pid": r["pid"], "cpu_percent": r["cpu"],
+                                                  "ram": human_size(r["rss"])} for r in rows[:15]]}
+
+
+@tool("proc.stop", '{"name": "steam", "pid": 0, "force": false}', "danger",
+      "End a program (by its name or pid) — what is unsaved in it is lost, so it asks first. force: kill it hard "
+      "(when it does not react). Never the desktop itself.")
+def t_proc_stop(name="", pid=0, force=False):
+    rows = proc_rows()
+    want = str(name or "").strip().lower()
+    try:
+        want_pid = int(pid or 0)
+    except (TypeError, ValueError):
+        want_pid = 0
+    if want_pid:
+        hits = [r for r in rows if r["pid"] == want_pid]
+    elif want:
+        hits = [r for r in rows if r["name"].lower() == want or r["comm"].lower() == want
+                or os.path.splitext(r["name"].lower())[0] == want]
+        if not hits:
+            hits = [r for r in rows if want in r["name"].lower()]
+    else:
+        return {"ok": False, "error": "welches Programm?"}
+    if not hits:
+        return {"ok": False, "error": f"kein laufendes Programm heißt {name or pid!r} — proc.list zeigt, was läuft"}
+    guarded = [r for r in hits if r["name"].lower() in PROTECTED_PROCS or r["comm"].lower() in PROTECTED_PROCS]
+    if guarded:
+        return {"ok": False, "error": f"{guarded[0]['name']} gehört zum Desktop selbst — das beende ich nicht"}
+    names = sorted({r["name"] for r in hits})
+    if len(names) > 1 and not want_pid:
+        return {"ok": False, "error": f"das passt auf mehrere: {', '.join(names[:6])} — welches genau?"}
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    stopped = []
+    for r in hits:
+        try:
+            os.kill(r["pid"], sig)
+            stopped.append(r["pid"])
+        except OSError:
+            continue
+    return {"ok": bool(stopped), "stopped": names[0] if names else "", "pids": stopped,
+            "how": "hart beendet" if force else "gebeten zu beenden"}
+
+
+# ── sound outputs
+def sinks() -> list:
+    code, out, _err = run(["pactl", "-f", "json", "list", "sinks"], timeout=6)
+    try:
+        data = json.loads(out) if code == 0 else []
+    except ValueError:
+        data = []
+    default = run(["pactl", "get-default-sink"], timeout=4)[1].strip()
+    rows = []
+    for s in data if isinstance(data, list) else []:
+        if not isinstance(s, dict):
+            continue
+        rows.append({"name": str(s.get("name") or ""), "label": str(s.get("description") or s.get("name") or ""),
+                     "default": str(s.get("name") or "") == default})
+    return rows
+
+
+@tool("audio.outputs", "", "read", "The sound outputs (speakers, headphones, HDMI, Bluetooth) and which one plays now.")
+def t_audio_outputs():
+    rows = sinks()
+    if not rows:
+        return {"ok": False, "error": "keine Tonausgabe gefunden (läuft PipeWire?)"}
+    return {"ok": True, "outputs": [{"label": r["label"], "playing": r["default"]} for r in rows]}
+
+
+@tool("audio.output", '{"name": "Kopfhörer"}', "write",
+      "Play the sound through another output — part of its name (Kopfhörer, HDMI, JBL, Lautsprecher …). "
+      "What is playing moves along.")
+def t_audio_output(name=""):
+    rows = sinks()
+    want = fold(str(name or ""))
+    if not want:
+        return {"ok": False, "error": "welche Ausgabe?", "outputs": [r["label"] for r in rows]}
+    # what people call an output (folded) → what its name or label says
+    words = {"kopfhoerer": ("headphone", "headset", "kopfh"), "headset": ("headset", "headphone"),
+             "lautsprecher": ("speaker", "lautspr", "analog"), "hdmi": ("hdmi", "displayport"),
+             "monitor": ("hdmi", "displayport"), "bildschirm": ("hdmi", "displayport"), "bluetooth": ("bluez",)}
+    # "die Kopfhörer" that are a Bluetooth headset: its name is the output's label
+    kinds = {d["name"]: d.get("kind") for d in bt_devices()} if any(k in want for k in ("kopfh", "headset", "lautspr", "box")) else {}
+    best, score = None, 0.0
+    for r in rows:
+        have = fold(f"{r['label']} {r['name']}")
+        s = max(name_score(want, fold(r["label"])), 1.0 if want in have else 0.0)
+        for key, alts in words.items():
+            if key in want and any(a in have for a in alts):
+                s = max(s, 0.9)
+        kind = kinds.get(r["label"]) or ""
+        if (kind == "headphones" and re.search(r"kopfh|headset|headphone", want)) or \
+                (kind == "speaker" and re.search(r"lautspr|box|speaker", want)):
+            s = max(s, 0.88)
+        if s > score:
+            best, score = r, s
+    if not best or score < 0.5:
+        return {"ok": False, "error": f"keine Ausgabe heißt {name!r}", "outputs": [r["label"] for r in rows]}
+    code, _o, err = run(["pactl", "set-default-sink", best["name"]], timeout=6)
+    if code != 0:
+        return {"ok": False, "error": err[:140]}
+    _c, streams, _e = run(["pactl", "list", "short", "sink-inputs"], timeout=6)
+    moved = 0
+    for line in streams.splitlines():
+        sid = line.split("\t")[0].strip()
+        if sid.isdigit() and run(["pactl", "move-sink-input", sid, best["name"]], timeout=6)[0] == 0:
+            moved += 1
+    return {"ok": True, "output": best["label"], "moved_streams": moved}
+
+
+# ── Bluetooth
+def bt_devices() -> list:
+    _code, out, _err = run(["bluetoothctl", "devices"], timeout=8)
+    rows = []
+    for line in out.splitlines():
+        m = re.match(r"\s*Device\s+([0-9A-F:]{17})\s+(.*)", line, re.I)
+        if not m:
+            continue
+        mac, label = m.group(1).upper(), m.group(2).strip()
+        _c, info, _e = run(["bluetoothctl", "info", mac], timeout=6)
+        battery = re.search(r"Battery Percentage:\s*0x[0-9a-f]+\s*\((\d+)\)", info)
+        icon = re.search(r"Icon:\s*(\S+)", info)
+        rows.append({"name": label, "mac": mac, "connected": bool(re.search(r"Connected:\s*yes", info)),
+                     "paired": bool(re.search(r"Paired:\s*yes", info)),
+                     "battery": int(battery.group(1)) if battery else None,
+                     "kind": BT_KINDS.get(icon.group(1) if icon else "", "")})
+    return rows
+
+
+# bluez's icon → what people call the device
+BT_KINDS = {"audio-headset": "headphones", "audio-headphones": "headphones", "audio-card": "speaker",
+            "input-mouse": "mouse", "input-keyboard": "keyboard", "input-gaming": "controller", "phone": "phone"}
+KIND_WORDS = {"headphones": re.compile(r"kopfh|headphone|headset|earbud|in.?ear|ohrh"),
+              "speaker": re.compile(r"lautspr|speaker|\bbox\b|boxen"), "mouse": re.compile(r"maus|mouse"),
+              "keyboard": re.compile(r"tastatur|keyboard"), "controller": re.compile(r"controller|gamepad|pad\b"),
+              "phone": re.compile(r"handy|phone|smartphone")}
+
+
+def name_score(want: str, have: str) -> float:
+    """How well a spoken name fits a device's name (both folded): the whole
+    thing, one distinctive word of it ("jbl box" → "JBL Charge Essential 2"),
+    or near enough to be a slip."""
+    if not want or not have:
+        return 0.0
+    if want in have or have in want:
+        return 1.0
+    words = [w for w in want.split() if len(w) >= 3]
+    if any(w in have.split() or any(h.startswith(w) for h in have.split()) for w in words):
+        return 0.85
+    return difflib.SequenceMatcher(None, want, have).ratio()
+
+
+def bt_match(name: str):
+    raw = fold(str(name or ""))
+    kind = next((k for k, rx in KIND_WORDS.items() if rx.search(raw)), "")
+    want = " ".join(w for w in raw.split() if not KIND_WORDS.get(kind) or not KIND_WORDS[kind].search(w)) or raw
+    best, score = None, 0.0
+    for d in bt_devices():
+        s = name_score(want, fold(d["name"]))
+        if kind and d.get("kind") == kind:
+            s = max(s, 0.75) + 0.1
+        if s > score:
+            best, score = d, s
+    return best if score >= 0.55 else None
+
+
+@tool("bt.devices", "", "read", "The Bluetooth devices this PC knows: name, connected or not, battery when it tells.")
+def t_bt_devices():
+    rows = bt_devices()
+    return {"ok": True, "devices": [{k: v for k, v in d.items() if k != "mac" and v not in (None, "")} for d in rows]}
+
+
+@tool("bt.connect", '{"name": "JBL"}', "write", "Connect a Bluetooth device this PC knows (part of its name).")
+def t_bt_connect(name=""):
+    dev = bt_match(name)
+    if not dev:
+        return {"ok": False, "error": f"kein bekanntes Gerät heißt {name!r} — neue Geräte koppelst du in QUICK → BLUETOOTH",
+                "devices": [d["name"] for d in bt_devices()]}
+    if dev["connected"]:
+        return {"ok": True, "device": dev["name"], "note": "war schon verbunden"}
+    _code, out, err = run(["bluetoothctl", "connect", dev["mac"]], timeout=25)
+    ok = bool(re.search(r"Connection successful|already connected", out + err, re.I))
+    said = (out + "\n" + err).strip().splitlines()
+    return {"ok": ok, "device": dev["name"],
+            "error": "" if ok else (said[-1][:120] if said else "keine Verbindung — ist es an und in der Nähe?")}
+
+
+@tool("bt.disconnect", '{"name": "JBL"}', "write", "Disconnect a Bluetooth device.")
+def t_bt_disconnect(name=""):
+    dev = bt_match(name)
+    if not dev:
+        return {"ok": False, "error": f"kein bekanntes Gerät heißt {name!r}"}
+    code, out, err = run(["bluetoothctl", "disconnect", dev["mac"]], timeout=15)
+    ok = code == 0 or bool(re.search(r"Successful disconnected|not connected", out + err, re.I))
+    return {"ok": ok, "device": dev["name"]}
+
+
+# ── windows, more of them
+@tool("win.fullscreen", '{"match": "class or title", "on": true}', "write",
+      "Make a window fullscreen (on: true) or back to normal (on: false).")
+def t_win_fullscreen(match="", on=True):
+    win = match_window(match) if str(match or "").strip() else active_window()
+    if not win or not win.get("address"):
+        return {"ok": False, "error": f"no window matching {match!r}"}
+    mode = 2 if on else 0
+    ok = hctl_dispatch(f'hl.dsp.window.fullscreen_state({{ window = "address:{win["address"]}", internal = {mode}, client = 0 }})')
+    return {"ok": ok, "window": win.get("class"), "fullscreen": bool(on)}
+
+
+@tool("win.place", '{"match": "class or title", "x": 100, "y": 100, "w": 1280, "h": 800}', "write",
+      "Put a window at a place and a size (screen pixels; it floats). Leave w/h at 0 to keep its size.")
+def t_win_place(match="", x=0, y=0, w=0, h=0):
+    win = match_window(match) if str(match or "").strip() else active_window()
+    if not win or not win.get("address"):
+        return {"ok": False, "error": f"no window matching {match!r}"}
+    try:
+        x, y, w, h = int(float(x or 0)), int(float(y or 0)), int(float(w or 0)), int(float(h or 0))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "x, y, w, h must be numbers"}
+    addr = win["address"]
+    if not win.get("floating"):
+        hctl_dispatch(f'hl.dsp.window.float({{ action = "enable", window = "address:{addr}" }})')
+    if w > 50 and h > 50:
+        hctl_dispatch(f'hl.dsp.window.resize({{ window = "address:{addr}", x = {w}, y = {h}, relative = false }})')
+    ok = hctl_dispatch(f'hl.dsp.window.move({{ window = "address:{addr}", x = {x}, y = {y}, relative = false }})')
+    return {"ok": ok, "window": win.get("class"), "at": [x, y], "size": [w, h] if w and h else win.get("size")}
+
+
+# ── the book studio and the night shift (bin/velvet-books, bin/velvet-night)
+BOOKS_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "velvet-books")
+NIGHT_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "velvet-night")
+
+
+def books_json(*args, timeout: float = 30) -> dict:
+    code, out, err = run([sys.executable, BOOKS_SCRIPT] + list(args), timeout=timeout)
+    try:
+        data = json.loads(out) if out else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    if code != 0 and not data:
+        data = {"ok": False, "error": (err or "the book studio did not answer").strip().splitlines()[-1][:160]}
+    return data
+
+
+@tool("books.status", "", "read",
+      "Velly's book studio for Amazon KDP: books ready to upload, in the making, already on KDP; the picture engine; "
+      "what the studio does right now.")
+def t_books_status():
+    data = books_json("status")
+    if "books" not in data:
+        return {"ok": False, "error": data.get("error") or "the book studio did not answer"}
+    row = lambda b: {"id": b["id"], "title": b.get("title") or b["kind"], "kind": b["kind"]}   # noqa: E731
+    eng = data.get("engine") or {}
+    return {"ok": True, "ready_to_upload": [row(b) for b in data.get("ready", [])],
+            "in_the_making": [row(b) for b in data.get("working", [])],
+            "on_kdp": len(data.get("uploaded", [])), "failed": [row(b) for b in data.get("failed", [])],
+            "picture_engine": "ready" if eng.get("ok") else f"not installed (~{round((eng.get('missing_mb') or 0) / 1000, 1)} GB, "
+                                                              "Settings → VELLY → BOOK STUDIO)",
+            "folder": shown_path(str(data.get("studio") or "")), "now": (data.get("now") or {}).get("doing", "")}
+
+
+@tool("books.make", '{"kind": "coloring", "idea": ""}', "write",
+      "Start a book for KDP now, in the background. kind: coloring (mandalas), puzzle (sudoku, word search, mazes), "
+      "picture (a story picture book — needs the picture engine), or empty for her own choice. idea: a picture "
+      "book's story in one sentence. A colouring or puzzle book is done in about a minute.")
+def t_books_make(kind="", idea=""):
+    want = str(kind or "").strip().lower()
+    want = {"malbuch": "coloring", "mandala": "coloring", "mandalas": "coloring", "rätsel": "puzzle", "raetsel": "puzzle",
+            "rätselbuch": "puzzle", "sudoku": "puzzle", "bilderbuch": "picture", "kinderbuch": "picture"}.get(want, want)
+    if want and want not in ("coloring", "puzzle", "picture"):
+        return {"ok": False, "error": "kind: coloring, puzzle or picture"}
+    if want == "picture":
+        eng = books_json("engine")
+        if not eng.get("ok"):
+            return {"ok": False, "error": "für Bilderbücher fehlt die Bild-Engine (~7 GB, einmal) — Einstellungen → "
+                                          "VELLY → BOOK STUDIO → INSTALL THE PICTURE ENGINE. Mal- und Rätselbücher gehen sofort."}
+    args = ["new"] + ([want] if want else []) + (["--idea", str(idea)] if str(idea or "").strip() else [])
+    made = books_json(*args)
+    if not made.get("ok"):
+        return {"ok": False, "error": made.get("error") or "the book could not be started"}
+    try:
+        subprocess.Popen(["nice", "-n", "8", sys.executable, BOOKS_SCRIPT, "work", "--book", str(made["id"]), "--until-done"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:120]}
+    return {"ok": True, "id": made["id"], "kind": made["kind"], "folder": shown_path(made.get("dir", "")),
+            "note": "picture books take an hour or more" if made["kind"] == "picture" else "about a minute"}
+
+
+@tool("books.open", '{"id": "001"}', "write",
+      "Open a book's review page (every page, every KDP field with a copy button), or with no id the shelf folder.")
+def t_books_open(id=""):
+    bid = str(id or "").strip()
+    code, _out, err = run([sys.executable, BOOKS_SCRIPT, "open" if bid else "shelf"] + ([bid] if bid else []), timeout=15)
+    return {"ok": code == 0, "opened": bid or "the shelf", "error": err[-140:] if code else ""}
+
+
+@tool("books.uploaded", '{"id": "001"}', "write",
+      "Mark a book as published on KDP (the user says it is online): it leaves the pile and makes room for the next.")
+def t_books_uploaded(id=""):
+    bid = str(id or "").strip()
+    if not bid:
+        return {"ok": False, "error": "welches Buch (Nummer)?"}
+    data = books_json("uploaded", bid)
+    return data if data else {"ok": False, "error": "unknown book"}
+
+
+@tool("night.status", "", "read",
+      "The night shift — she works while the screens are dark and the PC is on: running or not, what now, "
+      "what she did last night.")
+def t_night_status():
+    code, out, _err = run([sys.executable, NIGHT_SCRIPT, "status"], timeout=15)
+    try:
+        data = json.loads(out)
+    except ValueError:
+        return {"ok": False, "error": "the night shift did not answer"}
+    cfg = (read_json(CFG_PATH, {}) or {}).get("night") or {}
+    return {"ok": True, "enabled": cfg.get("enabled", True) is not False, "running": bool(data.get("running")),
+            "doing": data.get("doing", ""), "screens": (data.get("screen") or {}).get("why", ""),
+            "last_night": data.get("summary", "")}
+
+
+@tool("night.start", "", "write", "Start the night shift right now, with the screen on (until it is out of work).")
+def t_night_start():
+    code, _out, err = run(["qs", "-c", "velvet", "ipc", "call", "night", "start"], timeout=6)
+    return {"ok": code == 0, "started": code == 0, "error": "" if code == 0 else (err or "the shell is not answering")[:140]}
+
+
+@tool("screen.off", "", "write",
+      "Put the screens into standby now — 'mach den Bildschirm aus', 'ich geh schlafen'. A key or the mouse wakes "
+      "them; the night shift starts once they have been dark a few minutes.")
+def t_screen_off():
+    # a beat first, so the spoken answer is not cut by the dark
+    try:
+        subprocess.Popen(["bash", "-c", "sleep 2.5; qs -c velvet ipc call night screenOff"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:120]}
+    return {"ok": True, "screens": "off in a moment"}
+
+
 # ── time: reminders and timers ─────────────────────────────────────────────
 #  A reminder is a detached sleeper, not a daemon of hers: it outlives the
 #  session (and a shell restart), then posts a real notification and asks the
@@ -3445,9 +4521,12 @@ def t_timer_set(minutes=0, seconds=0, at="", text="", date=""):
     if delay > 7 * 86400:
         return {"ok": False, "error": "länger als eine Woche merke ich mir so etwas nicht"}
     say = f"Erinnerung: {label}"
+    # Spoken when due only when it was asked for out loud (TURN): a typed
+    # "erinnere mich …" rings and shows, it does not talk.
+    via = "voice" if TURN.get("via") == "voice" else "text"
     script = (f"sleep {delay}; "
               f"notify-send -a Velly -u critical -i alarm {shlex.quote('Velly · Erinnerung')} {shlex.quote(label)} 2>/dev/null; "
-              f"qs -c velvet ipc call velly remind {shlex.quote(say)} >/dev/null 2>&1")
+              f"qs -c velvet ipc call velly remindVia {shlex.quote(say)} {via} >/dev/null 2>&1")
     try:
         # Its own session and process group, started directly: the `setsid`
         # program forks, and the pid kept here was then a parent that had
@@ -3459,7 +4538,7 @@ def t_timer_set(minutes=0, seconds=0, at="", text="", date=""):
         return {"ok": False, "error": f"der Timer ließ sich nicht stellen: {exc}"}
     timers = pending_timers()
     timers.append({"id": (max([int(t.get("id") or 0) for t in timers] or [0]) + 1), "due": due,
-                   "text": label, "pid": proc.pid})
+                   "text": label, "pid": proc.pid, "via": via})
     write_json(TIMERS_PATH, timers)
     in_days = (_dt.date.fromtimestamp(due) - _dt.date.today()).days
     return {"ok": True, "text": label, "due": time.strftime("%H:%M", time.localtime(due)),
@@ -4343,7 +5422,7 @@ OFFER_RE = re.compile(r"(?:soll ich|möchtest du,? dass ich|willst du,? dass ich
                       r"shall i|should i|want me to)[^?]{0,200}\?\s*\S{0,40}$", re.I)
 
 
-def context_block(text: str = "", actions=None, last_answer: str = "") -> str:
+def context_block(text: str = "", actions=None, last_answer: str = "", via: str = "voice") -> str:
     """What she knows about this moment — rides on the user's message.
     `text` picks the remembered facts that matter for it; `actions` are what
     she did in the last turns (so "nein, das wollte ich nicht" can be undone)."""
@@ -4416,7 +5495,18 @@ def context_block(text: str = "", actions=None, last_answer: str = "") -> str:
     # …"). Said outright, she switches.
     if speaks_english(text):
         bits.append("language: the user wrote in English — answer in English this time")
-    bits.append("answer length: short and spoken — unless the user asked for something long, then all of it")
+    if via == "text":
+        bits.append("how the user asked: TYPED — your answer is READ on screen, it is NOT spoken. Take all the time "
+                    "it needs to get it exactly right: think it through; for a task use as many tool steps as it "
+                    "takes, read every result, and when a step failed try another way until it is really done — then "
+                    "say what you did and what came out. Write as long as the content needs: complete, precise, no "
+                    "filler; short paragraphs; several items or steps as lines that start with '• ' or '1.'; no "
+                    "markdown (no **, no #, no tables), no emoji. A simple command or small talk still gets one "
+                    "friendly line.")
+    else:
+        bits.append("how the user asked: SPOKEN into the microphone — you are heard. Speed first: answer at once, "
+                    "one to three short spoken sentences, no lists")
+        bits.append("answer length: short and spoken — unless the user asked for something long, then all of it")
     return "\n".join(bits)
 
 
@@ -4458,7 +5548,9 @@ opinions and share them lightly, you tease gently, you are never cold, and you
 care how the user is doing. You are sharp: you notice what the user really
 means, you think before you act, and you get it right the first time.
 
-HOW YOU TALK — you are HEARD, so talk like a person in a real conversation:
+HOW YOU TALK — you are HEARD, so talk like a person in a real conversation.
+(The context says how the user asked. SPOKEN: all of this applies. TYPED: you
+are READ, not heard — then the writing rules in the context replace these.)
  · Natural spoken German with "du": short, living sentences, contractions and
    the little words people use ("hab", "gibt's", "na klar", "oh", "hm",
    "ach so", "ehrlich gesagt", "stimmt"). Never stiff, never "Gerne!", never
@@ -4664,6 +5756,22 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
       a password: the terminal window that opens is where the user types it — say so.
     · what the user copied → {t("clipboard.read")}; notifications ("was hab ich
       verpasst") → {t("notifs.list")}; writing something down for later → {t("file.write")}.
+    · the PC itself, like a person at it: files → {t("files.find")}, {t("files.list")},
+      {t("file.read")} to look; {t("files.move")}, {t("files.copy")}, {t("files.mkdir")},
+      {t("files.open")} to act; {t("files.trash")} only when asked. Typing into an app →
+      {t("input.type")}, shortcuts → {t("input.keys")} (name the window: it is focused
+      first); what is on the screen → {t("screen.read")}; clicking a button by its
+      label → {t("input.click")} with text. Programs → {t("proc.list")} / {t("proc.stop")};
+      sound output → {t("audio.outputs")} / {t("audio.output")}; Bluetooth →
+      {t("bt.devices")} / {t("bt.connect")} / {t("bt.disconnect")}; windows →
+      {t("win.fullscreen")} / {t("win.place")}. Several steps in a row are fine — check
+      each result before the next.
+    · Books for Amazon KDP (her book studio) → {t("books.status")}, {t("books.make")},
+      {t("books.open")}, {t("books.uploaded")}; the night shift → {t("night.status")},
+      {t("night.start")}; "mach den Bildschirm aus", "ich geh schlafen" → {t("screen.off")}.
+      About money from books, be honest: she makes them, the user checks and uploads them
+      (KDP has no upload for programs, the account is the user's), and sales are never
+      guaranteed — say so plainly when it matters.
  3. Dangerous tools ({danger}) need a spoken confirmation first when the
     user did not already ask for that exact thing in this message. If they did, do it.
     EVERY other tool runs at once — {t("sys.update")}, {t("pkg.install")} and {t("term.run")}
@@ -4686,11 +5794,11 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
 {rules}"""
 
 
-def with_context(text: str, actions=None, last_answer: str = "") -> str:
+def with_context(text: str, actions=None, last_answer: str = "", via: str = "voice") -> str:
     """The user's words with the moment's context in front of them, marked
     so she neither reads it out nor mistakes it for something said."""
     try:
-        ctx = context_block(text, actions, last_answer)
+        ctx = context_block(text, actions, last_answer, via)
     except Exception:                                          # noqa: BLE001
         ctx = f"time: {date_de()}, {time.strftime('%H:%M')} Uhr"
     return f"<kontext>\n{ctx}\n</kontext>\n{text}"
@@ -4720,18 +5828,101 @@ DEEP_RE = re.compile(r"\b(denk\w*\s+(?:mal\s+)?(?:genau|gründlich|gruendlich|gu
                      r"step by step|think (?:hard|carefully)|in detail)\b", re.I)
 
 
-def effort_for(text: str) -> str:
-    """How deep she thinks. A short command stays quick (low); a question, a
-    wish of more than a few words, anything to explain or decide gets medium —
-    about half a second more on this machine, and the factual slips of low go
-    away (measured); "denk genau nach" gets high."""
+def effort_for(text: str, via: str = "voice", style: str = "") -> str:
+    """How deep she thinks — by how she was asked (see MODES).
+
+    SPOKEN, speed first (velly.voiceThinking "fast", the default): low; only an
+    outright "denk genau nach" gets medium. TYPED, until it is right
+    (velly.textThinking "thorough", the default): high for anything with
+    content — a question, an explanation, a task of more than a few words —
+    and medium for a short command.
+    BALANCED (either dial) is the rule from before the two modes: a short
+    command stays quick (low); a question, a wish of more than a few words,
+    anything to explain or decide gets medium — about half a second more on
+    this machine, and the factual slips of low go away (measured); "denk
+    genau nach" gets high."""
     t = text or ""
+    words = len(re.findall(r"\w+", t))
+    if style != "balanced":
+        if via == "text":
+            if DEEP_RE.search(t) or THINK_RE.search(t) or words >= 6 or (t.strip().endswith("?") and words >= 3):
+                return "high"
+            return "medium"
+        return "medium" if DEEP_RE.search(t) else "low"
     if DEEP_RE.search(t):
         return "high"
-    words = len(re.findall(r"\w+", t))
     if THINK_RE.search(t) or words >= 9 or (t.strip().endswith("?") and words >= 4):
         return "medium"
     return "low"
+
+
+def turn_mode(via: str, cfg: dict) -> dict:
+    """The rules of one turn: MODES for how it was asked, bent by the two
+    VELLY dials — velly.voiceThinking (fast | balanced) and
+    velly.textThinking (thorough | balanced: no second look, fewer steps)."""
+    if via == "voice":
+        style = "balanced" if str(cfg.get("voiceThinking") or "") == "balanced" else "fast"
+        return dict(MODES["voice"], via="voice", style=style, written=False)
+    style = "balanced" if str(cfg.get("textThinking") or "") == "balanced" else "thorough"
+    mode = dict(MODES["text"], via="text", style=style, written=True)
+    if style == "balanced":
+        mode.update(reviews=0, rounds=10)
+    return mode
+
+
+# Small talk needs no second look: "hey, wie geht's dir?" is not a question
+# anything depends on.
+SMALLTALK_RE = re.compile(r"^\W*(?:hey|hi|hallo|moin|servus|na|guten (?:morgen|tag|abend)|danke|dankeschön|"
+                          r"thx|thanks|gute nacht|tschüss|ciao|wie geht'?s(?: dir)?|was geht|alles klar|"
+                          r"how are you|what'?s up)\b[\w\s,'!?.]{0,30}$", re.I)
+
+
+def worth_a_second_look(text: str, answer: str, failed: bool = False) -> bool:
+    """A typed turn gets a second look when there is something to get wrong:
+    an explanation, a real question, a long answer, a step that failed —
+    "mach lauter" → "Lauter, jetzt 65 Prozent." does not, and neither does
+    small talk."""
+    t = text or ""
+    if failed:
+        return True
+    if SMALLTALK_RE.match(t.strip()):
+        return False
+    words = len(re.findall(r"\w+", t))
+    if DEEP_RE.search(t) or THINK_RE.search(t):
+        return True
+    if "?" in t and words >= 6:
+        return True
+    return len(answer or "") > 220 or words >= 12
+
+
+# The second look, asked in the conversation's own words (German, like the
+# rest of the context). She may use tools again — look it up, check it, finish
+# what is not done — and then writes the whole better answer, or one word.
+REVIEW_ASK = ("(System, nicht vom Nutzer: Lies deine Antwort oben jetzt noch einmal so streng wie ein Lektor, "
+              "bevor sie rausgeht. Beantwortet sie genau das, was gefragt war — vollständig, sachlich richtig, "
+              "klar und ohne Füllsätze? Ist eine Aufgabe wirklich ganz erledigt (stimmen die Ergebnisse der "
+              "Werkzeuge)? Fehlt etwas, ist etwas falsch oder unsicher: prüf es mit deinen Werkzeugen nach oder "
+              "erledige den Rest, und schreib dann die vollständige, verbesserte Antwort — nur die Antwort selbst, "
+              "in der Sprache des Nutzers, ohne ein Wort über diese Prüfung. Ist sie schon richtig und "
+              "vollständig, antworte nur mit dem einen Wort PASST.)")
+PASS_RE = re.compile(r"^\W*(?:passt|pass|ok|okay|stimmt so|alles (?:korrekt|richtig)|korrekt|richtig)\W*$", re.I)
+REVIEW_META = re.compile(r"^\W*(?:(?:die|meine|deine|diese|obige)\s+(?:obige\s+)?antwort|(?:the|my)\s+answer|passt)\b", re.I)
+
+
+def review_verdict(candidate: str, draft: str) -> str:
+    """What the second look came back with: the improved answer, or "" when
+    the draft stands — PASST, nothing, a remark ABOUT the answer instead of an
+    answer, the same text once more, or a fragment of a long draft (a
+    "Korrektur: …" line must not replace the whole explanation)."""
+    c = (candidate or "").strip()
+    d = (draft or "").strip()
+    if not c or PASS_RE.match(c) or REVIEW_META.match(c):
+        return ""
+    if re.sub(r"\W+", "", c.lower()) == re.sub(r"\W+", "", d.lower()):
+        return ""
+    if len(d) > 300 and len(c) < len(d) * 0.4:
+        return ""
+    return c
 
 
 def token_budget(prov, answer_tokens: int, effort: str) -> int:
@@ -4779,7 +5970,37 @@ def english_meta(sentence: str) -> bool:
     return hits >= 3 and hits / len(words) >= 0.3
 
 
-def clean_answer(text: str, user_text: str = "") -> str:
+def written_text(text: str, german: bool) -> str:
+    """A typed turn's answer is READ, not heard: line breaks, paragraphs and
+    lists stay (the island draws plain text), only what would show as markup
+    goes — **bold**, *italics*, `code` marks and fences, # headings, table
+    bars, emoji. Bullets become "• ". Notes to herself in front of the answer
+    go the same way they go for speech."""
+    out = (text or "").replace("\r\n", "\n").strip()
+    head, sep, rest = out.partition("\n")
+    sentences = re.split(r"(?<=[.!?])\s+", head.strip())
+    while sentences and (META_OPENERS.match(sentences[0]) or (german and english_meta(sentences[0]))):
+        sentences.pop(0)
+    out = (" ".join(sentences) + (sep + rest if sep else "")).strip()
+    out = EMOJI.sub("", out)
+    out = re.sub(r"\*\*(.+?)\*\*", r"\1", out)
+    out = re.sub(r"__(.+?)__", r"\1", out)
+    out = re.sub(r"(?<![\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w*])", r"\1", out)
+    out = re.sub(r"(?<![\w_])_(?!\s)([^_\n]+?)(?<!\s)_(?![\w_])", r"\1", out)
+    # (only spaces and tabs at a line's start — \s would eat the empty lines)
+    out = re.sub(r"(?m)^[ \t]*```[\w+-]*[ \t]*$\n?", "", out)
+    out = re.sub(r"`([^`\n]*)`", r"\1", out)
+    out = re.sub(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+", "", out)
+    out = re.sub(r"(?m)^([ \t]*)[-*•][ \t]+", r"\1• ", out)
+    # a markdown table: the rule line goes, the bars become " · "
+    out = re.sub(r"(?m)^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$\n?", "", out)
+    out = re.sub(r"(?m)^[ \t]*\|(.*)\|[ \t]*$", lambda m: " · ".join(c.strip() for c in m.group(1).split("|")), out)
+    out = "\n".join(line.rstrip() for line in out.split("\n"))
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return collapse_loops(out.strip())
+
+
+def clean_answer(text: str, user_text: str = "", written: bool = False) -> str:
     out = text or ""
     final = HARMONY_FINAL.search(out)
     if final:
@@ -4787,6 +6008,8 @@ def clean_answer(text: str, user_text: str = "") -> str:
     out = THINK_BLOCK.sub("", out)
     out = HARMONY_TAGS.sub("", out)
     out = out.replace("<|end|>", "").replace("<|return|>", "")
+    if written:
+        return written_text(out, bool(DE_MARKERS.search(user_text or "")))
     # English planning in front of a German (or any) answer: drop sentence by
     # sentence while they read like notes to self.
     sentences = re.split(r"(?<=[.!?])\s+", out.strip())
@@ -4981,7 +6204,10 @@ class Runner:
         # needs no yes at all
         if name == "cmd.run" and safe_readonly((args or {}).get("command")):
             confirmed = True
-        if spec.level == "danger" and not confirmed and (self.cfg.get("confirmDanger") is not False):
+        # Harmless tools turn dangerous by their arguments: typing that would
+        # run a command in a terminal, keys that close or quit (risky_call).
+        level = "danger" if spec.level == "danger" or risky_call(name, args or {}) else spec.level
+        if level == "danger" and not confirmed and (self.cfg.get("confirmDanger") is not False):
             slot = self.pending_danger
             turn = int(self.state.get("turn") or 0)
             # The confirmation is worth nothing if the same turn can arm it and
@@ -5029,12 +6255,17 @@ class Runner:
         return result
 
     # ── one turn
-    def turn(self, text: str) -> str:
+    def turn(self, text: str, via: str = "text") -> str:
         text = (text or "").strip()
         if not text:
             return ""
+        # Spoken or typed (MODES): the state says which, and the shell speaks
+        # only a turn that came through the microphone.
+        via = "voice" if via == "voice" else "text"
+        TURN["via"] = via
+        mode = turn_mode(via, self.cfg)
         began = time.monotonic()
-        self.state.update({"state": "thinking", "phase": "thinking", "user": text,
+        self.state.update({"state": "thinking", "phase": "thinking", "user": text, "via": via,
                            "answer": "", "error": "", "tools": [], "session": session_open()})
         self.state["turn"] = int(self.state.get("turn") or 0) + 1
         self.write_state(force=True)
@@ -5097,19 +6328,30 @@ class Runner:
         # in the system prompt every turn re-read ~4800 tokens (measured 15 s).
         turn_no = int(self.state.get("turn") or 0)
         recent = [what for at, what in self.actions if turn_no - at <= 2]
-        messages.append({"role": "user", "content": with_context(text, recent, last_answer)})
+        messages.append({"role": "user", "content": with_context(text, recent, last_answer, via)})
         native = self.prov.native
         system = system_prompt(native)
-        limit = int(self.cfg.get("maxTokens") or 320) * 4
+        written = mode["written"]
+        limit = mode["answer_chars"] or int(self.cfg.get("maxTokens") or 320) * 4
         temperature = float(self.cfg.get("temperature") or 0.6)
-        effort = effort_for(text)
-        budget = token_budget(self.prov, int(self.cfg.get("maxTokens") or 320), effort)
+        effort = effort_for(text, via, mode["style"])
+        answer_tokens = int(self.cfg.get("maxTokens") or 320)
+        if written:
+            # Written answers may be long: the cap stops novels, not explanations.
+            answer_tokens = max(1600, answer_tokens * 5)
+        budget = token_budget(self.prov, answer_tokens, effort)
         answer = ""
         asked_confirm = False
         known_name = user_name()
+        # The second look (typed turns): her finished draft goes back to her
+        # with REVIEW_ASK; she may use tools again and answers with the whole
+        # better answer or PASST. The draft stays on screen meanwhile.
+        reviews_left = int(mode["reviews"])
+        reviewing = False
+        failed = False
 
         try:
-            for _round in range(MAX_TOOL_ROUNDS):
+            for _round in range(int(mode["rounds"])):
                 streamed = []
                 # a phrase repeating itself ends the stream at once (see
                 # collapse_loops) — what was said up to there is the answer
@@ -5122,17 +6364,20 @@ class Runner:
                     # A plan that starts to stream is not shown; the cleaned
                     # answer replaces it at the end of the round. The voice
                     # reads along (--follow), so it gets the same text the
-                    # final answer will be.
-                    shown = "" if looks_like_planning(partial) else \
-                        drop_repeat_name(clean_answer(strip_tool_lines(partial), text), known_name, last_answer)
-                    self.state["answer"] = shown[:limit]
+                    # final answer will be. During the second look the draft
+                    # stays on screen; an empty partial is only a heartbeat.
+                    if partial and not reviewing:
+                        shown = "" if looks_like_planning(partial) else \
+                            drop_repeat_name(clean_answer(strip_tool_lines(partial), text, written), known_name, last_answer)
+                        self.state["answer"] = shown[:limit]
                     self.write_state()
 
-                # The first round thinks as deep as the question needs; after a
-                # tool round she only has to say what happened.
+                # Spoken: the first round thinks as deep as the question needs;
+                # after a tool round she only has to say what happened. Typed:
+                # every round is a step of the task and thinks as deep.
                 try:
                     out = self.prov.stream(messages, system, on_delta, lambda looped=looped: self.cancel() or looped[0],
-                                           temperature, budget, effort if _round == 0 else "low")
+                                           temperature, budget, effort if (written or _round == 0) else "low")
                 except Cancelled:
                     if not looped[0] or self.cancel():
                         raise
@@ -5141,9 +6386,27 @@ class Runner:
                     self.prov.last_calls = []
                 native_calls = list(self.prov.last_calls) if native else []
                 calls = [(c["name"], c["args"]) for c in native_calls] or parse_tool_calls(out)
-                spoken = clean_answer(strip_tool_lines(out), text)
+                spoken = clean_answer(strip_tool_lines(out), text, written)
                 if not calls:
-                    answer = spoken[:limit]
+                    if reviewing:
+                        reviewing = False
+                        better = review_verdict(spoken, answer)
+                        if not better:
+                            log("second look: the answer stands")
+                            break
+                        log(f"second look: improved ({len(answer)} → {len(better)} chars)")
+                        answer = better[:limit]
+                    else:
+                        answer = spoken[:limit]
+                    if reviews_left > 0 and answer.strip() and not asked_confirm and not self.cancel() \
+                            and worth_a_second_look(text, answer, failed):
+                        reviews_left -= 1
+                        reviewing = True
+                        messages.append({"role": "assistant", "content": answer})
+                        messages.append({"role": "user", "content": REVIEW_ASK})
+                        self.state.update({"answer": answer, "phase": "checking"})
+                        self.write_state(force=True)
+                        continue
                     break
                 if native_calls:
                     # Her calls go back as calls, the results as tool messages
@@ -5168,6 +6431,8 @@ class Runner:
                     result = self.run_tool(name, args)
                     if isinstance(result, dict) and result.get("needs_confirmation"):
                         asked_confirm = True
+                    elif not result.get("ok"):
+                        failed = True
                     self.state["tools"] = (self.state.get("tools") or []) + [
                         {"name": name, "ok": bool(result.get("ok")), "note": short_note(result)}]
                     if not result.get("needs_confirmation"):
@@ -5175,10 +6440,9 @@ class Runner:
                         self.actions = (self.actions + [(turn_no, f"{T(name, native)} {shown_args} → "
                                                                   f"{'ok' if result.get('ok') else 'failed'}: {short_note(result)}")])[-8:]
                     self.state["state"] = "thinking"
-                    self.state["phase"] = "thinking"
+                    self.state["phase"] = "checking" if reviewing else "thinking"
                     self.write_state(force=True)
-                    cap = {"web.lookup": 3000, "web.read": 3400, "clipboard.read": 2700, "weather.forecast": 1800,
-                           "notifs.list": 1400, "cmd.run": 2000, "pkg.search": 1400}.get(name, 700)
+                    cap = TOOL_RESULT_CAPS.get(name, 700) * (2 if written else 1)
                     payload = json.dumps(result, ensure_ascii=False)[:cap]
                     if native_calls:
                         messages.append({"role": "tool", "tool_call_id": native_calls[index]["id"], "content": payload})
@@ -5187,9 +6451,11 @@ class Runner:
                 if not native_calls:
                     messages.append({"role": "user", "content": "TOOL RESULTS\n" + "\n".join(results)})
             else:
-                # Six rounds of tools and still no sentence: the nudge below
-                # asks for one ("…" used to be the answer here — measured).
-                answer = spoken
+                # All rounds used and still no sentence: the nudge below asks
+                # for one ("…" used to be the answer here — measured). Out of
+                # rounds in the middle of a second look: the draft stands.
+                if not reviewing:
+                    answer = spoken
             # She asked for a yes that nothing is waiting for — the gate was
             # imagined, and the user's "ja" would only have met another "sag
             # ja" (measured with the update, at medium effort). Once, firmly:
@@ -5218,9 +6484,9 @@ class Runner:
                         follow = messages + [{"role": "user", "content": "TOOL RESULTS\n" + "\n".join(results_txt)
                                               + "\n(Sag dem Nutzer in ein, zwei kurzen Sätzen, was passiert ist — ohne Werkzeuge.)"}]
                         out = self.prov.stream(follow, system, lambda *_: None, self.cancel, temperature, budget, "low")
-                        answer = clean_answer(strip_tool_lines(out), text)[:limit] or "Erledigt."
+                        answer = clean_answer(strip_tool_lines(out), text, written)[:limit] or "Erledigt."
                 else:
-                    answer = clean_answer(strip_tool_lines(out), text)[:limit] or answer
+                    answer = clean_answer(strip_tool_lines(out), text, written)[:limit] or answer
             if asked_confirm and not (answer or "").strip():
                 # The model looped on the gate instead of asking. Ask for it
                 # here, in one plain sentence — nobody should get an empty
@@ -5235,7 +6501,7 @@ class Runner:
                 nudge = messages + [{"role": "user",
                                      "content": "Antworte jetzt direkt, in ein bis zwei kurzen Sätzen."}]
                 out = self.prov.stream(nudge, system, lambda *_: None, self.cancel, 0.2, budget, "low")
-                answer = clean_answer(strip_tool_lines(out), text)[:limit] or answer
+                answer = clean_answer(strip_tool_lines(out), text, written)[:limit] or answer
                 if not (answer or "").strip():
                     answer = "Das kam gerade nicht durch — frag mich nochmal."
         except Cancelled:
@@ -5264,7 +6530,7 @@ class Runner:
             "ms": int((time.monotonic() - began) * 1000),
         })
         self.write_state(force=True)
-        self.append_history(text, answer)
+        self.append_history(text, answer, int(mode["history_chars"]))
         mem = memory()
         stats = mem.setdefault("stats", {"turns": 0, "tools": {}, "sessions": 0})
         stats["turns"] = int(stats.get("turns") or 0) + 1
@@ -5362,7 +6628,7 @@ class Runner:
                 out.append({"role": role, "content": content})
         return out
 
-    def append_history(self, user_text: str, answer: str) -> None:
+    def append_history(self, user_text: str, answer: str, cap: int = 600) -> None:
         # A turn that produced no answer is not a turn: it used to be appended
         # anyway, so three unanswered "Installiere Spicetify für mich." piled up
         # as a block of user messages and the model started answering the OLD
@@ -5371,9 +6637,9 @@ class Runner:
             return
         mem = memory()
         hist = [h for h in (mem.get("history") or []) if isinstance(h, dict)]
-        hist.append({"t": now_ms(), "role": "user", "text": user_text[:600]})
+        hist.append({"t": now_ms(), "role": "user", "text": user_text[:max(600, cap)]})
         if answer:
-            hist.append({"t": now_ms(), "role": "velly", "text": answer[:600]})
+            hist.append({"t": now_ms(), "role": "velly", "text": answer[:cap]})
         mem["history"] = hist[-400:]
         save_memory(mem)
 
@@ -5423,6 +6689,16 @@ def describe_action(name: str, args: dict) -> str:
         return f"den Befehl „{str((args or {}).get('command') or '').strip()[:90]}“ ausführen"
     if name == "composio.act":
         return f"„{str((args or {}).get('slug') or '').replace('_', ' ')[:60]}“ in deiner verbundenen App ausführen"
+    a = args or {}
+    if name == "files.trash":
+        return f"„{os.path.basename(str(a.get('path') or '').rstrip('/'))[:60]}“ in den Papierkorb legen"
+    if name == "proc.stop":
+        return f"{str(a.get('name') or a.get('pid') or 'das Programm')[:40]} beenden" + (" (hart)" if a.get("force") else "")
+    if name == "input.type":
+        where = str(a.get("window") or "").strip() or "das Terminal"
+        return f"„{str(a.get('text') or '').strip()[:60]}“ in {where[:30]} tippen und ausführen"
+    if name == "input.keys":
+        return f"{str(a.get('combo') or '').upper()[:30]} drücken"
     return ACTION_WORDS.get(name, name)
 
 
@@ -5588,7 +6864,7 @@ def daemon() -> int:
                     runner.state.update(brain_fields(runner.prov))
                     runner.req_id = req_id
                     runner._req_seen = 0.0
-                    runner.turn(text)
+                    runner.turn(text, "voice" if req.get("via") == "voice" else "text")
                     runner.req_id = None
             elif req_id != last_req_id and kind == "setup":
                 # The wizard's fields arrive the same way everything else does.
@@ -5688,8 +6964,29 @@ def selftest() -> int:
         fails.append("system prompt is not static (the context belongs on the message)")
     if not with_context("hallo").startswith("<kontext>") or not with_context("hallo").endswith("hallo"):
         fails.append("context on the message")
-    if effort_for("mach lauter") != "low" or effort_for("erklär mir was ein kernel ist") != "medium":
+    if effort_for("mach lauter") != "low" or effort_for("erklär mir was ein kernel ist", "voice", "balanced") != "medium":
         fails.append("reasoning effort")
+    # spoken: speed first; typed: until it is right
+    if effort_for("erklär mir was ein kernel ist") != "low" or effort_for("denk genau nach: was ist besser") != "medium":
+        fails.append("spoken effort (speed first)")
+    if effort_for("erklär mir was ein kernel ist", "text") != "high" or effort_for("mach lauter", "text") != "medium":
+        fails.append("typed effort (until it is right)")
+    if turn_mode("text", {})["reviews"] < 1 or turn_mode("voice", {})["reviews"] != 0 or \
+            turn_mode("text", {"textThinking": "balanced"})["reviews"] != 0 or not turn_mode("text", {})["written"]:
+        fails.append("turn modes")
+    if "TYPED" not in context_block("wie geht das", via="text") or "SPOKEN" not in context_block("wie geht das"):
+        fails.append("modality in the context")
+    if worth_a_second_look("hey, wie geht's dir?", "Gut!") or worth_a_second_look("mach lauter", "Lauter, jetzt 65 Prozent.") \
+            or not worth_a_second_look("erklär mir, wie ein kernel funktioniert", "…") or not worth_a_second_look("mach lauter", "x", True):
+        fails.append("second look: when")
+    if review_verdict("PASST", "a") or review_verdict("Passt so.", "a") or review_verdict("Die Antwort ist korrekt.", "x" * 50) \
+            or review_verdict("Korrektur: 5.", "x" * 400) or review_verdict("Gut, danke!", "Gut, danke!") \
+            or review_verdict("Besser: drei Schritte statt zwei.", "Zwei Schritte.") != "Besser: drei Schritte statt zwei.":
+        fails.append("second look: verdict")
+    if clean_answer("**Drei Wege:**\n- erstens\n- zweitens\n\n\n\n# Fazit\nGut.", "wie geht das", True) != "Drei Wege:\n• erstens\n• zweitens\n\nFazit\nGut.":
+        fails.append("written answers keep lines and lists")
+    if "\n" in clean_answer("Eins.\nZwei.", "wie geht das"):
+        fails.append("spoken answers are one line")
     if clean_answer("Läuft! 🎶", "spiel was") != "Läuft!":
         fails.append("emoji in answers")
     if "media.play" not in TOOLS or spotify_title("Numb - song and lyrics by Linkin Park | Spotify") != "Numb von Linkin Park":
@@ -6038,12 +7335,14 @@ def main() -> int:
     if argv[0] == "--local":
         return subprocess.call([sys.executable, LOCAL_SCRIPT, "status"])
     if argv[0] == "--ask":
-        text = " ".join(argv[1:]).strip()
+        # --ask --voice …: as if it was said into the microphone (speed first)
+        via = "voice" if argv[1:2] == ["--voice"] else "text"
+        text = " ".join(argv[2:] if via == "voice" else argv[1:]).strip()
         if not text:
             print("velvet-ai: nothing to ask", file=sys.stderr)
             return 2
         runner = Runner(Provider(), forced=True)
-        answer = runner.turn(text)
+        answer = runner.turn(text, via)
         print(answer or runner.state.get("error") or "(silence)")
         return 0
     log(f"unknown argument {argv[0]!r} — see the header of this file")

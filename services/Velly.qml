@@ -256,7 +256,8 @@ Singleton {
         case "speaking":
             return "SPEAKING";
         case "thinking":
-            return root.state.state === "acting" ? "ACTING" : "THINKING";
+            // a typed answer gets a second look before it goes out
+            return root.state.state === "acting" ? "ACTING" : (root.state.phase === "checking" ? "CHECKING" : "THINKING");
         case "error":
             return "ERROR";
         case "listening":
@@ -315,12 +316,15 @@ Singleton {
         root.writeSession(true);
         heartbeat.restart();
         // The natural voice takes a few seconds to load: start it now, not
-        // with her first sentence.
-        if (Config.velly.voice) {
+        // with her first sentence — when an answer may be spoken at all (the
+        // microphone is on, or she speaks every answer).
+        if (Config.velly.voice && (root.speaksAlways || Config.velly.ears || Config.velly.wakeWord)) {
             voiceWarm.running = false;
             voiceWarm.running = true;
         }
-        if (Config.velly.voice && Config.velly.greet)
+        // The spoken hello answers a spoken "Hey Velly" — a key or a press
+        // wakes her quietly (unless she speaks every answer).
+        if (Config.velly.greet && root.speaksFor(root.wakeVoice ? "voice" : "text"))
             root.say(root.greetings[Math.floor(Math.random() * root.greetings.length)]);
         if (Config.velly.ears && Config.velly.autoListen)
             earsCtl("listen");
@@ -394,7 +398,7 @@ Singleton {
         root.arm = 0;
         // One last errand: the brain writes the session into memory, then
         // leaves on its own. The linger is only a safety net.
-        root.request("sleep", "");
+        root.request("sleep", "", null, "");
         root.lingering = true;
         linger.stop();
         linger.restart();
@@ -439,13 +443,28 @@ Singleton {
         return Number(c.until ?? 0) > Date.now() - 1000 ? c : null;
     }
     function confirmAnswer(yes: bool): void {
-        root.ask(yes ? "Ja." : "Nein.");
+        // a click answers in the way the question was asked
+        root.ask(yes ? "Ja." : "Nein.", root.lastVia);
     }
 
-    function ask(text: string): void {
+    // ───────────────────────────────────────────── spoken or typed (via)
+    //  What came through the microphone ("voice") is answered out loud and
+    //  fast; what was typed or clicked ("text") is answered on screen only,
+    //  and she takes the time it needs (velvet-ai MODES). velly.speakWhen
+    //  "always" speaks every answer, as before the two modes.
+    property string lastVia: "text"
+    property bool wakeVoice: false
+    readonly property bool speaksAlways: Config.velly.speakWhen === "always"
+
+    function speaksFor(via: string): bool {
+        return Config.velly.voice && (root.speaksAlways || via === "voice");
+    }
+
+    function ask(text: string, via: string): void {
         const line = `${text ?? ""}`.trim();
         if (line.length === 0)
             return;
+        const how = via === "voice" ? "voice" : "text";
         if (!root.active)
             root.wake();
         root.stopVoice();
@@ -453,7 +472,8 @@ Singleton {
         root.barged = false;
         root.lastAsk = line;
         root.lastAskAt = Date.now();
-        root.request("ask", line);
+        root.lastVia = how;
+        root.request("ask", line, null, how);
         Sfx.cursor();
     }
 
@@ -501,7 +521,7 @@ Singleton {
             holdTimer.restart();
             return;
         }
-        root.ask(line);
+        root.ask(line, "voice");
     }
 
     Timer {
@@ -519,15 +539,15 @@ Singleton {
             }
             const line = root.heardHead;
             root.heardHead = "";
-            root.ask(line);
+            root.ask(line, "voice");
         }
     }
 
     function cancel(): void {
-        root.request("cancel", "");
+        root.request("cancel", "", null, "");
     }
 
-    function request(kind: string, text: string, fields: var): void {
+    function request(kind: string, text: string, fields: var, via: string): void {
         root.reqId++;
         const payload = {
             id: root.reqId,
@@ -537,6 +557,8 @@ Singleton {
         };
         if (fields)
             payload.fields = fields;
+        if (via === "voice" || via === "text")
+            payload.via = via;
         reqFile.setText(JSON.stringify(payload));
     }
 
@@ -621,13 +643,15 @@ Singleton {
     // Due reminders: a chime, a long toast, and her voice — the notification
     // itself comes from the sleeper (notify-send), so it also lands in the
     // notification history.
-    function remind(text: string): void {
+    // A reminder set by voice is said out loud when due; a typed one rings
+    // and shows (via from timer.set).
+    function remind(text: string, via: string): void {
         const line = `${text ?? ""}`.trim();
         if (line.length === 0)
             return;
         Sfx.open();
         Toast.show(line.toUpperCase(), "warn", 9000);
-        if (Config.velly.voice)
+        if (root.speaksFor(via))
             root.say(line);
     }
 
@@ -1327,7 +1351,7 @@ Singleton {
     // writes that file itself — and never through argv, which the whole
     // machine can read.
     function writeAi(fields: var): void {
-        root.request("setup", "", fields);
+        root.request("setup", "", fields, "");
     }
 
     function probe(): void {
@@ -1478,7 +1502,7 @@ Singleton {
 
         interval: 1100
         onTriggered: {
-            if (root.phase === "thinking" && root.answer.length === 0 && !root.speaking && Config.velly.voice && Config.velly.fillers) {
+            if (root.phase === "thinking" && root.answer.length === 0 && !root.speaking && root.speaksFor(root.lastVia) && Config.velly.fillers) {
                 filler.running = false;
                 filler.running = true;
             }
@@ -1521,9 +1545,11 @@ Singleton {
         if (!data.wake || root.active || Locker.locked)
             return;
         const rest = `${data.rest ?? ""}`.trim();
+        root.wakeVoice = true;
         root.wake();
+        root.wakeVoice = false;
         if (rest.split(/\s+/).filter(w => w.length > 0).length >= 2)
-            root.ask(rest);
+            root.ask(rest, "voice");
         else
             Sfx.open();
     }
@@ -1734,7 +1760,9 @@ Singleton {
         // and says the remainder itself, so it is not started twice.
         const answer = `${data.answer ?? ""}`;
         const stage = `${data.state ?? ""}`;
-        if (stage === "thinking" && data.turn !== root.spokenTurn && Config.velly.voice && /[.!?…]\s/.test(answer)) {
+        // Only an answer to something SAID is spoken (via, see ask()).
+        const via = `${data.via ?? root.lastVia}`;
+        if (stage === "thinking" && `${data.phase ?? ""}` !== "checking" && data.turn !== root.spokenTurn && root.speaksFor(via) && /[.!?…]\s/.test(answer)) {
             root.spokenTurn = data.turn;
             filler.running = false;
             follower.command = ["python3", root.voiceScript, "--follow", `${data.turn}`];
@@ -1743,7 +1771,7 @@ Singleton {
         }
         if (stage === "answer" && answer.length > 0 && data.turn !== root.spokenTurn) {
             root.spokenTurn = data.turn;
-            if (Config.velly.voice)
+            if (root.speaksFor(via))
                 root.say(answer);
         }
     }
@@ -1892,7 +1920,11 @@ Singleton {
             root.toggle();
         }
         function ask(text: string): void {
-            root.ask(text);
+            root.ask(text, "text");
+        }
+        // as if it was said into the microphone: answered out loud, fast
+        function askVoice(text: string): void {
+            root.ask(text, "voice");
         }
         function status(): string {
             return root.status();
@@ -1905,7 +1937,11 @@ Singleton {
         }
         // A reminder she set earlier (timer.set) is due — asleep or awake.
         function remind(text: string): void {
-            root.remind(text);
+            root.remind(text, "voice");
+        }
+        // timer.set since v8.63: spoken only when it was set by voice
+        function remindVia(text: string, via: string): void {
+            root.remind(text, via);
         }
         // Returns what happened, so the brain can tell the user the truth
         // (void handlers printed nothing and every call read as a failure).

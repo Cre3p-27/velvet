@@ -812,6 +812,30 @@ JsonAdapter {
     // may do, what she may hear, and what she leaves behind.
     // The secret itself (the API key) never lives here — it lives in
     // ~/.config/velvet/ai.json with 0600, written by her own setup.
+    // ========================================================= NIGHT SHIFT
+    // While every screen is dark and the PC is on, Velly works
+    // (services/NightShift.qml → bin/velvet-night). VELLY → NIGHT SHIFT.
+    property JsonObject night: JsonObject {
+        property bool enabled: true
+        property int startAfter: 2        // minutes the screens must be dark first
+        property int screenOff: 20        // idle minutes → screens to standby (0 = never)
+        property bool books: true         // the book studio (bin/velvet-books)
+        property bool livewalls: true     // live wallpapers for new favourites
+        property bool tidy: true          // her memory tidied
+        property bool updates: true       // the updates counted (never installed)
+    }
+
+    // ========================================================= BOOK STUDIO
+    // Books for Amazon KDP, made at night (bin/velvet-books). VELLY → BOOK STUDIO.
+    property JsonObject books: JsonObject {
+        property string author: ""        // the pen name on cover and title page
+        property string lang: "de"        // de | en
+        property int maxWaiting: 3        // finished books waiting for your upload before she pauses
+        property bool coloring: true      // mandala colouring books (nothing to download)
+        property bool puzzle: true        // sudoku, word search, mazes (nothing to download)
+        property bool picture: true       // picture books (needs the picture engine)
+    }
+
     property JsonObject velly: JsonObject {
         // Master switch — MODULES → VELLY. Off removes her module from
         // the island and the long press does nothing.
@@ -820,6 +844,17 @@ JsonAdapter {
         property int longPress: 620
         // Speak her answers out loud (bin/velvet-voice).
         property bool voice: true
+        // WHEN she speaks: "spoken" answers out loud only what you SAID to
+        // her (the microphone, "Hey Velly"); what you type is answered in
+        // the island, silently. "always" speaks every answer.
+        property string speakWhen: "spoken"     // spoken | always
+        // HOW she thinks when you speak: "fast" — speed first, the answer
+        // in a moment; "balanced" — a little more thought for questions.
+        property string voiceThinking: "fast"   // fast | balanced
+        // HOW she thinks when you type: "thorough" — as long as it takes:
+        // deep thinking, every step a task needs, a second look at her
+        // answer before it goes out; "balanced" — quicker, no second look.
+        property string textThinking: "thorough" // thorough | balanced
         // Which engine: auto picks piper, then espeak-ng, then a cloud
         // voice when there is a key, and stays quiet when there is none.
         property string voiceEngine: "auto"  // auto | qwen | natural | piper | espeak | cloud | none

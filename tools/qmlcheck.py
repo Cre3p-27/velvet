@@ -41,7 +41,7 @@ ScrollView Canvas Shortcut Translate Rotation Scale Matrix4x4 Transform
 RowLayout ColumnLayout GridLayout StackLayout Layout SystemPalette
 FontLoader Drag DropArea WheelHandler HoverHandler TapHandler DragHandler
 PinchHandler PointHandler MultiPointTouchArea ShaderEffect ShaderEffectSource
-Video VideoOutput MediaPlayer AudioOutput
+Video VideoOutput MediaPlayer AudioOutput IdleMonitor IdleInhibitor
 LayoutMirroring EnterKey Accessible Keys
 WlSessionLock WlSessionLockSurface PamContext
 ShellRoot PanelWindow FloatingWindow PopupWindow Variants Scope LazyLoader

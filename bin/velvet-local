@@ -69,6 +69,7 @@ VOICES = os.path.join(DATA_DIR, "voices")
 INSTALL_PATH = os.path.join(CONF_DIR, "ai-install.json")   # the island watches this one
 LOCAL_PATH = os.path.join(CONF_DIR, "ai-local.json")       # where the server is, if it is
 SESSION_PATH = os.path.join(CONF_DIR, "ai-session.json")
+NIGHT_TOUCH = os.path.join(CONF_DIR, "ai-night.touch")     # velvet-books while it writes
 REQ_PATH = os.path.join(CONF_DIR, "ai-req.json")
 STATE_PATH = os.path.join(CONF_DIR, "ai-state.json")
 LOG_PATH = os.path.join(DATA_DIR, "velvet-local.log")
@@ -882,7 +883,8 @@ def serve(idle: float, force: bool = False) -> int:
                 log("server exited on its own")
                 break
             if not session_open():
-                last = max(started, mtime(REQ_PATH), mtime(STATE_PATH))
+                # the night shift writing a book counts as being asked (velvet-books touches the file)
+                last = max(started, mtime(REQ_PATH), mtime(STATE_PATH), mtime(NIGHT_TOUCH))
                 if time.time() - last > idle:
                     log(f"idle for {idle:.0f}s and no session — standing down")
                     break

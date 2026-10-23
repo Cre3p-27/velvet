@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet-night
+
+Velly's night shift: while the screen is dark and the PC is on, she works —
+books for the shelf (bin/velvet-books), live wallpapers for new favourites,
+her memory tidied, the updates counted. The shell starts this when every
+screen has been dark for a while (services/NightShift.qml) and stops it the
+moment one wakes; nothing here runs while a game holds the screen.
+
+    velvet-night run [--minutes N]     work until stopped (SIGTERM), out of work or time
+    velvet-night status                JSON: running?, what now, tonight, the last night
+    velvet-night summary               the morning line ("" when nothing was done)
+    velvet-night screen                is every screen dark right now? (JSON, for tests)
+    velvet-night --selftest
+
+Every job is a child process in its own group: a stop reaches it at once,
+and the brain is put back to sleep (unless Velly is talking to someone).
+"""
+
+import datetime
+import fcntl
+import glob
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CONF_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config"), "velvet")
+BIN = os.path.dirname(os.path.abspath(__file__))
+CFG_PATH = os.path.join(CONF_DIR, "config.json")
+NIGHT_PATH = os.path.join(CONF_DIR, "night.json")
+STOP = {"now": False, "child": None}
+
+
+def log(msg: str) -> None:
+    print(f"velvet-night: {msg}", file=sys.stderr, flush=True)
+
+
+def read_json(path: str, fallback):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return fallback
+
+
+def write_json(path: str, data) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as fh:
+        fh.seek(0)
+        fh.truncate()
+        fh.write(json.dumps(data, ensure_ascii=False, indent=1))
+        fh.flush()
+
+
+def config() -> dict:
+    data = read_json(CFG_PATH, {})
+    out = {"enabled": True, "books": True, "livewalls": True, "tidy": True, "updates": True}
+    if isinstance(data, dict) and isinstance(data.get("night"), dict):
+        out.update(data["night"])
+    return out
+
+
+def night_key(now: datetime.datetime = None) -> str:
+    """A night belongs to the evening it began: 03:00 on the 24th is the night of the 23rd."""
+    now = now or datetime.datetime.now()
+    return (now - datetime.timedelta(hours=12)).date().isoformat()
+
+
+def state() -> dict:
+    data = read_json(NIGHT_PATH, {})
+    return data if isinstance(data, dict) else {}
+
+
+def save(**fields) -> dict:
+    data = state()
+    data.update(fields)
+    data["at"] = int(time.time() * 1000)
+    write_json(NIGHT_PATH, data)
+    return data
+
+
+def remember(text: str) -> None:
+    """One line into tonight's record."""
+    data = state()
+    key = night_key()
+    nights = data.setdefault("nights", {})
+    tonight = nights.setdefault(key, {"done": [], "minutes": 0})
+    tonight["done"].append(f"{datetime.datetime.now().strftime('%H:%M')} {text}")
+    tonight["done"] = tonight["done"][-40:]
+    for old in sorted(nights)[:-7]:
+        nights.pop(old, None)
+    data["at"] = int(time.time() * 1000)
+    write_json(NIGHT_PATH, data)
+    log(text)
+
+
+# ── the screen
+def screens_dark() -> dict:
+    """{dark, why}: no connected screen, or every connected one in standby
+    (DPMS off). The kernel's view decides (sysfs: it sees an unplugged or
+    switched-off screen and the standby); Hyprland's list is asked only where
+    there is no DRM in sysfs at all (a VM, a nested session). Tests set
+    VELVET_NIGHT_SCREEN or $XDG_RUNTIME_DIR/velvet-night-screen to dark|lit."""
+    forced = os.environ.get("VELVET_NIGHT_SCREEN", "")
+    probe = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/nonexistent", "velvet-night-screen")
+    if not forced and os.path.isfile(probe):
+        try:
+            with open(probe) as fh:
+                forced = fh.read().strip()
+        except OSError:
+            forced = ""
+    if forced in ("dark", "lit"):
+        return {"dark": forced == "dark", "why": f"set to {forced} (test)"}
+    connectors = sorted(glob.glob("/sys/class/drm/card*-*"))
+    connected, lit = [], []
+    for conn in connectors:
+        try:
+            with open(os.path.join(conn, "status")) as fh:
+                status = fh.read().strip()
+            with open(os.path.join(conn, "dpms")) as fh:
+                dpms = fh.read().strip()
+        except OSError:
+            continue
+        if status == "connected":
+            connected.append(os.path.basename(conn))
+            if dpms == "On":
+                lit.append(os.path.basename(conn))
+    if connectors:
+        if not connected:
+            return {"dark": True, "why": "no screen connected (switched off or unplugged)"}
+        if not lit:
+            return {"dark": True, "why": "every screen in standby"}
+        return {"dark": False, "why": f"lit: {', '.join(lit)}"}
+    try:
+        out = subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True, timeout=3).stdout
+        mons = json.loads(out or "null")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        mons = None
+    if not isinstance(mons, list):
+        return {"dark": False, "why": "no screen information — treated as lit"}
+    shown = [m.get("name") for m in mons if m.get("dpmsStatus") and not m.get("disabled")
+             and not str(m.get("name") or "").startswith(("FALLBACK", "HEADLESS"))]
+    if not shown:
+        return {"dark": True, "why": "Hyprland shows nothing (DPMS off)"}
+    return {"dark": False, "why": f"lit: {', '.join(shown)}"}
+
+
+def game_running() -> bool:
+    try:
+        sys.path.insert(0, BIN)
+        import _gpu                                                 # noqa: PLC0415
+        return bool(_gpu.game_running())
+    except Exception:                                               # noqa: BLE001
+        return False
+
+
+def session_open() -> bool:
+    data = read_json(os.path.join(CONF_DIR, "ai-session.json"), {})
+    return isinstance(data, dict) and bool(data.get("active")) and float(data.get("until") or 0) > time.time() * 1000
+
+
+# ── the jobs
+def child(cmd: list, timeout: float) -> int:
+    """A job as its own process group, so a stop reaches all of it."""
+    proc = subprocess.Popen(cmd, start_new_session=True)
+    STOP["child"] = proc
+    end = time.monotonic() + timeout
+    try:
+        while proc.poll() is None:
+            if STOP["now"] or time.monotonic() > end:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=25)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                break
+            time.sleep(0.5)
+    finally:
+        STOP["child"] = None
+    return proc.returncode if proc.returncode is not None else -1
+
+
+def books_job(minutes: float) -> None:
+    script = os.path.join(BIN, "velvet-books")
+    before = {b["id"]: b.get("state") for b in read_json(os.path.join(CONF_DIR, "books.json"), {}).get("books", [])}
+    save(doing="books")
+    code = child([sys.executable, script, "work", "--minutes", str(max(5, int(minutes)))], timeout=minutes * 60 + 120)
+    after = read_json(os.path.join(CONF_DIR, "books.json"), {}).get("books", [])
+    for b in after:
+        if b.get("state") == "ready" and before.get(b["id"]) != "ready":
+            remember(f"Buch fertig: „{b.get('title')}“ ({b['kind']}) — liegt zum Hochladen bereit")
+        elif b["id"] not in before:
+            remember(f"Buch angefangen: „{b.get('title') or b['kind']}“")
+    if code == 75:
+        remember("Bücher: ein Spiel lief — pausiert")
+
+
+def livewalls_job() -> None:
+    save(doing="live wallpapers")
+    out = subprocess.run(["qs", "-c", "velvet", "ipc", "call", "livewall", "favourites"], capture_output=True,
+                         text=True, timeout=10)
+    said = out.stdout.strip()
+    if out.returncode == 0 and said and not said.startswith("0 "):
+        remember(f"Live-Wallpaper: {said[:120]}")
+
+
+def tidy_job() -> None:
+    save(doing="memory")
+    ai = os.path.join(BIN, "velvet-ai")
+    proc = subprocess.run([sys.executable, ai, "--tidy-memory"], capture_output=True, text=True, timeout=120)
+    if proc.returncode == 0:
+        remember("Gedächtnis aufgeräumt")
+
+
+def updates_job() -> None:
+    if not shutil.which("checkupdates"):
+        return
+    save(doing="updates")
+    proc = subprocess.run(["checkupdates"], capture_output=True, text=True, timeout=300)
+    n = len([line for line in proc.stdout.splitlines() if line.strip()])
+    if n:
+        remember(f"{n} Updates warten (installieren: „Velly, mach Updates“)")
+    save(updates=n)
+
+
+def run(minutes: float = 0) -> int:
+    lock = open(os.path.join(CONF_DIR, "night.lock"), "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("the night shift is already running")
+        return 0
+    cfg = config()
+    began = time.monotonic()
+    end = began + minutes * 60 if minutes else None
+    save(running=True, started=int(time.time() * 1000), doing="", pid=os.getpid(), night=night_key())
+    remember("Nachtschicht begonnen")
+    try:
+        done_once = set()
+        while not STOP["now"]:
+            if end and time.monotonic() > end:
+                break
+            if game_running():
+                remember("ein Spiel läuft — Nachtschicht pausiert")
+                break
+            left = (end - time.monotonic()) / 60 if end else 120
+            if cfg.get("livewalls") and "livewalls" not in done_once:
+                done_once.add("livewalls")
+                livewalls_job()
+                continue
+            if cfg.get("tidy") and "tidy" not in done_once:
+                done_once.add("tidy")
+                tidy_job()
+                continue
+            if cfg.get("updates") and "updates" not in done_once:
+                done_once.add("updates")
+                updates_job()
+                continue
+            if cfg.get("books"):
+                books = read_json(os.path.join(CONF_DIR, "books.json"), {}).get("books", [])
+                ready = sum(1 for b in books if b.get("state") == "ready")
+                open_ = any(b.get("state") == "working" for b in books)
+                limit = int((read_json(CFG_PATH, {}).get("books") or {}).get("maxWaiting") or 3)
+                if open_ or ready < limit:
+                    if "books-idle" in done_once:
+                        break
+                    books_job(min(left, 120))
+                    after = read_json(os.path.join(CONF_DIR, "books.json"), {}).get("books", [])
+                    if not any(b.get("state") == "working" for b in after) and \
+                            sum(1 for b in after if b.get("state") == "ready") >= limit:
+                        done_once.add("books-idle")
+                    continue
+                if "shelf" not in done_once:
+                    done_once.add("shelf")
+                    remember(f"Regal voll: {ready} Bücher warten auf dich — keine neuen, bis du welche hochlädst")
+            break
+    finally:
+        data = state()
+        tonight = data.setdefault("nights", {}).setdefault(night_key(), {"done": [], "minutes": 0})
+        tonight["minutes"] = int(tonight.get("minutes", 0) + (time.monotonic() - began) / 60)
+        data.update(running=False, doing="", pid=0, at=int(time.time() * 1000))
+        write_json(NIGHT_PATH, data)
+        # the card back for the day — unless Velly is talking to someone
+        if not session_open():
+            subprocess.run([sys.executable, os.path.join(BIN, "velvet-local"), "stop"], capture_output=True, timeout=60)
+    remember("Nachtschicht beendet")
+    return 0
+
+
+def summary() -> str:
+    """The morning line: what the last night did (beyond starting and ending)."""
+    data = state()
+    nights = data.get("nights") or {}
+    if not nights:
+        return ""
+    key = sorted(nights)[-1]
+    lines = [line.split(" ", 1)[1] for line in nights[key].get("done", [])
+             if "Nachtschicht" not in line]
+    if not lines:
+        return ""
+    books = [line for line in lines if line.startswith("Buch fertig")]
+    rest = [line for line in lines if not line.startswith("Buch fertig")]
+    out = books + [line for line in rest if not line.startswith("Buch angefangen")][:3]
+    return " · ".join(out)[:400]
+
+
+def on_term(_sig, _frm):
+    STOP["now"] = True
+    proc = STOP.get("child")
+    if proc is not None and proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def selftest() -> int:
+    fails = []
+    if night_key(datetime.datetime(2026, 10, 24, 3, 0)) != "2026-10-23" or \
+            night_key(datetime.datetime(2026, 10, 23, 22, 0)) != "2026-10-23":
+        fails.append("night key")
+    d = screens_dark()
+    if not isinstance(d.get("dark"), bool) or not d.get("why"):
+        fails.append("screen check")
+    os.environ["VELVET_NIGHT_SCREEN"] = "dark"
+    if not screens_dark()["dark"]:
+        fails.append("test override dark")
+    os.environ["VELVET_NIGHT_SCREEN"] = "lit"
+    if screens_dark()["dark"]:
+        fails.append("test override lit")
+    os.environ.pop("VELVET_NIGHT_SCREEN", None)
+    if fails:
+        print("velvet-night selftest: FAILED\n  · " + "\n  · ".join(fails))
+        return 1
+    print("velvet-night selftest: ok")
+    return 0
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    signal.signal(signal.SIGTERM, on_term)
+    signal.signal(signal.SIGINT, on_term)
+    cmd = argv[0]
+    if cmd == "--selftest":
+        return selftest()
+    if cmd == "run":
+        minutes = float(argv[argv.index("--minutes") + 1]) if "--minutes" in argv else 0
+        return run(minutes)
+    if cmd == "status":
+        data = state()
+        data["screen"] = screens_dark()
+        data["summary"] = summary()
+        print(json.dumps(data, ensure_ascii=False, indent=1))
+        return 0
+    if cmd == "summary":
+        print(summary())
+        return 0
+    if cmd == "screen":
+        print(json.dumps(screens_dark(), ensure_ascii=False))
+        return 0
+    print(f"velvet-night: unknown command {cmd!r} — see --help", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

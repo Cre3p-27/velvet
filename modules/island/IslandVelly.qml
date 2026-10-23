@@ -697,7 +697,7 @@ Item {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     Sfx.select();
-                                    Velly.ask(idea.modelData.q);
+                                    Velly.ask(idea.modelData.q, "text");
                                 }
                             }
                         }
@@ -971,7 +971,7 @@ Item {
                 if (line.length === 0)
                     return;
                 text = "";
-                Velly.ask(line);
+                Velly.ask(line, "text");
             }
 
             // Escape puts her to sleep — it never closes the island under

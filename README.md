@@ -787,6 +787,31 @@ only look (how many packages, the disk, the kernel) run without asking, and
 anything that needs a password — `sudo`, an update (`sys.update`), an install —
 opens a terminal where you type it yourself.
 
+**Spoken or typed — two ways to answer.** What you *say* into the microphone
+("Hey Velly", Super+A and talk) is answered **out loud and fast**: the quickest
+thinking that does the job, a few spoken sentences. What you *type* is answered
+**on screen only, and as carefully as it takes**: she thinks as deeply as she can,
+takes every step a task needs (up to 16 tool steps), checks each result, and before
+the answer goes out she reads it once more like an editor and improves it (the
+island says CHECKING) — written with paragraphs and lists. A reminder you typed
+rings and shows; one you asked for out loud is also spoken. Three dials in
+VELLY: SHE SPEAKS (when spoken to · always), WHEN YOU SPEAK (speed first ·
+balanced), WHEN YOU TYPE (until it is right · balanced).
+
+**Her hands on the whole PC.** Files: find, list, read (text, PDF, the text in a
+picture), move, copy, rename, new folders, open with their app, into the trash
+(she asks first — and keys, passwords and browser profiles she never reads or
+moves). The keyboard and the mouse: she types into the window you name — any
+character — presses shortcuts, clicks a button by its label, scrolls, places and
+fullscreens windows. She reads the screen (text recognition), ends programs (asks
+first; never the desktop itself), switches the sound output ("über die
+Kopfhörer"), connects Bluetooth devices, and turns the screens off ("ich geh
+schlafen"). All of it through `bin/velvet-input`, which speaks Wayland's own
+protocols — no wtype, ydotool, wl-clipboard or grim needed (the clipboard and
+screenshots work without them too). Typing that would run a command in a terminal,
+or keys that close and quit (Alt+F4, Ctrl+Q …), ask first. Reading the screen needs
+Tesseract's language data once: `sudo pacman -S tesseract-data-deu tesseract-data-eng`.
+
 She hears you through the microphone while she is awake, she speaks her answers,
 and she can touch the whole desktop — apps, windows, workspaces, volume,
 brightness, tasks, focus mode, the wallpaper, scenes, the settings menu, even
@@ -962,6 +987,58 @@ velvet livewall still                # this wallpaper stays a still · moving: i
 ```
 
 Or ask her: *„Velly, mach mein Wallpaper lebendig — mit Schnee"*.
+
+## The night shift
+
+While your screens are dark and the PC is on, Velly works. A few minutes after the
+last screen went dark — switched off, unplugged, or in standby — `bin/velvet-night`
+starts: books for the shelf (THE BOOK STUDIO, below), live wallpapers for new
+favourites, her memory tidied, the updates counted (never installed). The moment a
+screen wakes it stops — every job is a process group that gets the stop at once, and
+the brain is put back to sleep unless you are talking to her — and nothing runs
+while a game holds the screen. In the morning a note says what she did.
+
+**SCREEN OFF AFTER** (20 minutes by default) puts the screens into standby when the
+PC sits idle — never under a fullscreen window (a game, a film) or while something
+plays; a key or the mouse wakes them. Some monitors stay *connected* when you press
+their power button, and then nothing tells Velvet they are off — the standby (or
+"Velly, mach den Bildschirm aus") does. Settings: VELLY → NIGHT SHIFT (what she does,
+START AFTER, START NOW, STOP, SCREENS OFF NOW, and what she did last night).
+`velvet night` from a terminal.
+
+## The book studio (Amazon KDP)
+
+Velly makes paperbacks for [Kindle Direct Publishing](https://kdp.amazon.com), complete:
+the print PDF, the full cover with spine and the barcode corner kept free, the listing
+(title, subtitle, description, seven keywords, three categories, a price that leaves
+about 3 € a copy) and an upload checklist. Each book is a folder in
+`~/Dokumente/Velly Bücher/` with `review.html` — every page, every KDP field with a
+copy button — `interior.pdf`, `cover.pdf`, `listing.txt` and `CHECKLIST.md`.
+
+| kind | what | needs |
+|---|---|---|
+| colouring | 40–50 mandalas (adults, children, seniors, flowers, geometry, hearts), single-sided, 8.5 × 11 in | nothing — drawn by a program |
+| puzzle | sudoku (each with exactly one solution, easy ones solvable without guessing), word searches, mazes — with solutions, also in large print | nothing — computed |
+| picture | a story picture book for ages 3–6, 14 spreads, 8.5 × 8.5 in, full colour with bleed | the local brain writes it; an editor round (at least once, until 9 of 10, with a language and a spelling check) improves it; the picture engine paints it |
+
+The **picture engine** is stable-diffusion.cpp (Vulkan) with Z-Image-Turbo — Apache 2.0,
+so the pictures may be sold — and the FLUX VAE; Velly's Qwen3-4B (already on disk) is its
+text encoder. About 7 GB, fetched once and only when you press INSTALL THE PICTURE ENGINE
+(VELLY → BOOK STUDIO) or run `velvet books engine setup`; every file, its source and its
+size are shown first, every model is checked against its SHA-256.
+
+She makes them at night, up to SHELF SIZE finished books (3 by default) waiting for you;
+then she pauses until you upload some — KDP takes at most three new titles a day per
+account, and every book needs your look first. **The upload is yours**: KDP has no upload
+for programs and the account is yours — the checklist takes about ten minutes, and
+`velvet books uploaded ID` (or "Velly, Buch 3 ist online") makes room for the next. Be
+honest with yourself about the money: a book sells when there is demand and its cover
+works in a thumbnail; nobody can promise income. The KDP numbers (sizes, bleed, spine,
+printing cost, royalty) were read from KDP's help pages on 2026-10-23 — check the price in
+KDP's own calculator. KDP asks whether a book contains AI-generated text or images;
+`listing.txt` says what to answer for that book.
+
+`velvet books` (list · make KIND · open ID · uploaded ID · redo ID --page N|--cover|--listing|--all · engine)
 
 ## The colour system
 
@@ -1321,6 +1398,8 @@ both).
 | `velvet display [safe\|auto\|forget]` | the screens and what failed on their ports · `safe`: 60 Hz (also `Super+Ctrl+Alt+R`) · `auto`: the best that works · `forget`: try the fast modes again |
 | `velvet sound [test [OUTPUT]]` | the outputs and why the sound drops · `test`: a short chime |
 | `velvet livewall …` | live wallpapers (see LIVE WALLPAPERS) |
+| `velvet books …` | the book studio (see THE BOOK STUDIO) — `make coloring` starts one now and finishes it |
+| `velvet night [status\|start\|stop\|screen-off]` | the night shift (see THE NIGHT SHIFT) |
 | `velvet backup [FILE] [--with-secrets]` · `restore FILE` | your settings in one file — Velly's key and memory only with `--with-secrets`. `restore` asks first and keeps the old settings beside the new ones |
 | `velvet update [--check]` | update and repair |
 | `velvet uninstall` (also `remove`, `delete`) | removes Velvet completely — asks first, and asks again about your settings and Velly's models |
