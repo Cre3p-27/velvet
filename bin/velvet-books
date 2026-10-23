@@ -958,12 +958,24 @@ def chat(messages: list, effort: str = "high", max_tokens: int = 4000, temperatu
     req = urllib.request.Request(f"http://127.0.0.1:{LOCAL_PORT}/v1/chat/completions",
                                  data=json.dumps(payload, ensure_ascii=False).encode("utf-8"), method="POST")
     req.add_header("Content-Type", "application/json")
+    # One request can think for minutes (high effort, part of the model in RAM: ~20 tokens/s
+    # measured) — longer than velvet-local's idle watch: it once took the server down in the
+    # middle of a listing. While she waits, the night file is touched every 30 s.
+    import threading                                                # noqa: PLC0415
+    waiting = threading.Event()
+
+    def heartbeat():
+        while not waiting.wait(30):
+            touch_night()
+
+    threading.Thread(target=heartbeat, daemon=True).start()
     try:
-        with urllib.request.urlopen(req, timeout=900) as resp:
+        with urllib.request.urlopen(req, timeout=1800) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"the brain said HTTP {exc.code}") from exc
     finally:
+        waiting.set()
         touch_night()
     msg = ((data.get("choices") or [{}])[0].get("message") or {})
     text = str(msg.get("content") or "")
@@ -1067,12 +1079,83 @@ def engine_status() -> dict:
             "model": "Z-Image-Turbo (Apache-2.0)"}
 
 
+def fetch_resumable(url: str, dest: str, sha: str = "", tries: int = 12) -> bool:
+    """A big file over a slow or shaky line: what is there (dest.part) is kept,
+    the rest is asked for with a Range request, and a broken connection is
+    tried again — for as long as it moves: only `tries` breaks in a row WITHOUT
+    a single new byte give up (a 2.4 GHz Wi-Fi here broke 25 times in an hour
+    while the file still grew). The whole file is checked against its SHA-256
+    at the end."""
+    part = dest + ".part"
+    stalls = 0
+    while stalls < tries:
+        have = os.path.getsize(part) if os.path.isfile(part) else 0
+        digest = hashlib.sha256()
+        if have and sha:
+            with open(part, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    digest.update(chunk)
+        req = urllib.request.Request(url)
+        if have:
+            req.add_header("Range", f"bytes={have}-")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                if have and resp.status != 206:              # the server ignored the range: from the start
+                    have, digest = 0, hashlib.sha256()
+                total = int(resp.headers.get("Content-Length") or 0) + have
+                got, last = have, 0.0
+                with open(part, "ab" if have else "wb") as out:
+                    while True:
+                        if stopping():                       # SIGTERM: keep what is there, go on next time
+                            raise InterruptedError()
+                        chunk = resp.read(1 << 20)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        digest.update(chunk)
+                        got += len(chunk)
+                        if time.monotonic() - last > 2.0:
+                            last = time.monotonic()
+                            pct = f"{got * 100 / total:5.1f} %" if total else f"{got >> 20} MB"
+                            print(f"\r  {pct} ({got >> 20} of {total >> 20} MB)", end="", flush=True)
+            if total and os.path.getsize(part) < total:
+                raise OSError("the connection ended early")
+        except InterruptedError:
+            print("\n  stopped — the next run goes on from here", flush=True)
+            return False
+        except Exception as exc:                                      # noqa: BLE001
+            now = os.path.getsize(part) if os.path.isfile(part) else 0
+            stalls = 0 if now > have else stalls + 1
+            wait = 10 if stalls == 0 else min(300, 15 * stalls)
+            print(f"\n  interrupted ({exc}) — again in {wait} s, from {now >> 20} MB", flush=True)
+            for _ in range(wait):
+                if stopping():
+                    return False
+                time.sleep(1)
+            continue
+        if sha and digest.hexdigest() != sha:
+            os.unlink(part)
+            print("\n  checksum wrong — the file was not kept (it starts again on the next run)")
+            return False
+        os.replace(part, dest)
+        print("\r  done.                              ")
+        return True
+    return False
+
+
 def engine_setup() -> int:
     """The download — only ever started by the user (a button or this
     command). Says what, from where and how big before each file, checks
     every model against its SHA-256."""
     os.makedirs(IMAGE_MODELS, exist_ok=True)
     os.makedirs(ENGINE_DIR, exist_ok=True)
+    # one download at a time: two would append to the same .part
+    lock = open(os.path.join(IMAGE_MODELS, ".setup.lock"), "a+")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("The picture engine is already being downloaded (another window or the night shift).")
+        return 0
     plan = []
     if not engine_bin():
         plan.append(("stable-diffusion.cpp (Vulkan)", ENGINE["zip"], os.path.join(ENGINE_DIR, "sd.zip"), ENGINE["zip_mb"], ""))
@@ -1090,31 +1173,8 @@ def engine_setup() -> int:
         print(f"  · {label}: {mb / 1000:.2f} GB  ←  {url}")
     for label, url, dest, mb, sha in plan:
         print(f"\n{label} ({mb} MB) …", flush=True)
-        part = dest + ".part"
-        try:
-            with urllib.request.urlopen(url, timeout=60) as resp, open(part, "wb") as out:
-                total = int(resp.headers.get("Content-Length") or 0)
-                got, last = 0, 0.0
-                digest = hashlib.sha256()
-                while True:
-                    chunk = resp.read(1 << 20)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    digest.update(chunk)
-                    got += len(chunk)
-                    if time.monotonic() - last > 1.0:
-                        last = time.monotonic()
-                        pct = f"{got * 100 / total:5.1f} %" if total else f"{got >> 20} MB"
-                        print(f"\r  {pct}", end="", flush=True)
-            if sha and digest.hexdigest() != sha:
-                os.unlink(part)
-                print(f"\n  checksum wrong — {label} was not kept")
-                return 1
-            os.replace(part, dest)
-            print("\r  done.      ")
-        except Exception as exc:                                    # noqa: BLE001
-            print(f"\n  failed: {exc}")
+        if not fetch_resumable(url, dest, sha):
+            print(f"\n  {label} did not come — run it again: it goes on where it stopped")
             return 1
         if dest.endswith("sd.zip"):
             import zipfile                                          # noqa: PLC0415
@@ -1901,6 +1961,36 @@ def aspell_dict(lang: str) -> str:
     return ""
 
 
+# Words of the trade the dictionary does not carry (lower case).
+DOMAIN_WORDS = {"mandala", "mandalas", "suchsel", "sudoku", "sudokus", "großdruck", "ausmalbuch", "ausmalbücher",
+                "malbuch", "malbücher", "rätselbuch", "rätselbücher", "wortsuchrätsel", "wortsuche", "labyrinthe",
+                "labyrinthen", "kdp", "softcover", "taschenbuch", "achtsamkeitsübung", "kita", "vorlesebuch"}
+
+
+def compound_known(word: str, cmd: list) -> bool:
+    """A German compound the dictionary lacks, but whose parts it knows:
+    "Pastelltönen" = Pastell + Tönen, "Lernhilfe" = Lern(en) + Hilfe,
+    "Entspannungsaktivität" = Entspannung(s) + Aktivität. A typo in a part
+    ("Entspannungsrätel") stays unknown."""
+    w = word.strip()
+    if len(w) < 7:
+        return False
+    cands = []
+    for i in range(3, len(w) - 2):
+        left, right = w[:i], w[i:]
+        lefts = {left, left + "en", left + "e", left + "n"}
+        if left.endswith(("s", "es")):
+            lefts |= {left[:-1], left[:-2]}
+        cands.append((lefts, {right.capitalize(), right.lower()}))
+    words = sorted({x for ls, rs in cands for x in ls | rs if len(x) >= 3})
+    try:
+        unknown = set(subprocess.run(cmd, input="\n".join(words), capture_output=True, text=True, timeout=30).stdout.split())
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return any(any(x not in unknown and len(x) >= 3 for x in ls) and any(y not in unknown and len(y) >= 3 for y in rs)
+               for ls, rs in cands)
+
+
 def unknown_words(texts: list, lang: str, allow=()) -> list:
     """Words the dictionary does not know — slips like "Fuchskub", English
     in a German sentence ("hops", "Lullabies"). Names are allowed; German
@@ -1924,7 +2014,11 @@ def unknown_words(texts: list, lang: str, allow=()) -> list:
         if len(w) <= 2 or w in odd or any(low.startswith(n) and len(low) - len(n) <= 2 for n in names):
             continue
         odd.append(w)
+    odd = [w for w in odd if w.lower() not in DOMAIN_WORDS]
     if not odd or lang != "de":
+        return odd
+    odd = [w for w in odd if not compound_known(w, cmd)]
+    if not odd:
         return odd
     # German endings the dictionary does not list for every word ("moosigen"):
     # a word whose stem it knows is a word
@@ -2461,6 +2555,73 @@ def front_jpg(book: dict, art) -> None:
 
 
 # ────────────────────────────────────────────────────────────────── listing
+# What a listing may say about the book — and only this. The first real run
+# (gpt-oss, 2026-10-23) promised "hochwertiges Papier" and markers on KDP's thin
+# standard paper, wrote "mit dicke Linien", and aimed a book for children of six
+# at "Jugendliche". The machine checks below catch that kind; an editor round
+# catches the grammar.
+PRINT_FACTS = {
+    "coloring": "Taschenbuch (Amazon KDP), Schwarzweißdruck auf normalem weißen Papier — dünn: Filzstifte und Marker "
+                "können durchdrücken, deshalb sind die Rückseiten leer. Format 21,6 × 27,9 cm.",
+    "puzzle": "Taschenbuch (Amazon KDP), Schwarzweißdruck auf normalem weißen Papier, Format 21,6 × 27,9 cm.",
+    "picture": "Taschenbuch (Amazon KDP), Farbdruck, Format 21,6 × 21,6 cm, Softcover.",
+}
+BAD_CLAIMS = re.compile(r"(?i)(hochwertig\w*\s+(?:\w+\s+)?papier|dick\w*\s+papier|stark\w*\s+papier|premium[- ]?papier|"
+                        r"extra\s*stark\w*|drück\w*\s+nicht\s+durch|kein\w*\s+durchdrück\w*|ohne\s+durchdrück\w*|"
+                        r"\bmarker\b|alkoholmarker|bestseller|nr\.?\s*1\b|#\s*1\b|nummer\s+eins|garantiert|kostenlos|"
+                        r"gratis|kindle|exklusiv\w*|preisgekrönt\w*)")
+AUDIENCE_WORDS = {"kids": "Kinder", "seniors": "Seniorinnen und Senioren", "adults": "Erwachsene"}
+AUDIENCE_WRONG = {"kids": re.compile(r"(?i)\b(jugendlich\w*|teenager\w*|erwachsen\w*|senior\w*)\b"),
+                  "seniors": re.compile(r"(?i)\b(kinder\w*|kids|jugendlich\w*|teenager\w*)\b"),
+                  "adults": re.compile(r"(?i)\b(kinder\s+ab|für\s+kinder|kids|jugendlich\w*|teenager\w*)\b")}
+LISTING_EDITOR = ("Du bist eine strenge Lektorin für Amazon-KDP-Buchlistings auf Deutsch. Du prüfst jedes Wort: "
+                  "Grammatik (Kasus und Endungen — 'mit dicken Linien', 'mit 70 Rätseln'), Rechtschreibung, ob jede "
+                  "Aussage über das Buch WAHR ist (nur was in den Fakten steht; nichts über die Qualität des Papiers, "
+                  "über Stifte oder Marker), die Zielgruppe, und die Regeln von KDP (Titel und Untertitel sind keine "
+                  "Liste von Suchwörtern; keine Superlative, Preise, Rabatte oder Versprechen). Du antwortest NUR "
+                  "mit JSON.")
+
+
+def strip_html(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(text or ""))).strip()
+
+
+def listing_checks(book: dict, data: dict, strict: bool = True) -> list:
+    """What a machine can see is wrong with a listing."""
+    problems = []
+    fields = {"Titel": str(data.get("title") or ""), "Untertitel": str(data.get("subtitle") or ""),
+              "Beschreibung": strip_html(data.get("description")), "Rückseite": str(data.get("back") or ""),
+              "Schlüsselwörter": " | ".join(str(k) for k in data.get("keywords") or [])}
+    for name, text in fields.items():
+        bad = list(dict.fromkeys(m.group(0) for m in BAD_CLAIMS.finditer(text)))
+        if bad:
+            problems.append(f"{name}: " + ", ".join(f"„{b}“" for b in bad) +
+                            " darf nicht drinstehen (stimmt nicht oder verbietet KDP)")
+    wrong = AUDIENCE_WRONG.get(book.get("audience", ""))
+    if wrong:
+        for name in ("Titel", "Untertitel", "Schlüsselwörter", "Beschreibung", "Rückseite"):
+            hit = wrong.search(fields[name])
+            if hit:
+                problems.append(f"{name}: „{hit.group(0)}“ ist die falsche Zielgruppe — das Buch ist für "
+                                f"{AUDIENCE_WORDS[book['audience']]}")
+    odd = unknown_words(list(fields.values()), lang_of(book),
+                        [str((book.get("plan") or {}).get("hero", {}).get("name") or ""), "KDP", "Sudoku", "Sudokus"])
+    if len(odd) > (0 if strict else 2):
+        problems.append("Diese Wörter gibt es so nicht (Tippfehler): " + ", ".join(odd[:12]))
+    if len(fields["Untertitel"]) > 120:
+        problems.append("der Untertitel ist zu lang (höchstens 120 Zeichen)")
+    kws = [str(k).strip().lower() for k in data.get("keywords") or [] if str(k).strip()]
+    if len(set(kws)) < 7 or any(len(k) > 50 for k in kws):
+        problems.append("es braucht 7 verschiedene Schlüsselwörter mit je höchstens 50 Zeichen")
+    return problems
+
+
+def keyword_ok(book: dict, k: str) -> bool:
+    wrong = AUDIENCE_WRONG.get(book.get("audience", ""))
+    return bool(k) and len(k) <= 50 and not BAD_CLAIMS.search(k) and not (wrong and wrong.search(k)) and \
+        not unknown_words([k], lang_of(book), ["Sudoku", "Sudokus"])
+
+
 def listing(book: dict) -> None:
     """Title, subtitle, description, seven keywords, three categories, age —
     from the local brain when it is there (an editor's eye), else from the
@@ -2476,6 +2637,8 @@ def listing(book: dict) -> None:
     if book["kind"] == "picture":
         facts["story"] = [b.get("text") for b in book["story"]["beats"]]
         facts["message"] = book["plan"].get("message")
+    facts["print"] = PRINT_FACTS[book["kind"]]
+    facts["audience"] = AUDIENCE_WORDS.get(book["audience"], book["audience"])
     data = None
     if brain_ready(wait=120):
         try:
@@ -2501,18 +2664,54 @@ JSON:
             if isinstance(exc, InterruptedError):
                 raise
             data = None
+    # the editor: once always, twice when the machine still finds something
+    rounds = 0
+    while isinstance(data, dict) and rounds < 2:
+        problems = listing_checks(book, data)
+        if rounds >= 1 and not problems:
+            break
+        try:
+            fixed = chat_json(LISTING_EDITOR, f"""Fakten über das Buch (nur das ist wahr): {json.dumps(facts, ensure_ascii=False)}
+Das Listing: {json.dumps(data, ensure_ascii=False)}
+Die Maschine hat gefunden: {json.dumps(problems, ensure_ascii=False)}
+
+Prüfe jedes Feld Wort für Wort und gib das VOLLSTÄNDIGE, korrigierte Listing zurück — dieselben Felder (title,
+subtitle, description, back, keywords (genau 7), categories, age). Was stimmt, bleibt wie es ist.""",
+                              effort="high", max_tokens=3000)
+        except (RuntimeError, InterruptedError) as exc:
+            if isinstance(exc, InterruptedError):
+                raise
+            break
+        if isinstance(fixed, dict) and fixed.get("title") and fixed.get("description"):
+            data = fixed
+        rounds += 1
+        note(book, f"listing editor round {rounds}: {len(problems)} finding(s) before")
     book["listing_by"] = "brain" if isinstance(data, dict) else "template"
     fallback = default_listing(book) if book["kind"] != "picture" else None
     if not isinstance(data, dict):
         data = fallback or {"title": book["title"], "subtitle": book.get("subtitle", ""), "description": "",
                             "back": book.get("subtitle", ""), "keywords": [], "categories": [], "age": "3–6"}
-    # seven distinct keywords, always (KDP has seven boxes; fewer wastes reach)
+    # seven distinct keywords, always (KDP has seven boxes; fewer wastes reach) — none that a check refuses
     kws = []
-    for k in [str(k).strip()[:50] for k in (data.get("keywords") or [])] + (fallback or {}).get("keywords", []) + \
+    for k in [str(k).strip() for k in (data.get("keywords") or [])] + (fallback or {}).get("keywords", []) + \
             picture_keywords(book):
-        if k and k.lower() not in {x.lower() for x in kws}:
+        if keyword_ok(book, k) and k.lower() not in {x.lower() for x in kws}:
             kws.append(k)
     data["keywords"] = kws[:7]
+    # what the editor left: the hand-written words of the idea stand in
+    left = listing_checks(book, data, strict=False)
+    if left and fallback:
+        for field, label in (("title", "Titel"), ("subtitle", "Untertitel"), ("description", "Beschreibung"),
+                             ("back", "Rückseite")):
+            if any(pr.startswith(label + ":") for pr in left) or \
+                    (field in ("title", "subtitle") and any(pr.startswith("Diese Wörter") for pr in left)):
+                data[field] = fallback[field]
+                note(book, f"listing: {label} from the template ({[pr for pr in left if pr.startswith(label)][:1]})")
+    if left and not fallback:
+        for field in ("description", "back"):
+            data[field] = " ".join(sent for sent in re.split(r"(?<=[.!?])\s+", str(data.get(field) or ""))
+                                   if not BAD_CLAIMS.search(strip_html(sent)))
+    book["listing_checks"] = listing_checks(book, data, strict=False)
     data["categories"] = [str(c) for c in (data.get("categories") or [])][:3]
     if data.get("title"):
         book["title"] = str(data["title"]).strip()
@@ -2539,8 +2738,9 @@ def default_listing(book: dict) -> dict:
     idea = book["idea"]
     if book["kind"] == "coloring":
         n = book.get("count", 50)
-        desc = (f"<b>{book['title']}</b><br><br>{n} Mandalas zum Ausmalen – jedes auf einer eigenen Seite, die "
-                "Rückseiten bleiben frei, damit nichts durchdrückt.<br><br><ul><li>großes Format 21,6 × 27,9 cm</li>"
+        desc = (f"<b>{idea.get('title') or book['title']}</b><br><br>{n} Mandalas zum Ausmalen – jedes auf einer "
+                "eigenen Seite; die Rückseiten bleiben frei, so stört nichts, was durchscheint.<br><br>"
+                "<ul><li>großes Format 21,6 × 27,9 cm</li>"
                 "<li>klare, saubere Linien</li><li>vom einfachen bis zum detailreichen Muster</li>"
                 "<li>ideal zum Entspannen und als Geschenk</li></ul>")
         kws = {"kids": ["Ausmalbuch Kinder ab 6", "Malbuch für Mädchen und Jungen", "Kinder Beschäftigung Ferien",
@@ -2564,7 +2764,8 @@ def default_listing(book: dict) -> dict:
         cats = ["Bücher › Freizeit, Haus & Garten › Rätsel & Spiele › Sudoku",
                 "Bücher › Freizeit, Haus & Garten › Rätsel & Spiele › Kreuzworträtsel",
                 "Bücher › Freizeit, Haus & Garten › Rätsel & Spiele"]
-    return {"title": book["title"], "subtitle": book.get("subtitle", ""), "description": desc,
+    return {"title": idea.get("title") or book["title"], "subtitle": idea.get("subtitle") or book.get("subtitle", ""),
+            "description": desc,
             "back": coloring_back(book) if book["kind"] == "coloring" else puzzle_back(book), "keywords": kws, "categories": cats,
             "age": "" if book["audience"] != "kids" else "6–10"}
 

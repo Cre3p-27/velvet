@@ -3671,9 +3671,16 @@ def ocr_langs() -> tuple:
     return prefix, "+".join(langs)
 
 
-OCR_MISSING = ("für die Texterkennung fehlen die Sprachdaten — einmal installieren: "
-               "pkg.install tesseract-data-deu und tesseract-data-eng (oder im Terminal: "
-               "sudo pacman -S tesseract-data-deu tesseract-data-eng)")
+OCR_MISSING = ("für die Texterkennung fehlen die Sprachdaten — screen.setup lädt sie (5,6 MB, ohne Passwort; "
+               "fragt vorher)")
+# The language data she fetches herself (no sudo): tessdata_fast, Apache-2.0,
+# pinned by size and git blob id (sha1 of "blob <size>\0" + the file).
+TESSDATA = {
+    "deu": ("https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/deu.traineddata", 1525436,
+            "97ed7b2b60f2771c07040660ef0f6daf596dc7bf"),
+    "eng": ("https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata", 4113088,
+            "bbef4675053b5b468cdb477053e28b1c698ba08e"),
+}
 
 
 def ocr_words(image: str) -> dict:
@@ -3687,8 +3694,10 @@ def ocr_words(image: str) -> dict:
     if prefix:
         env["TESSDATA_PREFIX"] = prefix
     try:
-        proc = subprocess.run(["nice", "-n", "5", "tesseract", image, "stdout", "-l", langs, "--psm", "3", "tsv"],
-                              capture_output=True, text=True, timeout=90, env=env)
+        # the TSV output by its parameter: the "tsv" config file lives in the system's tessdata/configs,
+        # which a TESSDATA_PREFIX of her own does not have
+        proc = subprocess.run(["nice", "-n", "5", "tesseract", image, "stdout", "-l", langs, "--psm", "3",
+                               "-c", "tessedit_create_tsv=1"], capture_output=True, text=True, timeout=90, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"ok": False, "error": f"die Texterkennung ging nicht: {exc}"[:160]}
     words = []
@@ -3718,6 +3727,64 @@ def ocr_lines(words: list) -> list:
            for v in lines.values()]
     out.sort(key=lambda l: (l["y"] // 12, l["x"]))
     return out
+
+
+def fetch_small(url: str, size: int, tries: int = 8):
+    """A few MB over a shaky line: read in pieces, carry on with a Range
+    request where it broke — a single read() hung for minutes on this Wi-Fi."""
+    data = b""
+    for _ in range(tries):
+        req = urllib.request.Request(url)
+        if data:
+            req.add_header("Range", f"bytes={len(data)}-")
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                if data and resp.status != 206:
+                    data = b""
+                while len(data) < size:
+                    piece = resp.read(65536)
+                    if not piece:
+                        break
+                    data += piece
+        except Exception:                                      # noqa: BLE001
+            time.sleep(2)
+            continue
+        if len(data) >= size:
+            return data
+    return data if len(data) == size else None
+
+
+def git_blob_id(data: bytes) -> str:
+    import hashlib                                              # noqa: PLC0415
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+@tool("screen.setup", "", "danger",
+      "Fetch the text-recognition language data (German and English, 5.6 MB, from tesseract-ocr/tessdata_fast) "
+      "into ~/.local/share/velvet/tessdata — no password needed. screen.read and clicking by label need it. Asks first.")
+def t_screen_setup():
+    if not shutil.which("tesseract"):
+        return {"ok": False, "error": "tesseract selbst fehlt — pkg.install tesseract"}
+    dest = os.path.join(DATA_DIR, "tessdata")
+    os.makedirs(dest, exist_ok=True)
+    got = []
+    for lang, (url, size, blob) in TESSDATA.items():
+        path = os.path.join(dest, f"{lang}.traineddata")
+        if os.path.isfile(path) and os.path.getsize(path) == size:
+            got.append(lang)
+            continue
+        data = fetch_small(url, size)
+        if data is None:
+            return {"ok": False, "error": f"{lang}: der Download kam nicht durch (Netz zu langsam?) — gleich nochmal",
+                    "have": got}
+        if len(data) != size or git_blob_id(data) != blob:
+            return {"ok": False, "error": f"{lang}: die Datei stimmt nicht (Größe/Prüfsumme) — nicht gespeichert", "have": got}
+        with open(path + ".part", "wb") as fh:
+            fh.write(data)
+        os.replace(path + ".part", path)
+        got.append(lang)
+    _prefix, langs = ocr_langs()
+    return {"ok": bool(langs), "languages": langs, "path": shown_path(dest)}
 
 
 @tool("file.read", '{"path": "~/Dokumente/notizen.txt"}', "read",
@@ -3966,25 +4033,70 @@ def t_input_keys(combo="", window=""):
     return {"ok": bool(res.get("ok")), "key": spec, "window": (win or {}).get("class", ""), "error": res.get("error", "")}
 
 
-def find_on_screen(label: str) -> dict:
-    """Where `label` is written on the focused screen: {ok, x, y, text} in
-    layout pixels, from screen.read."""
-    seen = t_screen_read()
-    if not seen.get("ok"):
-        return seen
+def label_spot(words: list, label: str):
+    """The best place for `label` among OCR words [(text, conf, x, y, w, h, line key)]: a single word or a
+    run of neighbouring words on one line (as many as the label has) — never the middle of a whole line
+    ("Abbrechen" in "Speichern Abbrechen Einstellungen" is the second word, not the line). (box, text, score)."""
     want = fold(label)
+    n = max(1, len(want.split()))
+    lines = {}
+    for wd in words:
+        lines.setdefault(wd[6], []).append(wd)
     best, score = None, 0.0
-    for line in seen.get("lines") or []:
-        have = fold(line["text"])
-        if not have:
-            continue
-        s = 1.0 if have == want else 0.9 if want and want in have.split() else \
-            0.8 if want and want in have else difflib.SequenceMatcher(None, want, have).ratio()
-        if s > score:
-            best, score = line, s
-    if not best or score < 0.6:
+    for row in lines.values():
+        row.sort(key=lambda wd: wd[2])
+        for size in range(1, n + 2):
+            for i in range(0, len(row) - size + 1):
+                run = row[i:i + size]
+                have = fold(" ".join(wd[0] for wd in run))
+                if not have:
+                    continue
+                s = 1.0 if have == want else (0.9 if want and want in have and size == n else
+                                              difflib.SequenceMatcher(None, want, have).ratio())
+                if s > score:
+                    x0 = min(wd[2] for wd in run)
+                    y0 = min(wd[3] for wd in run)
+                    x1 = max(wd[2] + wd[4] for wd in run)
+                    y1 = max(wd[3] + wd[5] for wd in run)
+                    best, score = ((x0, y0, x1 - x0, y1 - y0), " ".join(wd[0] for wd in run)), s
+    if not best:
+        return None, "", 0.0
+    return best[0], best[1], score
+
+
+def screen_words(screen: str = ""):
+    """(ok, words in layout pixels, output name, error): a fresh picture of the screen through OCR."""
+    shot_path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), f"velly-screen-{os.getpid()}.png")
+    res = input_run(["shot", shot_path] + (["--output", str(screen)] if screen else []), timeout=20)
+    if not res.get("ok"):
+        return False, [], "", f"der Bildschirm ließ sich nicht aufnehmen: {res.get('error', '')}"[:200]
+    try:
+        seen = ocr_words(shot_path)
+    finally:
+        try:
+            os.unlink(shot_path)
+        except OSError:
+            pass
+    if not seen.get("ok"):
+        return False, [], "", seen.get("error", "")
+    mon = monitor_of(res.get("output", ""))
+    scale = float(mon.get("scale") or 1) or 1
+    ox, oy = float(mon.get("x") or 0), float(mon.get("y") or 0)
+    words = [(t, c, round(ox + x / scale), round(oy + y / scale), round(w / scale), round(h / scale), k)
+             for t, c, x, y, w, h, k in seen["words"]]
+    return True, words, res.get("output", ""), ""
+
+
+def find_on_screen(label: str) -> dict:
+    """Where `label` is written on the focused screen: {ok, x, y, text} in layout pixels."""
+    ok, words, _output, err = screen_words()
+    if not ok:
+        return {"ok": False, "error": err}
+    box, text, score = label_spot(words, label)
+    if not box or score < 0.6:
         return {"ok": False, "error": f"„{label}“ sehe ich gerade nicht auf dem Bildschirm"}
-    return {"ok": True, "x": best["x"] + best["w"] // 2, "y": best["y"] + best["h"] // 2, "text": best["text"]}
+    x, y, w, h = box
+    return {"ok": True, "x": x + w // 2, "y": y + h // 2, "text": text}
 
 
 @tool("input.click", '{"x": 960, "y": 540, "button": "left", "double": false, "text": ""}', "write",
@@ -4035,29 +4147,12 @@ def monitor_of(name: str) -> dict:
       "Read what is on the screen right now (text recognition): every line of text with where it is (x, y, w, h in "
       "screen pixels). For 'was steht da', 'lies vor, was auf dem Bildschirm ist', and before clicking on a label.")
 def t_screen_read(screen=""):
-    # in the private runtime dir (0700), and gone again after the reading
-    shot_path = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir(), f"velly-screen-{os.getpid()}.png")
-    res = input_run(["shot", shot_path] + (["--output", str(screen)] if screen else []), timeout=20)
-    if not res.get("ok"):
-        return {"ok": False, "error": f"der Bildschirm ließ sich nicht aufnehmen: {res.get('error', '')}"[:200]}
-    try:
-        seen = ocr_words(shot_path)
-    finally:
-        try:
-            os.unlink(shot_path)
-        except OSError:
-            pass
-    if not seen.get("ok"):
-        return seen
-    mon = monitor_of(res.get("output", ""))
-    scale = float(mon.get("scale") or 1) or 1
-    ox, oy = float(mon.get("x") or 0), float(mon.get("y") or 0)
-    lines = []
-    for line in ocr_lines(seen["words"]):
-        lines.append({"text": line["text"], "x": round(ox + line["x"] / scale), "y": round(oy + line["y"] / scale),
-                      "w": round(line["w"] / scale), "h": round(line["h"] / scale)})
+    ok, words, output, err = screen_words(screen)
+    if not ok:
+        return {"ok": False, "error": err}
+    lines = ocr_lines([(t, c, x, y, w, h, k) for t, c, x, y, w, h, k in words])
     active = active_window()
-    return {"ok": True, "screen": res.get("output", ""), "window": active.get("class", ""),
+    return {"ok": True, "screen": output, "window": active.get("class", ""),
             "title": str(active.get("title") or "")[:80], "lines": lines[:120], "more": max(0, len(lines) - 120)}
 
 
@@ -6699,6 +6794,8 @@ def describe_action(name: str, args: dict) -> str:
         return f"„{str(a.get('text') or '').strip()[:60]}“ in {where[:30]} tippen und ausführen"
     if name == "input.keys":
         return f"{str(a.get('combo') or '').upper()[:30]} drücken"
+    if name == "screen.setup":
+        return "die Sprachdaten für die Texterkennung laden (5,6 MB)"
     return ACTION_WORDS.get(name, name)
 
 
