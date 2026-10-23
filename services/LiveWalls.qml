@@ -33,8 +33,13 @@ Singleton {
     }
 
     // the moving layer for a wallpaper, "" when it has none (or live wallpapers are off)
+    // a wallpaper you keep a still (THIS WALLPAPER MOVES off)
+    function still(path: string): bool {
+        return (Config.wallpaper.liveStills ?? []).indexOf(path) >= 0;
+    }
+
     function videoFor(path: string): string {
-        if (!Config.wallpaper.liveOn || !path)
+        if (!Config.wallpaper.liveOn || !path || root.still(path))
             return "";
         const e = root.entry(path);
         return e ? `file://${e.video}` : "";
@@ -58,20 +63,29 @@ Singleton {
     }
 
     // `style` "" = the setting (STYLE), `force` = make again even when it is fresh
-    function enqueue(path: string, style: string, force: bool, front: bool): void {
+    // `prompt` in your own words (or "" for the settings alone), `variant` another take (new places)
+    function enqueue(path: string, style: string, force: bool, front: bool, prompt: string, variant: int): void {
         if (!path || (root.queued(path) && !force))
             return;
-        const item = { path: path, style: style || Config.wallpaper.liveStyle, force: force };
+        const item = { path: path, style: style || Config.wallpaper.liveStyle, force: force, prompt: prompt ?? "", variant: variant ?? 0 };
         const rest = root.queue.filter(q => q.path !== path);
         root.queue = front ? [item].concat(rest) : rest.concat([item]);
         root.stopped = false;
         kick.restart();
     }
 
+    // the next take of a wallpaper: one more than the last, so a remake is never the same again
+    function nextVariant(path: string): int {
+        const e = root.entry(path);
+        return e ? (e.variant ?? 0) + 1 : 0;
+    }
+
     function makeThis(force: bool): void {
         if (!Config.wallpaper.current)
             return;
-        root.enqueue(Config.wallpaper.current, "", force, true);
+        const p = Config.wallpaper.current;
+        root.unstill(p);
+        root.enqueue(p, "", force, true, Config.wallpaper.livePrompt, force ? root.nextVariant(p) : 0);
         Toast.show(force ? "VELLY MAKES THIS WALLPAPER LIVE AGAIN" : "VELLY MAKES THIS WALLPAPER LIVE", "info", 2600);
     }
 
@@ -80,7 +94,125 @@ Singleton {
     property var gone: ({})
 
     function missing(): var {
-        return Wallpapers.favourites.filter(p => !root.entry(p) && !root.gone[p]);
+        return Wallpapers.favourites.filter(p => !root.entry(p) && !root.gone[p] && !root.still(p));
+    }
+
+    // MAKE IT LIKE THIS: the wallpaper that is up, with the description as it stands
+    function makeWithPrompt(): void {
+        const p = Config.wallpaper.current;
+        if (!p)
+            return;
+        root.unstill(p);
+        root.enqueue(p, "", true, true, Config.wallpaper.livePrompt, root.nextVariant(p));
+        const said = root.previewSaid.length ? root.previewSaid.join(" · ") : "AS VELLY READS THE PICTURE";
+        Toast.show(`VELLY MAKES IT · ${said}`, "info", 3400);
+    }
+
+    // THIS WALLPAPER MOVES: off keeps it a still (and Velly leaves it alone); on makes it live if it is not
+    readonly property bool thisMoves: !!Config.wallpaper.current && !root.still(Config.wallpaper.current)
+
+    function setThisMoves(on: bool): void {
+        const p = Config.wallpaper.current;
+        if (!p)
+            return;
+        const list = (Config.wallpaper.liveStills ?? []).filter(x => x !== p);
+        if (!on)
+            list.push(p);
+        Config.wallpaper.liveStills = list;
+        if (on && !root.entry(p))
+            root.enqueue(p, "", false, true, Config.wallpaper.livePrompt, 0);
+        Toast.show(on ? "THIS WALLPAPER MOVES AGAIN" : "THIS WALLPAPER STAYS A STILL · VELLY LEAVES IT ALONE", "info", 2800);
+    }
+
+    function unstill(path: string): void {
+        if (root.still(path))
+            Config.wallpaper.liveStills = (Config.wallpaper.liveStills ?? []).filter(x => x !== path);
+    }
+
+    // BACK TO THE LAST VERSION (again: forward)
+    readonly property bool hasPrevious: root.current?.previous === true
+
+    function undo(): void {
+        const p = Config.wallpaper.current;
+        if (!p || worker.running || restorer.running)
+            return;
+        if (!root.hasPrevious) {
+            Toast.show("THERE IS NO EARLIER VERSION OF THIS ONE YET", "warn", 2800);
+            return;
+        }
+        const args = ["python3", root.tool, "restore", p];
+        if (Config.wallpaper.liveGif && Config.wallpaper.liveGifPictures)
+            args.push("--gif-dir", root.gifDir);
+        restorer.command = args;
+        restorer.running = true;
+    }
+
+    Process {
+        id: restorer
+
+        command: ["true"]
+        stdout: SplitParser {
+            onRead: line => {
+                try {
+                    const ev = JSON.parse(line);
+                    if (ev.event === "done")
+                        Toast.show(`BACK TO THE VERSION BEFORE · ${String(ev.label).toUpperCase()}`, "ok", 3200);
+                    else if (ev.event === "error")
+                        Toast.show(String(ev.error).toUpperCase(), "warn", 3200);
+                } catch (e) {}
+            }
+        }
+        onExited: indexFile.reload()
+    }
+
+    // ── what Velly reads in a description, while you type it (bin/velvet-livewall understand)
+    property var previewSaid: []
+    property string previewText: ""
+    readonly property string previewLine: root.previewText.trim() === "" ? "EMPTY · VELLY READS THE PICTURE AND CHOOSES"
+        : (root.previewSaid.length ? `VELLY READS: ${root.previewSaid.join(" · ")}` : "VELLY FINDS NOTHING SHE KNOWS IN IT YET — TRY: LEAVES, SNOW, STARS, MIST, GOLD, SLOW, MANY …")
+
+    // the same, short, for the settings row (its value has one line)
+    readonly property string previewShort: root.previewText.trim() === "" ? "EMPTY · VELLY CHOOSES"
+        : (root.previewSaid.length ? root.previewSaid.join(" · ") : "NOTHING SHE KNOWS YET")
+
+    function preview(text: string): void {
+        root.previewText = text;
+        previewSoon.restart();
+    }
+
+    Timer {
+        id: previewSoon
+
+        interval: 220
+        onTriggered: {
+            reader.command = ["python3", root.tool, "understand", root.previewText];
+            reader.running = false;
+            reader.running = true;
+        }
+    }
+
+    Process {
+        id: reader
+
+        command: ["true"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    root.previewSaid = JSON.parse(text).said ?? [];
+                } catch (e) {
+                    root.previewSaid = [];
+                }
+            }
+        }
+    }
+
+    // the saved description, read once at start and whenever it changes (the settings row shows it)
+    Connections {
+        target: Config.wallpaper
+
+        function onLivePromptChanged(): void {
+            root.preview(Config.wallpaper.livePrompt);
+        }
     }
 
     function makeFavourites(force: bool): void {
@@ -141,12 +273,18 @@ Singleton {
             "--speed", String(Config.wallpaper.liveSpeed),
             "--seconds", String(Config.wallpaper.liveSeconds),
             "--fps", String(Config.wallpaper.liveFps),
-            "--gif-width", String(Config.wallpaper.liveGifWidth)];
+            "--gif-width", String(Config.wallpaper.liveGifWidth),
+            "--colour", Config.wallpaper.liveColour,
+            "--scale", String(Config.wallpaper.liveScale),
+            "--wind", Config.wallpaper.liveWind,
+            "--variant", String(item.variant ?? 0)];
+        if ((item.prompt ?? "").trim() !== "")
+            args.push("--prompt", item.prompt);
         if (!Config.wallpaper.liveGif)
             args.push("--no-gif");
         else if (Config.wallpaper.liveGifPictures)
             args.push("--gif-dir", root.gifDir);
-        root.job = { path: item.path, label: "", done: 0, total: 0, paused: false };
+        root.job = { path: item.path, label: "", done: 0, total: 0, paused: false, prompt: item.prompt ?? "" };
         worker.command = args;
         worker.running = true;
     }
@@ -286,9 +424,12 @@ Singleton {
         const e = root.current;
         if (root.job && root.job.path === Config.wallpaper.current)
             return "BEING MADE RIGHT NOW";
+        if (root.still(Config.wallpaper.current))
+            return e ? "KEPT A STILL · ITS MOTION IS STILL THERE" : "KEPT A STILL";
         if (!e)
             return Wallpapers.isFavourite(Config.wallpaper.current) ? "NOT MADE YET · IT IS IN VELLY'S QUEUE" : "STILL · STAR IT, OR MAKE IT LIVE BELOW";
-        return `${String(e.label).toUpperCase()} · ${e.seconds} S · ${e.fps} FPS`;
+        const how = (e.prompt ?? "").trim() !== "" ? "AS YOU DESCRIBED IT" : (e.why ?? "");
+        return `${String(e.label).toUpperCase()} · ${String(how).toUpperCase()}${(e.variant ?? 0) > 0 ? ` · TAKE ${(e.variant ?? 0) + 1}` : ""}`;
     }
 
     // ── the index the workshop writes
@@ -393,8 +534,23 @@ Singleton {
         // path: "" or "current" for the wallpaper that is up; style: "" or "auto" for Velly's choice
         function make(path: string, style: string): string {
             const p = (!path || path === "current") ? Config.wallpaper.current : path;
-            root.enqueue(p, style && style !== "auto" ? style : "auto", true, true);
+            root.unstill(p);
+            root.enqueue(p, style && style !== "auto" ? style : "auto", true, true, "", root.nextVariant(p));
             return `queued ${root.name(p)}`;
+        }
+        // in your own words ("langsamer goldener Schnee, viel, kein Nebel"); it is kept as THE description too
+        function describe(path: string, prompt: string): string {
+            const p = (!path || path === "current") ? Config.wallpaper.current : path;
+            root.unstill(p);
+            root.enqueue(p, "", true, true, prompt, root.nextVariant(p));
+            return `queued ${root.name(p)} as described`;
+        }
+        function undo(): void {
+            root.undo();
+        }
+        // "on" | "off": the wallpaper that is up moves, or stays a still
+        function moves(on: string): void {
+            root.setThisMoves(on !== "off" && on !== "false");
         }
         function favourites(): string {
             root.makeFavourites(false);

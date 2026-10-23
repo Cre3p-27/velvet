@@ -929,6 +929,21 @@ anything again. Velly works one wallpaper at a time, at the lowest priority, and
 stops the moment a game takes the screen (she picks it up afterwards). About a
 minute per wallpaper at 4K.
 
+**Not what you wanted?** Everything is in **WALLPAPER → LIVE WALLPAPERS**, for the
+wallpaper that is up:
+
+- **THIS WALLPAPER MOVES** off keeps just this one a still (Velly leaves it alone);
+  **PLAY LIVE WALLPAPERS** turns them all off.
+- **DESCRIBE THE MOTION** — say it in your own words, German or English:
+  *„langsamer goldener Schnee, sehr viel, kein Nebel"*, *„rote Blätter von links,
+  schnell"*, *„dezente blaue Glühwürmchen"*. What moves, how much, how fast, how
+  strong, how big, a colour, the wind — and what not. Velly shows what she reads
+  while you type; Ctrl+Enter saves it and makes it.
+- **A FRESH TAKE** makes it again with new places (each press another take);
+  **BACK TO THE LAST VERSION** brings the one before back (press again: forward).
+- **COLOUR**, **SIZE**, **WIND**, **INTENSITY**, **AMOUNT**, **SPEED**, **LOOP**,
+  **SMOOTHNESS** for what is made next; **STRENGTH** changes at once.
+
 **It rests when nobody sees it**: under a game or a fullscreen film, behind the
 lock, in the wheel, and — **REST BEHIND WINDOWS** — while windows cover the desktop.
 
@@ -941,6 +956,9 @@ velvet livewall                      # what Velly is making, what this wallpaper
 velvet livewall make current leaves  # this one, now, with falling leaves
 velvet livewall analyse FILE         # what Velly reads in a picture, and the style she would pick
 velvet livewall list                 # every live wallpaper made
+velvet livewall describe "rote Blätter von links, schnell"   # in your own words
+velvet livewall undo                 # the version before (again: forward)
+velvet livewall still                # this wallpaper stays a still · moving: it moves again
 ```
 
 Or ask her: *„Velly, mach mein Wallpaper lebendig — mit Schnee"*.

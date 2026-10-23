@@ -2495,19 +2495,40 @@ def t_livewall_status():
     return {"ok": True, **d}
 
 
-@tool("livewall.make", '{"wallpaper": "current", "style": "auto"}', "write",
+@tool("livewall.make", '{"wallpaper": "current", "style": "auto", "prompt": ""}', "write",
       "Make a wallpaper live (moving) — your own job: you read the picture and choose its motion. wallpaper: 'current' "
       "(the one that is up), a file name or path. style: auto (you choose from the picture) or leaves, petals, snow, rain, "
-      "stars, fireflies, dust, fog, glow, sheen, rays. It goes first in your queue and takes about a minute; a GIF is made too.")
-def t_livewall_make(wallpaper="current", style="auto"):
+      "stars, fireflies, dust, fog, glow, sheen, rays. prompt: the user's own words for the motion, passed on as they said "
+      "them (\"langsamer goldener Schnee, viel, kein Nebel\") — use it whenever they describe how it should look. Every "
+      "call is a fresh take (new places); the version before is kept (livewall.undo). About a minute; a GIF too.")
+def t_livewall_make(wallpaper="current", style="auto", prompt=""):
     path = wallpaper_named(wallpaper)
     if not path:
         return {"ok": False, "error": f"no wallpaper called '{wallpaper}'"}
+    if str(prompt or "").strip():
+        out = shell_ipc("livewall", "describe", path, str(prompt).strip())
+        if not out:
+            return {"ok": False, "error": "the shell is not answering"}
+        return {"ok": True, "queued": os.path.basename(path), "prompt": str(prompt).strip(), "note": "about a minute"}
     st = live_style(style)
     out = shell_ipc("livewall", "make", path, st)
     if not out:
         return {"ok": False, "error": "the shell is not answering"}
     return {"ok": True, "queued": os.path.basename(path), "style": st, "note": "about a minute; the GIF lands in Pictures/Velvet Live"}
+
+
+@tool("livewall.undo", "", "write",
+      "The wallpaper that is up: back to the version of its motion before the last remake (again: forward).")
+def t_livewall_undo():
+    shell_ipc("livewall", "undo")
+    return {"ok": True}
+
+
+@tool("livewall.still", '{"still": true}', "write",
+      "Only the wallpaper that is up: still=true keeps it a still picture (and you do not make it again); false lets it move.")
+def t_livewall_still(still=True):
+    shell_ipc("livewall", "moves", "off" if still else "on")
+    return {"ok": True, "still": bool(still)}
 
 
 @tool("livewall.toggle", '{"on": true}', "write",

@@ -351,6 +351,7 @@ Item {
                         return colourC;
                     case "action":
                         return actionC;
+                    case "text":
                     case "info":
                         return infoC;
                     default:

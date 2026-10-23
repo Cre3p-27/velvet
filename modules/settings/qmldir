@@ -43,3 +43,4 @@ WinFrame11 1.0 WinFrame11.qml
 SkinRowWin 1.0 SkinRowWin.qml
 CreditsPane 1.0 CreditsPane.qml
 LookName 1.0 LookName.qml
+TextEditOverlay 1.0 TextEditOverlay.qml

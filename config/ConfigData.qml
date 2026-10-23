@@ -562,6 +562,11 @@ JsonAdapter {
         property bool liveGif: true           // a GIF of it too
         property bool liveGifPictures: true   // …copied to Pictures/Velvet Live
         property int liveGifWidth: 800
+        property string livePrompt: ""        // in your own words: what moves and how (for what is made next)
+        property var liveStills: []           // wallpapers that stay stills (Velly does not make them live)
+        property string liveColour: "picture" // the colour of the motion: the picture's own, or one
+        property real liveScale: 1.0          // how big what falls and floats is
+        property string liveWind: "auto"      // auto · left · right · none
         // ── THE LIVING DESKTOP ─────────────────────────────────────
         // Widgets and living light layered onto the wallpaper itself,
         // so a wallpaper is a place rather than a picture. Master

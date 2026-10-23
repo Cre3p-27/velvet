@@ -3652,6 +3652,59 @@ Singleton {
                 },
                 {
                     kind: "toggle",
+                    live: "liveThisMoves",
+                    name: "THIS WALLPAPER MOVES",
+                    aka: "DIESES WALLPAPER · AUSSCHALTEN · STILL · STANDBILD",
+                    help: "Only the wallpaper that is up. Off: it stays its still, and Velly does not make it again — even as a favourite. On again: it moves (and Velly makes it if it has no motion yet).",
+                    sub: "OFF: THIS ONE STAYS A STILL"
+                },
+                {
+                    kind: "text",
+                    key: "wallpaper.livePrompt",
+                    name: "DESCRIBE THE MOTION",
+                    aka: "PROMPT · BESCHREIBUNG · WÜNSCH DIR · EFFEKT BESCHREIBEN",
+                    help: "Say in your own words what should move and how — German or English: what (leaves, petals, snow, rain, stars, fireflies, floating light, mist, glow, sheen, rays), how much (viel, wenig), how fast (langsam, schnell), how strong (dezent, kräftig), how big (klein, groß), a colour (gold, rosa, blau, #ff8800 …), the wind (von links, nach rechts, windstill) — and what not (kein Nebel, ohne Blätter). Velly shows what she reads while you type. Empty: she reads the picture and chooses.",
+                    sub: "IN YOUR OWN WORDS · VELLY SHOWS WHAT SHE READS",
+                    placeholder: "e.g. langsamer goldener Schnee, sehr viel, kein Nebel",
+                    examples: ["langsamer goldener Schnee, sehr viel", "rote Blätter von links, schnell", "dezente blaue Glühwürmchen", "Sterne funkeln, kein Nebel", "rosa Blüten, wenige, groß", "warmes Leuchten, langsam", "Regen, kräftig, windstill"],
+                    understand: "livewall",
+                    then: "liveMakePrompt",
+                    thenLabel: "SAVE AND MAKE IT",
+                    empty: "EMPTY · VELLY CHOOSES"
+                },
+                {
+                    kind: "info",
+                    name: "VELLY READS",
+                    help: "What Velly understood from the description — exactly what she will make.",
+                    sub: "WHAT SHE WILL MAKE OF IT",
+                    live: "livePromptRead"
+                },
+                {
+                    kind: "action",
+                    fn: "liveMakePrompt",
+                    name: "MAKE IT LIKE THIS",
+                    aka: "MIT PROMPT · SO MACHEN",
+                    help: "Makes the wallpaper that is up with the description and the settings below — about a minute, first in Velly's queue. The version before is kept: BACK TO THE LAST VERSION brings it back.",
+                    sub: "THE DESCRIPTION + THE SETTINGS BELOW · ABOUT A MINUTE"
+                },
+                {
+                    kind: "action",
+                    fn: "liveRemakeThis",
+                    name: "A FRESH TAKE",
+                    aka: "NEU MACHEN · REMAKE · ANDERE VARIANTE · GEFÄLLT MIR NICHT",
+                    help: "Not quite right? Velly makes it again — the same settings and description, but a new take: everything falls, floats and twinkles in other places. Each press is another one; the one before is kept.",
+                    sub: "SAME SETTINGS, NEW PLACES · THE OLD ONE IS KEPT"
+                },
+                {
+                    kind: "action",
+                    fn: "liveUndo",
+                    name: "BACK TO THE LAST VERSION",
+                    aka: "RÜCKGÄNGIG · UNDO · ZURÜCK",
+                    help: "The version before the last remake comes back. Press again to go forward to the newer one.",
+                    sub: "PRESS AGAIN TO GO FORWARD"
+                },
+                {
+                    kind: "toggle",
                     key: "wallpaper.liveOn",
                     name: "PLAY LIVE WALLPAPERS",
                     aka: "LIVE AN · AUS",
@@ -3706,6 +3759,54 @@ Singleton {
                         { value: "glow", label: "BREATHING LIGHT" },
                         { value: "sheen", label: "A SHEEN OF LIGHT" },
                         { value: "rays", label: "LIGHT RAYS" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "wallpaper.liveColour",
+                    name: "COLOUR",
+                    aka: "FARBE",
+                    help: "The colour of what moves: the picture's own (Velly takes it from the picture), or one for all. A colour in the description wins over this.",
+                    sub: "THE PICTURE'S OWN, OR ONE · FOR WHAT IS MADE NEXT",
+                    options: [
+                        { value: "picture", label: "THE PICTURE'S OWN" },
+                        { value: "gold", label: "GOLD" },
+                        { value: "white", label: "WHITE" },
+                        { value: "silver", label: "SILVER" },
+                        { value: "red", label: "RED" },
+                        { value: "orange", label: "ORANGE" },
+                        { value: "pink", label: "PINK" },
+                        { value: "purple", label: "PURPLE" },
+                        { value: "blue", label: "BLUE" },
+                        { value: "turquoise", label: "TURQUOISE" },
+                        { value: "green", label: "GREEN" }
+                    ]
+                },
+                {
+                    kind: "slider",
+                    key: "wallpaper.liveScale",
+                    name: "SIZE",
+                    aka: "GRÖSSE · PARTIKELGRÖSSE",
+                    help: "How big what falls, floats and twinkles is: tiny dust or big leaves. For what is made next.",
+                    sub: "FOR WHAT IS MADE NEXT",
+                    min: 0.4,
+                    max: 2.5,
+                    step: 0.1,
+                    fmt: "float1",
+                    unit: "×"
+                },
+                {
+                    kind: "choice",
+                    key: "wallpaper.liveWind",
+                    name: "WIND",
+                    aka: "WINDRICHTUNG",
+                    help: "Where what falls drifts: AUTO lets some leaves ride a breeze to the right, LEFT and RIGHT send most along, NONE lets everything fall straight (rain too).",
+                    sub: "FOR WHAT IS MADE NEXT",
+                    options: [
+                        { value: "auto", label: "AUTO · A BREEZE" },
+                        { value: "left", label: "TO THE LEFT" },
+                        { value: "right", label: "TO THE RIGHT" },
+                        { value: "none", label: "NONE · STRAIGHT DOWN" }
                     ]
                 },
                 {
@@ -3813,14 +3914,6 @@ Singleton {
                     aka: "JETZT · DIESES",
                     help: "Velly makes the wallpaper that is up live now — a favourite or not — with the style and settings above (about a minute; it is first in her queue).",
                     sub: "NOW · FIRST IN VELLY'S QUEUE"
-                },
-                {
-                    kind: "action",
-                    fn: "liveRemakeThis",
-                    name: "REMAKE THIS ONE",
-                    aka: "NEU MACHEN",
-                    help: "Makes the wallpaper that is up again, with the style and settings as they are now.",
-                    sub: "WITH THE STYLE AND SETTINGS AS THEY ARE NOW"
                 },
                 {
                     kind: "action",

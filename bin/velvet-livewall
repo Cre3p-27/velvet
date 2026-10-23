@@ -11,11 +11,16 @@
 #    velvet-livewall list                  every live wallpaper made (JSON with --json)
 #    velvet-livewall favourites [options]  make what the favourites are missing, one after another
 #    velvet-livewall remove FILE|all       delete live versions
+#    velvet-livewall restore FILE          the version before the last remake back (again: forward)
+#    velvet-livewall understand "TEXT"     how a description is read (JSON)
 #    velvet-livewall --selftest
 #
 #  options: --style auto|dust|leaves|petals|snow|rain|fireflies|stars|fog|glow|sheen|rays
 #           --intensity 0.3–1.6  --amount 0.3–2  --speed 0.5–2  --seconds 6–20  --fps 24|30|60
 #           --size WxH (the screen; ≤ 3840×2160)  --gif / --no-gif  --gif-dir DIR  --force  --json
+#           --prompt "TEXT" (what should move, in your words: "langsamer goldener Schnee, viel, kein Nebel")
+#           --colour picture|gold|white|pink|blue|… or #rrggbb  --scale 0.5–2 (particle size)
+#           --wind auto|left|right|none  --variant N (another take: new places, same settings)
 #           --preview (small and short — to judge a style in seconds)
 #
 #  Seamless: every motion is periodic in the loop's length — a falling leaf
@@ -336,6 +341,149 @@ def _pick(an):
     return ["dust", "glow"], "floating light"
 
 
+# ─────────────────────────────────────────────────────────────── a description, read
+COLOURS = {
+    "gold": (1.0, 0.8, 0.36), "golden": (1.0, 0.8, 0.36), "bernstein": (1.0, 0.68, 0.24), "amber": (1.0, 0.68, 0.24),
+    "gelb": (1.0, 0.9, 0.35), "yellow": (1.0, 0.9, 0.35), "orange": (1.0, 0.58, 0.2), "rot": (1.0, 0.3, 0.24),
+    "red": (1.0, 0.3, 0.24), "rosa": (1.0, 0.62, 0.8), "pink": (1.0, 0.55, 0.78), "magenta": (1.0, 0.35, 0.85),
+    "lila": (0.74, 0.52, 1.0), "violett": (0.74, 0.52, 1.0), "violet": (0.74, 0.52, 1.0), "purple": (0.7, 0.45, 1.0),
+    "blau": (0.45, 0.65, 1.0), "blue": (0.45, 0.65, 1.0), "tuerkis": (0.35, 0.95, 0.92), "turquoise": (0.35, 0.95, 0.92),
+    "cyan": (0.35, 0.95, 1.0), "gruen": (0.45, 1.0, 0.55), "green": (0.45, 1.0, 0.55), "mint": (0.6, 1.0, 0.82),
+    "weiss": (1.0, 1.0, 1.0), "white": (1.0, 1.0, 1.0), "silber": (0.86, 0.9, 0.97), "silver": (0.86, 0.9, 0.97),
+    "warm": (1.0, 0.82, 0.6), "kalt": (0.7, 0.85, 1.0), "cold": (0.7, 0.85, 1.0), "cool": (0.7, 0.85, 1.0),
+}
+COLOUR_LABEL = {"golden": "gold", "bernstein": "amber", "gelb": "yellow", "rot": "red", "rosa": "pink", "lila": "purple",
+                "violett": "violet", "blau": "blue", "tuerkis": "turquoise", "gruen": "green", "weiss": "white",
+                "silber": "silver", "kalt": "cold"}
+# what moves: word beginnings (umlauts folded) — fireflies before glow ("glühwürmchen" holds "glüh")
+LAYER_WORDS = [
+    ("fireflies", ("gluehwuerm", "firefl", "leuchtkaefer")),
+    ("leaves", ("blaett", "blatt", "laub", "leaf", "leaves", "herbst", "autumn")),
+    ("petals", ("blueten", "bluete", "petal", "sakura", "kirsch", "cherry", "rosenbl")),
+    ("snow", ("schnee", "snow", "flocke", "flake")),
+    ("rain", ("regen", "rain", "tropfen", "drops")),
+    ("stars", ("stern", "star", "funkel", "twinkl", "glitzer", "glitter")),
+    ("dust", ("staub", "dust", "partikel", "particle", "funken", "spark", "pollen", "lichtpunkt", "mote", "schwebe", "float")),
+    ("fog", ("nebel", "fog", "mist", "dunst", "haze", "rauch", "smoke", "wolke", "cloud")),
+    ("glow", ("leucht", "glow", "atme", "breath", "glueh", "pulsier", "puls")),
+    ("sheen", ("glanz", "sheen", "schimmer", "shimmer", "shine", "spiegel")),
+    ("rays", ("strahl", "ray", "sonnenlicht", "sunbeam", "lichtschacht")),
+]
+NOT = ("kein", "keine", "keinen", "keiner", "keinem", "ohne", "no", "without", "nicht", "not", "never", "none")
+STRONG = ("sehr", "very", "extrem", "extremely", "super", "richtig", "really", "total", "mega", "so")
+MODS = [
+    # (stems, field, factor)
+    (("viel", "mehr", "dicht", "massig", "lots", "many", "more", "dense", "heavy", "ueberall"), "amount", 1.6),
+    (("wenig", "vereinzelt", "sparse", "few", "less", "kaum", "spaerlich", "einzeln"), "amount", 0.5),
+    (("langsam", "sanft", "ruhig", "gemaechlich", "traege", "slow", "gentle", "calm", "lazy", "gemuetlich"), "speed", 0.6),
+    (("schnell", "stuermisch", "wild", "rasant", "hektisch", "fast", "quick", "rapid", "stormy"), "speed", 1.6),
+    (("stark", "kraeftig", "hell", "intensiv", "strong", "bright", "intense", "deutlich", "auffaellig"), "intensity", 1.4),
+    (("dezent", "subtil", "leicht", "zart", "schwach", "subtle", "faint", "soft", "unauffaellig", "dunkler"), "intensity", 0.6),
+    (("gross", "riesig", "big", "large", "huge", "dick"), "scale", 1.5),
+    (("klein", "winzig", "small", "tiny", "fein", "fine", "duenn"), "scale", 0.65),
+]
+
+
+def fold(text):
+    t = str(text or "").lower()
+    for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        t = t.replace(a, b)
+    # a comma or a full stop ends what a "kein" / "ohne" refers to
+    return "".join(c if c.isalnum() or c == "#" else (" | " if c in ",.;!?" else " ") for c in t)
+
+
+def understand(text):
+    """a description in your own words → what moves and how. Unknown words are left alone; nothing named
+    means Velly picks from the picture as usual."""
+    words = fold(text).split()
+    out = {"layers": [], "exclude": [], "amount": 1.0, "speed": 1.0, "intensity": 1.0, "scale": 1.0,
+           "colour": None, "colourName": "", "wind": "", "said": []}
+    neg = 0
+    strong = False
+    for i, w in enumerate(words):
+        if w == "|":
+            neg, strong = 0, False
+            continue
+        if w in NOT:
+            neg = 3
+            continue
+        if w in STRONG:
+            strong = True
+            continue
+        hit = None
+        for layer, stems in LAYER_WORDS:
+            if any(w.startswith(st) for st in stems):
+                hit = layer
+                break
+        if hit:
+            if neg:
+                if hit not in out["exclude"]:
+                    out["exclude"].append(hit)
+                out["layers"] = [x for x in out["layers"] if x != hit]
+            elif hit not in out["layers"] and hit not in out["exclude"]:
+                out["layers"].append(hit)
+            neg = 0
+            continue
+        if w.startswith("#") and len(w) == 7:
+            try:
+                out["colour"] = tuple(int(w[j:j + 2], 16) / 255 for j in (1, 3, 5))
+                out["colourName"] = w
+            except ValueError:
+                pass
+            continue
+        for name, rgb in COLOURS.items():
+            if w.startswith(name) and (len(name) >= 4 or w == name or w[len(name):] in ("e", "en", "er", "es", "em", "lich", "ish")):
+                out["colour"], out["colourName"] = rgb, name
+                break
+        for stems, field, f in MODS:
+            if any(w.startswith(st) for st in stems):
+                if neg and field == "amount":
+                    f = 1 / f
+                out[field] = round(out[field] * (f ** (1.4 if strong else 1.0)), 3)
+                break
+        # wind: "von links", "nach rechts", "to the left", "windstill"
+        prev = words[i - 1] if i else ""
+        if w in ("links", "left"):
+            out["wind"] = "right" if prev in ("von", "from") else "left"
+        elif w in ("rechts", "right"):
+            out["wind"] = "left" if prev in ("von", "from") else "right"
+        elif w.startswith("windstill") or (w == "wind" and neg) or w in ("senkrecht", "straight", "gerade"):
+            out["wind"] = "none"
+            neg = 0
+        elif w.startswith("wind") or w.startswith("windig") or w.startswith("windy") or w.startswith("boe"):
+            out["wind"] = out["wind"] or "right"
+        if w not in NOT:
+            neg = max(0, neg - 1)
+        strong = False if w not in STRONG else strong
+    said = [STYLES[x] for x in out["layers"]]
+    said += [f"NO {STYLES[x]}" for x in out["exclude"]]
+    for field, more, less in (("amount", "MORE", "FEWER"), ("speed", "FASTER", "SLOWER"), ("intensity", "STRONGER", "SOFTER"),
+                              ("scale", "BIGGER", "SMALLER")):
+        if out[field] > 1.01:
+            said.append(more)
+        elif out[field] < 0.99:
+            said.append(less)
+    if out["colourName"]:
+        said.append(COLOUR_LABEL.get(out["colourName"], out["colourName"]).upper())
+    if out["wind"]:
+        said.append({"left": "WIND TO THE LEFT", "right": "WIND TO THE RIGHT", "none": "NO WIND"}[out["wind"]])
+    out["said"] = said
+    return out
+
+
+def colour_of(name):
+    """a colour setting: 'picture' (its own) → None, a name, or #rrggbb"""
+    n = fold(name).strip()
+    if not n or n in ("picture", "auto", "bild"):
+        return None
+    if n.startswith("#") and len(n) == 7:
+        try:
+            return tuple(int(n[j:j + 2], 16) / 255 for j in (1, 3, 5))
+        except ValueError:
+            return None
+    return COLOURS.get(n)
+
+
 # ─────────────────────────────────────────────────────────────── sprites
 def gauss(r):
     """a soft round spot, alpha only, (2r+1)²"""
@@ -508,8 +656,8 @@ class Dust:
 
     def __init__(self, ctx, rng, amount, inten, speed):
         W, H, T = ctx.W, ctx.H, ctx.T
-        self.cols = palette_light(ctx.an)
-        k = W / 3840
+        self.cols = [ctx.tint] if ctx.tint is not None else palette_light(ctx.an)
+        k = W / 3840 * ctx.scale
         # the same scene at any size: the count does not follow the pixels
         n = max(12, int(70 * amount))
         self.p = []
@@ -547,9 +695,12 @@ class Fall:
 
     def __init__(self, ctx, rng, amount, inten, speed, kind):
         W, H, T = ctx.W, ctx.H, ctx.T
-        k = W / 3840
+        k = W / 3840 * ctx.scale
         self.W, self.H, self.T, self.kind = W, H, T, kind
         self.p = []
+        # the wind: one for all — auto lets some ride it to the right, left/right sends most along, none: they only fall
+        ride, sign = {"left": (0.7, -1), "right": (0.7, 1), "none": (0.0, 1)}.get(ctx.wind, (0.45, 1))
+        tint_hsv = colorsys.rgb_to_hsv(*ctx.tint) if ctx.tint is not None else None
         if kind == "leaves":
             hues = palette_hue(ctx.an, 8, 52, (0.85, 0.45, 0.12))
             n, sizes, k_fall = int(30 * amount), (58, 168), (1, 2)
@@ -572,9 +723,9 @@ class Fall:
                      sway=rng.uniform(0.012, 0.035) * W * (0.4 + depth) if kind != "rain" else 0,
                      sf=int(rng.integers(1, 3)), sp=rng.random(),
                      # one wind for all of them: some ride it across once per loop, the rest only fall
-                     drift=(W + 2 * self.margin) / T if kind in ("leaves", "petals") and rng.random() < 0.45 else 0.0)
+                     drift=sign * (W + 2 * self.margin) / T if kind in ("leaves", "petals") and rng.random() < ride else 0.0)
             if kind in ("leaves", "petals"):
-                h, s, v = hues[int(rng.integers(0, len(hues)))]
+                h, s, v = hues[int(rng.integers(0, len(hues)))] if tint_hsv is None else tint_hsv
                 if kind == "leaves":
                     # a leaf in the air catches the light: richer than the shaded leaves on the ground
                     s, v = clamp(max(s, 0.7) * rng.uniform(0.9, 1.1), 0, 1), clamp(max(v, 0.78) * rng.uniform(0.85, 1.12), 0, 1)
@@ -592,14 +743,15 @@ class Fall:
             elif kind == "snow":
                 p.update(spr=gauss(max(2, size // 2)), gain=(0.25 + 0.55 * depth) * inten)
             else:
-                ang = 12
+                # rain leans with the wind (straight down without it)
+                ang = {"left": -12, "none": 0}.get(ctx.wind, 12)
                 p.update(spr=streak(size, max(1.0, 1.2 + 1.6 * depth) * k, ang), gain=(0.05 + 0.16 * depth) * inten,
                          dx=math.tan(math.radians(ang)))
             self.p.append(p)
         self.p.sort(key=lambda q: q["depth"])
         self.lane = lane
-        self.snow = np.array([0.96, 0.97, 1.0], np.float32)
-        self.rain = np.array([0.82, 0.86, 0.92], np.float32)
+        self.snow = np.array(ctx.tint if ctx.tint is not None else (0.96, 0.97, 1.0), np.float32)
+        self.rain = np.array(ctx.tint if ctx.tint is not None else (0.82, 0.86, 0.92), np.float32)
 
     def render(self, frame, t):
         for p in self.p:
@@ -625,9 +777,9 @@ class Fireflies:
         k = W / 3840
         box = ctx.an["box"]
         self.W, self.H, self.T = W, H, T
-        self.core = gauss(int(4 * k) + 2)
-        self.halo = gauss(int(46 * k) + 4)
-        self.col = np.array([1.0, 0.86, 0.42], np.float32)
+        self.core = gauss(int(4 * k * ctx.scale) + 2)
+        self.halo = gauss(int(46 * k * ctx.scale) + 4)
+        self.col = np.array(ctx.tint if ctx.tint is not None else (1.0, 0.86, 0.42), np.float32)
         self.p = []
         for _ in range(max(8, int(26 * amount))):
             self.p.append(dict(cx=(box[0] + (box[2] - box[0]) * rng.uniform(0.05, 0.95)) * W,
@@ -660,11 +812,11 @@ class Stars:
         self.p = []
         for i, (x, y, b, _) in enumerate(found):
             colour = ctx.base_small[y, x]
-            colour = np.clip(colour / max(1e-3, float(colour.max())), 0.55, 1.0)
+            colour = np.clip(colour / max(1e-3, float(colour.max())), 0.55, 1.0) if ctx.tint is None else np.array(ctx.tint)
             big = i < max(3, len(found) // 12)
-            r = int((7 if big else 4) * k + 2)
+            r = int((7 if big else 4) * k * ctx.scale + 2)
             self.p.append(dict(x=(x + 0.5) * sx, y=(y + 0.5) * sy, col=colour.astype(np.float32),
-                               spr=gauss(r), ray=spikes(int(34 * k) + 4) if big else None,
+                               spr=gauss(r), ray=spikes(int(34 * k * ctx.scale) + 4) if big else None,
                                beat=int(rng.integers(1, 4)) * max(1, int(round(speed))), ph=rng.random(),
                                gain=clamp(b * 1.4, 0.25, 1.0) * inten))
 
@@ -702,12 +854,17 @@ class Soft:
             # bright frame must not catch it (it turned white) — while the bright parts themselves lift a little
             onto_dark = (1 - smooth((L - 0.12) / 0.33))[..., None]
             self.glow_add = (np.clip(halo - hi_rgb, 0, None) * onto_dark * 1.4 + hi_rgb * 0.07).astype(np.float32)
+            if ctx.tint is not None:
+                # the halo in the asked colour, as bright as the picture's own would have been
+                self.glow_add = (lum(self.glow_add)[..., None] * np.array(ctx.tint, np.float32) * 1.2).astype(np.float32)
         if "sheen" in kinds:
             yy, xx = np.mgrid[0:self.h, 0:self.w].astype(np.float32)
             self.diag = (xx + yy * 0.55) / (self.w + self.h * 0.55)          # 0..1 along the sweep
             self.catch = (0.25 + 0.75 * smooth(L / 0.9) ** 1.5)
             # in the picture's own light, so bright colours shine instead of turning white
             self.sheen_col = (palette_light(ctx.an, 1)[0] * 0.55 + np.array([1.0, 0.98, 0.95], np.float32) * 0.45)
+            if ctx.tint is not None:
+                self.sheen_col = np.array(ctx.tint, np.float32)
         if "fog" in kinds:
             box = ctx.an["box"]
             self.fog_tiles = [fbm_tile(self.w, self.h, rng, 5), fbm_tile(self.w, self.h, rng, 4)]
@@ -722,10 +879,12 @@ class Soft:
             self.fog_mask = (0.35 + 0.65 * mid) * inside * (0.12 + 0.88 * (1 - smooth((L - 0.38) / 0.32)))
             light = palette_light(ctx.an, 2)
             self.fog_col = (light[0] * 0.6 + sm.reshape(-1, 3).mean(0) * 0.4).astype(np.float32)
+            if ctx.tint is not None:
+                self.fog_col = (np.array(ctx.tint, np.float32) * 0.7 + self.fog_col * 0.3).astype(np.float32)
         if "rays" in kinds:
             lx, ly = ctx.an["light"]
             self.rays = zoom_blur(smooth((L - 0.6) / 0.35), lx * self.w, ly * self.h)
-            self.ray_col = palette_light(ctx.an, 1)[0]
+            self.ray_col = palette_light(ctx.an, 1)[0] if ctx.tint is None else np.array(ctx.tint, np.float32)
 
     def render(self, t):
         """the added light (HxWx3, small) and the mist (alpha, colour) for time t"""
@@ -812,10 +971,13 @@ def zoom_blur(mask, cx, cy, steps=24, reach=0.42):
 CTX = None
 
 
-def build(path, an, layers, W, H, T, fps, inten, amount, speed, seed):
+def build(path, an, layers, W, H, T, fps, inten, amount, speed, seed, tint=None, scale=1.0, wind="auto"):
     ctx = Ctx()
     ctx.W, ctx.H, ctx.T, ctx.fps = W, H, T, fps
     ctx.an = an
+    ctx.tint = tuple(float(c) for c in tint) if tint is not None else None
+    ctx.scale = clamp(float(scale), 0.4, 2.5)
+    ctx.wind = wind if wind in ("left", "right", "none") else "auto"
     img = load(path, W, H)
     ctx.base = np.asarray(img, dtype=np.float32) / 255.0
     sw = 960 if W > 960 else W
@@ -986,47 +1148,68 @@ def make(path, o):
     T = 4.0 if o["preview"] else o["seconds"]
     n = int(round(T * fps))
     an = analyse(path, W / H)
-    if o["style"] == "auto":
+    u = understand(o["prompt"]) if o["prompt"].strip() else None
+    if u and u["layers"]:
+        layers, why = list(u["layers"]), f"as you described it: {o['prompt'].strip()}"
+    elif o["style"] == "auto":
         layers, why = pick(an)
     else:
         layers, why = [o["style"]], "chosen by hand"
+    if u and u["exclude"]:
+        layers = [k for k in layers if k not in u["exclude"]] or [next(k for k in ("dust", "glow", "sheen") if k not in u["exclude"])]
+        if not u["layers"]:
+            why += f" — without {', '.join(STYLES[k].lower() for k in u['exclude'])}"
+    inten = clamp(o["intensity"] * (u["intensity"] if u else 1), 0.2, 2.2)
+    amount = clamp(o["amount"] * (u["amount"] if u else 1), 0.2, 3.0)
+    speed = clamp(o["speed"] * (u["speed"] if u else 1), 0.3, 3.0)
+    scale = clamp(o["scale"] * (u["scale"] if u else 1), 0.4, 2.5)
+    tint = (u["colour"] if u and u["colour"] else None) or colour_of(o["colour"])
+    wind = (u["wind"] if u and u["wind"] else "") or o["wind"]
     label = " · ".join(STYLES[k] for k in layers[:2])
-    seed = int(key_of(path)[:8], 16) % (2 ** 31)
+    # another take: the same settings, new places (REMAKE gives a fresh one, not the same again)
+    seed = (int(key_of(path)[:8], 16) + 7919 * o["variant"]) % (2 ** 31)
     say({"event": "start", "source": path, "style": layers[0], "layers": layers, "label": label, "why": why,
-         "frames": n, "size": [W, H], "fps": fps, "seconds": T})
+         "frames": n, "size": [W, H], "fps": fps, "seconds": T, "understood": u["said"] if u else []})
     t0 = time.monotonic()
-    ctx = build(path, an, layers, W, H, T, fps, o["intensity"], o["amount"], o["speed"], seed)
+    ctx = build(path, an, layers, W, H, T, fps, inten, amount, speed, seed, tint, scale, wind)
 
     key = key_of(path)
     # a preview is overwritten by the next one; a live wallpaper keeps its own folder
     out_dir = os.path.join(DATA, key) if not o["preview"] else os.path.join(DATA, "previews", key)
     os.makedirs(out_dir, exist_ok=True)
-    video_tmp = os.path.join(out_dir, f"fx.{os.getpid()}.mp4")
-    video = os.path.join(out_dir, "fx.mp4")
+    made = int(time.time() * 1000)
+    # every version under its own name: the wallpaper sees a new file and swaps to it (the same name kept
+    # the old loop playing — the player holds the file it opened)
+    stem = f"fx-{made}"
+    video_tmp = os.path.join(out_dir, f"{stem}.{os.getpid()}.part.mp4")
+    video = os.path.join(out_dir, f"{stem}.mp4")
     if not o["preview"]:
         rc = encode(ctx, n, fps, video_tmp, o, path)
         if rc:
             return rc
+        keep_previous(out_dir)
         os.replace(video_tmp, video)
     # the picture with its effect, small: the GIF and the poster (the wheel's thumbnail)
     gw = o["gifWidth"] if not o["preview"] else 640
-    small = build(path, an, layers, gw, int(round(gw * H / W)) // 2 * 2, T, 20, o["intensity"], o["amount"], o["speed"], seed)
+    small = build(path, an, layers, gw, int(round(gw * H / W)) // 2 * 2, T, 20, inten, amount, speed, seed, tint, scale, wind)
     gif = make_gif(small, out_dir, path, o, T) if (o["gif"] or o["preview"]) else ""
     poster = os.path.join(out_dir, "poster.jpg")
     Image.fromarray(composite_at(0, small)).save(poster, quality=88)
     took = round(time.monotonic() - t0, 1)
     meta = {"source": path, "srcMtime": os.path.getmtime(path), "srcSize": os.path.getsize(path), "dir": out_dir,
             "video": video if not o["preview"] else "", "gif": gif, "poster": poster, "style": layers[0], "layers": layers,
-            "label": label, "why": why, "w": W, "h": H, "fps": fps, "seconds": T, "made": int(time.time() * 1000),
-            "took": took, "params": {k: o[k] for k in ("style", "intensity", "amount", "speed")}, "version": VERSION,
-            "packed": True, "bytes": os.path.getsize(video) if not o["preview"] else 0}
+            "label": label, "why": why, "w": W, "h": H, "fps": fps, "seconds": T, "made": made,
+            "took": took, "params": {k: o[k] for k in ("style", "intensity", "amount", "speed", "scale", "colour", "wind")},
+            "prompt": o["prompt"], "understood": u["said"] if u else [], "variant": o["variant"], "version": VERSION,
+            "packed": True, "bytes": os.path.getsize(video) if not o["preview"] else 0,
+            "previous": os.path.exists(os.path.join(out_dir, "prev", "meta.json"))}
     if not o["preview"]:
         json.dump(meta, open(os.path.join(out_dir, "meta.json"), "w"), ensure_ascii=False, indent=1)
         idx = read_index()
         idx["walls"][path] = meta
         write_index(idx)
         # the old kind of live wallpaper (the whole picture in the video) is not needed any more
-        for old in ("live.mp4",):
+        for old in ("live.mp4", "fx.mp4"):
             try:
                 os.remove(os.path.join(out_dir, old))
             except OSError:
@@ -1136,6 +1319,70 @@ def encode(ctx, n, fps, video_tmp, o, path):
         SLOTS = None
 
 
+def keep_previous(out_dir):
+    """the version that is there goes to prev/ (one step back is always possible); older ones go"""
+    meta_path = os.path.join(out_dir, "meta.json")
+    if not os.path.exists(meta_path):
+        return
+    prev = os.path.join(out_dir, "prev")
+    shutil.rmtree(prev, ignore_errors=True)
+    os.makedirs(prev, exist_ok=True)
+    try:
+        meta = json.load(open(meta_path))
+    except (OSError, ValueError):
+        return
+    for f in [meta.get("video", ""), meta.get("gif", ""), meta.get("poster", ""), meta_path]:
+        if f and os.path.exists(f) and os.path.dirname(f) == out_dir:
+            os.replace(f, os.path.join(prev, os.path.basename(f)))
+    # what the moved meta points at now
+    m2 = os.path.join(prev, "meta.json")
+    try:
+        meta = json.load(open(m2))
+        for k in ("video", "gif", "poster"):
+            if meta.get(k):
+                meta[k] = os.path.join(prev, os.path.basename(meta[k]))
+        meta["dir"] = prev
+        json.dump(meta, open(m2, "w"), ensure_ascii=False, indent=1)
+    except (OSError, ValueError):
+        pass
+
+
+def restore(path, o):
+    """swap the live version with the one before it (a second restore swaps back)"""
+    path = os.path.realpath(os.path.expanduser(path))
+    out_dir = os.path.join(DATA, key_of(path))
+    prev = os.path.join(out_dir, "prev")
+    if not os.path.exists(os.path.join(prev, "meta.json")):
+        say({"event": "error", "source": path, "error": "there is no earlier version of this one"})
+        return 2
+    swap = os.path.join(out_dir, "swap")
+    shutil.rmtree(swap, ignore_errors=True)
+    os.replace(prev, swap)
+    keep_previous(out_dir)                 # the current one becomes the previous one
+    meta = json.load(open(os.path.join(swap, "meta.json")))
+    for k in ("video", "gif", "poster"):
+        # the files are in swap/ now, whatever folder the meta still names
+        f = os.path.join(swap, os.path.basename(meta[k])) if meta.get(k) else ""
+        if f and os.path.exists(f):
+            dst = os.path.join(out_dir, os.path.basename(f))
+            os.replace(f, dst)
+            meta[k] = dst
+    meta["dir"] = out_dir
+    meta["previous"] = True
+    json.dump(meta, open(os.path.join(out_dir, "meta.json"), "w"), ensure_ascii=False, indent=1)
+    shutil.rmtree(swap, ignore_errors=True)
+    idx = read_index()
+    idx["walls"][path] = meta
+    write_index(idx)
+    if o.get("gifDir") and meta.get("gif"):
+        try:
+            shutil.copyfile(meta["gif"], os.path.join(o["gifDir"], os.path.splitext(os.path.basename(path))[0] + " · live.gif"))
+        except OSError:
+            pass
+    say(dict(meta, event="done", restored=True))
+    return 0
+
+
 def make_gif(small, out_dir, source, o, T):
     """the picture with its effect as a GIF: 20 fps, one palette from the whole loop, only what moves re-drawn.
     Ordered (Bayer) dither: it stays put where the picture stays put, so only the moving parts are stored again —
@@ -1186,7 +1433,8 @@ def fresh(meta, o):
 
 def options(argv):
     o = {"style": "auto", "intensity": 1.0, "amount": 1.0, "speed": 1.0, "seconds": 10.0, "fps": 30, "size": None,
-         "gif": True, "gifWidth": 960, "gifDir": "", "force": False, "json": False, "preview": False}
+         "gif": True, "gifWidth": 960, "gifDir": "", "force": False, "json": False, "preview": False,
+         "prompt": "", "colour": "picture", "scale": 1.0, "wind": "auto", "variant": 0}
     rest = []
     i = 0
     while i < len(argv):
@@ -1205,6 +1453,21 @@ def options(argv):
         elif a == "--size" and "x" in val:
             w, h = val.lower().split("x")
             o["size"] = (int(w), int(h))
+            i += 1
+        elif a == "--prompt":
+            o["prompt"] = val
+            i += 1
+        elif a in ("--colour", "--color") and val:
+            o["colour"] = val
+            i += 1
+        elif a == "--scale" and val:
+            o["scale"] = clamp(float(val), 0.4, 2.5)
+            i += 1
+        elif a == "--wind" and val:
+            o["wind"] = val if val in ("auto", "left", "right", "none") else "auto"
+            i += 1
+        elif a == "--variant" and val:
+            o["variant"] = max(0, int(float(val)))
             i += 1
         elif a == "--gif-width" and val:
             o["gifWidth"] = int(clamp(int(val), 320, 1920))
@@ -1260,6 +1523,18 @@ def main(argv):
         an.update(layers=layers, label=" · ".join(STYLES[k] for k in layers[:2]), why=why)
         print(json.dumps(an, ensure_ascii=False, indent=None if o["json"] else 1))
         return 0
+    if cmd == "understand":
+        text = " ".join(rest) or o["prompt"]
+        u = understand(text)
+        u["colour"] = list(u["colour"]) if u["colour"] else None
+        print(json.dumps(u, ensure_ascii=False))
+        return 0
+    if cmd == "restore":
+        if not rest:
+            print("velvet-livewall restore FILE")
+            return 2
+        with Lock():
+            return restore(rest[0], o)
     if cmd == "list":
         idx = read_index()["walls"]
         if o["json"]:

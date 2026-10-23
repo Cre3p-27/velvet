@@ -310,10 +310,12 @@ FloatingWindow {
     property bool carouselOpen: false
     property bool helpOpen: false
     property bool facePickerOpen: false
+    // a row you write in (kind "text"): its editor is open
+    property var textEditItem: null
     // The face photo gets a cache-busting stamp each time the picker
     // applies one, so the title screen's avatar swaps instantly.
     property int faceStamp: 0
-    readonly property bool overlayOpen: carouselOpen || helpOpen || facePickerOpen
+    readonly property bool overlayOpen: carouselOpen || helpOpen || facePickerOpen || textEditItem !== null
 
     // A window has the bar outside it: nothing to keep clear inside.
     readonly property real insetL: 0
@@ -787,6 +789,10 @@ FloatingWindow {
             break;
         case "carousel":
             root.carouselOpen = true;
+            Sfx.open();
+            break;
+        case "text":
+            root.textEditItem = it;
             Sfx.open();
             break;
         case "slider":
@@ -2113,6 +2119,23 @@ FloatingWindow {
                     root.refocus();
                 }
                 onFaceApplied: root.faceStamp++
+            }
+        }
+
+        // ------------------------------------------------------ text editor
+        Loader {
+            id: textEditor
+
+            active: root.textEditItem !== null
+            anchors.fill: parent
+            z: 25
+
+            sourceComponent: TextEditOverlay {
+                item: root.textEditItem
+                onClosed: {
+                    root.textEditItem = null;
+                    root.refocus();
+                }
             }
         }
 

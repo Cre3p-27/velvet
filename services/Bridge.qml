@@ -27,7 +27,7 @@ Singleton {
 
     // Live rows read through `revision`, so anything that can change behind
     // the settings menu's back has to bump it.
-    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine]
+    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine, LiveWalls.thisMoves, LiveWalls.previewLine]
 
     onLiveWatchChanged: root.revision++
 
@@ -72,6 +72,10 @@ Singleton {
                 return LiveWalls.status;
             case "liveThis":
                 return LiveWalls.thisLine;
+            case "liveThisMoves":
+                return LiveWalls.thisMoves;
+            case "livePromptRead":
+                return LiveWalls.previewShort;
             case "soundVerdict":
                 return SoundCheck.verdict;
             case "soundPlays":
@@ -95,9 +99,17 @@ Singleton {
         }
         if (item.valueKey)
             return Config.get(item.valueKey);
+        // a text row shows its words — or what empty means
+        if (item.kind === "text")
+            return String(Config.get(item.key) ?? "").trim() || (item.empty ?? "—");
         if (item.key)
             return Config.get(item.key);
         return 0;
+    }
+
+    // the value itself, for an editor (get() dresses a text row up for the list)
+    function raw(item: var): var {
+        return item.key ? Config.get(item.key) : root.get(item);
     }
 
     function set(item: var, value: var): void {
@@ -122,6 +134,9 @@ Singleton {
                 return;
             case "keepMusicQuality":
                 SoundCheck.setKeepQuality(!!value);
+                return;
+            case "liveThisMoves":
+                LiveWalls.setThisMoves(!!value);
                 return;
             }
             return;
@@ -296,6 +311,12 @@ Singleton {
             break;
         case "liveRemakeAll":
             LiveWalls.makeFavourites(true);
+            break;
+        case "liveMakePrompt":
+            LiveWalls.makeWithPrompt();
+            break;
+        case "liveUndo":
+            LiveWalls.undo();
             break;
         case "liveStop":
             LiveWalls.stop();
