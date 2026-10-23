@@ -322,6 +322,8 @@ ShellRoot {
         Scenes.loaded,
         // The login song: named here so the singleton exists and the login start runs.
         LoginSong.ready,
+        // SOUND PROBLEMS: the Bluetooth drop watcher (reconnect) runs all session.
+        SoundCheck.known,
         Term.probed,
         Lyrics.ready,
         Looks.ready,

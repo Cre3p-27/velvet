@@ -27,7 +27,7 @@ Singleton {
 
     // Live rows read through `revision`, so anything that can change behind
     // the settings menu's back has to bump it.
-    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain]
+    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts]
 
     onLiveWatchChanged: root.revision++
 
@@ -66,6 +66,18 @@ Singleton {
                 return Term.status;
             case "dispatchStatus":
                 return Hypr.status;
+            case "screenStatus":
+                return Monitors.status;
+            case "soundVerdict":
+                return SoundCheck.verdict;
+            case "soundPlays":
+                return SoundCheck.plays;
+            case "soundDrops":
+                return SoundCheck.dropLine;
+            case "soundWifi":
+                return SoundCheck.wifiLine;
+            case "keepMusicQuality":
+                return SoundCheck.keepQuality;
             case "lyricsStatus":
                 return Lyrics.status === "SYNCED" ? `${Lyrics.lines.length} TIMED LINES` : Lyrics.status;
             case "looksCount":
@@ -103,6 +115,9 @@ Singleton {
                 return;
             case "brightness":
                 Brightness.setBrightness(value);
+                return;
+            case "keepMusicQuality":
+                SoundCheck.setKeepQuality(!!value);
                 return;
             }
             return;
@@ -262,6 +277,12 @@ Singleton {
             break;
         case "takeLoginSong":
             LoginSong.takeNow();
+            break;
+        case "screensForget":
+            Monitors.forget();
+            break;
+        case "soundTest":
+            SoundCheck.test();
             break;
         case "playLoginSong":
             LoginSong.playNow();

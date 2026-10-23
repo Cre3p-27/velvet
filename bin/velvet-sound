@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+#  VELVET  ·  bin/velvet-sound
+#  What plays where, and what makes the sound drop, hop or turn thin — for
+#  Settings → AUDIO → SOUND PROBLEMS (services/SoundCheck.qml), `velvet sound`
+#  and Velly. Standard library only.
+#
+#    velvet-sound                    JSON: outputs, Bluetooth devices, Wi-Fi, findings
+#    velvet-sound test [OUTPUT]      a short chime on an output (the default one)
+#    velvet-sound keep-quality on|off
+#                                    on: a Bluetooth headset stays in music mode when an
+#                                    app opens a microphone (WirePlumber's autoswitch off)
+#    velvet-sound bt best|stable|safest [MAC]
+#                                    the Bluetooth codec of the connected device(s)
+#    velvet-sound --selftest
+#
+#  What it found on the machine it was written for (2026-10-23): a JBL speaker
+#  and a headset BOTH dropped ("Failure in Bluetooth audio transport") five
+#  times in a day — two different devices failing the same way is the PC's
+#  Bluetooth link, not the speakers. The card is a MediaTek MT7922: Wi-Fi and
+#  Bluetooth share one antenna, and the Wi-Fi ran on 2.4 GHz, the band
+#  Bluetooth uses. The headset ran aptX HD, the codec with the highest
+#  bitrate — the first to break up when the air is busy.
+import glob
+import json
+import math
+import os
+import re
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import wave
+
+# codec → PipeWire profile suffix, best sound first
+BEST = ["ldac", "aptx_hd", "aptx", "aac", "sbc_xq", "sbc"]
+# a lower bitrate rides out a busy 2.4 GHz band: aptX 352 kbit/s, AAC ~256, SBC ~328
+STABLE = ["aptx", "aac", "sbc"]
+SAFEST = ["sbc"]
+
+
+def run(cmd, timeout=6):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+
+
+def pactl_json(*what):
+    rc, out = run(["pactl", "-f", "json", "list", *what])
+    try:
+        return json.loads(out) if rc == 0 and out.strip() else []
+    except ValueError:
+        return []
+
+
+def kind_of(name: str) -> str:
+    if name.startswith("bluez"):
+        return "bluetooth"
+    if "hdmi" in name:
+        return "hdmi"
+    if ".usb-" in name:
+        return "usb"
+    return "analog"
+
+
+def mac_of(name: str) -> str:
+    m = re.search(r"([0-9A-F]{2}(?:_[0-9A-F]{2}){5})", name, re.I)
+    return m.group(1).replace("_", ":").upper() if m else ""
+
+
+def outputs():
+    rc, d = run(["pactl", "get-default-sink"], timeout=4)
+    default = d.strip() if rc == 0 else ""
+    out = []
+    for s in pactl_json("sinks"):
+        p = s.get("properties", {}) or {}
+        vol = s.get("volume", {}) or {}
+        first = next(iter(vol.values()), {}) if isinstance(vol, dict) and vol else {}
+        try:
+            v = int(str(first.get("value_percent", "0")).rstrip("%"))
+        except ValueError:
+            v = 0
+        out.append({
+            "name": s.get("name", ""),
+            "description": p.get("device.description") or s.get("description") or s.get("name", ""),
+            "kind": kind_of(s.get("name", "")),
+            "codec": p.get("api.bluez5.codec") or None,
+            "mac": mac_of(s.get("name", "")) if s.get("name", "").startswith("bluez") else "",
+            "volume": v,
+            "muted": bool(s.get("mute")),
+            "default": s.get("name") == default,
+        })
+    return default, out
+
+
+def bt_names():
+    """MAC → name of every paired device (bluetoothctl), {} without bluez"""
+    rc, out = run(["bluetoothctl", "devices"], timeout=4)
+    names = {}
+    for line in out.splitlines():
+        m = re.match(r"Device\s+([0-9A-F:]{17})\s+(.*)", line.strip(), re.I)
+        if m:
+            names[m.group(1).upper()] = m.group(2).strip()
+    return names
+
+
+def drops(hours=24):
+    """MAC → [unix times] of 'Failure in Bluetooth audio transport' (WirePlumber, the user's journal)"""
+    rc, out = run(["journalctl", "--user", "--no-pager", "-q", "-o", "short-unix", "--since", f"-{hours}h",
+                   "-g", "Failure in Bluetooth audio transport"], timeout=10)
+    found = {}
+    for line in out.splitlines():
+        m = re.match(r"([\d.]+)\s.*dev_([0-9A-F_]{17})", line, re.I)
+        if m:
+            found.setdefault(m.group(2).replace("_", ":").upper(), []).append(float(m.group(1)))
+    return found
+
+
+def wifi():
+    info = {"device": "", "freq": 0, "band": "", "sameOn5": False, "fiveNearby": False}
+    for w in glob.glob("/sys/class/net/*/wireless"):
+        dev = os.path.basename(os.path.dirname(w))
+        rc, out = run(["iw", "dev", dev, "link"], timeout=3)
+        m = re.search(r"freq:\s*([\d.]+)", out)
+        s = re.search(r"SSID:\s*(.+)", out)
+        if not m:
+            continue
+        f = float(m.group(1))
+        info.update(device=dev, freq=int(f), band="2.4" if f < 3000 else ("5" if f < 5925 else "6"))
+        ssid = s.group(1).strip() if s else ""
+        # the same network on 5 GHz (dual-band routers often have one name for both)
+        rc, out = run(["nmcli", "-t", "-f", "SSID,FREQ", "device", "wifi", "list", "--rescan", "no"], timeout=4)
+        for line in out.splitlines():
+            name, _, freq = line.rpartition(":")
+            try:
+                mhz = int(freq.split()[0])
+            except (ValueError, IndexError):
+                continue
+            if mhz >= 4900:
+                info["fiveNearby"] = True
+                if ssid and name.replace("\\:", ":") == ssid:
+                    info["sameOn5"] = True
+        break
+    return info
+
+
+def chip():
+    try:
+        dev = os.path.realpath("/sys/class/bluetooth/hci0/device")
+        vid = open(os.path.join(dev, "..", "idVendor")).read().strip()
+        return {"0e8d": "MediaTek", "8087": "Intel", "0bda": "Realtek", "0a5c": "Broadcom", "13d3": "MediaTek"}.get(vid, vid)
+    except OSError:
+        return ""
+
+
+def keep_quality():
+    """True when a Bluetooth headset stays in music mode (WirePlumber's autoswitch is off)"""
+    rc, out = run(["wpctl", "settings", "bluetooth.autoswitch-to-headset-profile"], timeout=4)
+    m = re.search(r"Value:\s*(\w+)", out)
+    return bool(m) and m.group(1).lower() == "false"
+
+
+def other_mic():
+    """a microphone that is not a Bluetooth headset's (then the headset's own is never needed)"""
+    for s in pactl_json("sources"):
+        n = s.get("name", "")
+        if not n.endswith(".monitor") and not n.startswith("bluez"):
+            return True
+    return False
+
+
+def bt_cards():
+    """the connected Bluetooth cards: [{card, mac, active, profiles: {codec: available}}]"""
+    out = []
+    for c in pactl_json("cards"):
+        name = c.get("name", "")
+        if not name.startswith("bluez_card."):
+            continue
+        prof = {}
+        for pname, p in (c.get("profiles") or {}).items():
+            m = re.match(r"a2dp-sink-(\w+)$", pname)
+            if m and str(p.get("available", "yes")).lower() not in ("no", "false"):
+                prof[m.group(1)] = True
+        out.append({"card": name, "mac": mac_of(name), "active": c.get("active_profile", ""), "profiles": prof})
+    return out
+
+
+def pick(profiles: dict, order: list) -> str:
+    for codec in order:
+        if profiles.get(codec):
+            return codec
+    return ""
+
+
+def findings(state: dict) -> list:
+    """[{level, text, fix}] — loudest first"""
+    out = []
+    names = state["names"]
+    outs = state["outputs"]
+    if state["default"] and state["default"] not in {o["name"] for o in outs}:
+        out.append({"level": "bad", "text": f"the default output “{state['default']}” is gone",
+                    "fix": "pick one in the bar's sound menu or Settings → AUDIO"})
+    d = state["drops"]
+    total = sum(len(v) for v in d.values())
+    if total:
+        who = [names.get(mac, mac) for mac in sorted(d, key=lambda m: -len(d[m]))]
+        both = len(d) >= 2
+        out.append({"level": "warn",
+                    "text": f"Bluetooth sound dropped {total}× in 24 h ({', '.join(f'{names.get(m, m)} {len(v)}×' for m, v in d.items())})"
+                    + (" — two devices failing the same way is the PC's Bluetooth link, not the speakers" if both else ""),
+                    "fix": "the Wi-Fi line below first; RECONNECT AFTER A DROP brings it back by itself" if state["wifi"]["band"] == "2.4"
+                    else "keep the device in sight of the PC, away from USB 3 ports and cables; RECONNECT AFTER A DROP brings it back by itself"})
+        state["who"] = who
+    w = state["wifi"]
+    bt_used = total or any(o["kind"] == "bluetooth" for o in outs)
+    if w["band"] == "2.4" and bt_used:
+        shared = state["chip"] == "MediaTek"
+        out.append({"level": "warn",
+                    "text": f"Wi-Fi is on 2.4 GHz ({w['freq']} MHz), the band Bluetooth uses"
+                    + (" — and this MediaTek card runs both on ONE antenna" if shared else ""),
+                    "fix": ("join the same network on 5 GHz (QUICK → WI-FI shows each network's band)" if w["sameOn5"]
+                            else "use your router's 5 GHz network, or a network cable — this network only answers on 2.4 GHz here")})
+    for o in outs:
+        if o["kind"] == "bluetooth" and o["codec"] in ("aptx_hd", "ldac"):
+            out.append({"level": "info",
+                        "text": f"{o['description']} plays {o['codec'].replace('_', ' ').upper()} — the highest bitrate, the first to break up",
+                        "fix": "AUDIO → SOUND PROBLEMS → BLUETOOTH SOUND → STABLE"})
+    if not state["keepQuality"] and state["otherMic"] and bt_used:
+        out.append({"level": "info",
+                    "text": "an app that opens a microphone can switch a Bluetooth headset into its thin, mono call mode",
+                    "fix": "you have another microphone — KEEP MUSIC QUALITY keeps the headset in music mode"})
+    return out
+
+
+def state():
+    default, outs = outputs()
+    s = {"default": default, "outputs": outs, "names": bt_names(), "drops": drops(), "wifi": wifi(), "chip": chip(),
+         "keepQuality": keep_quality(), "otherMic": other_mic(), "cards": bt_cards()}
+    s["findings"] = findings(s)
+    s["dropsTotal"] = sum(len(v) for v in s["drops"].values())
+    last = max((t for v in s["drops"].values() for t in v), default=0)
+    s["lastDrop"] = time.strftime("%H:%M", time.localtime(last)) if last else ""
+    return s
+
+
+# ─────────────────────────────────────────────────────────────── actions
+def chime(path: str):
+    """three soft rising notes, 0.95 s, stereo 48 kHz, peak −11 dBFS"""
+    rate = 48000
+    buf = [0.0] * int(rate * 0.95)
+    for freq, start in ((660.0, 0.0), (880.0, 0.18), (1320.0, 0.36)):
+        s0 = int(start * rate)
+        for i in range(int(rate * 0.5)):
+            if s0 + i >= len(buf):
+                break
+            t = i / rate
+            env = min(1.0, t / 0.008) * math.exp(-t * 6.5)
+            buf[s0 + i] += 0.28 * env * math.sin(2 * math.pi * freq * t)
+    with wave.open(path, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<hh", v, v) for v in (int(max(-1.0, min(1.0, x)) * 32767) for x in buf)))
+
+
+def test(want: str) -> int:
+    default, outs = outputs()
+    target = default
+    if want:
+        hits = [o["name"] for o in outs if want.lower() in (o["name"] + " " + o["description"]).lower()]
+        if not hits:
+            print(json.dumps({"ok": False, "error": f"no output matches {want}"}))
+            return 2
+        target = hits[0]
+    fd, path = tempfile.mkstemp(prefix="velvet-chime-", suffix=".wav")
+    os.close(fd)
+    try:
+        chime(path)
+        if subprocess.run(["which", "pw-play"], capture_output=True).returncode == 0:
+            rc, _ = run(["pw-play", "--target", target, path], timeout=10)
+        else:
+            rc, _ = run(["paplay", "-d", target, path], timeout=10)
+    finally:
+        os.remove(path)
+    o = next((x for x in outs if x["name"] == target), {})
+    print(json.dumps({"ok": rc == 0, "output": target, "description": o.get("description", target), "kind": o.get("kind", "")}))
+    return 0 if rc == 0 else 1
+
+
+def set_keep(on: bool) -> int:
+    rc, out = run(["wpctl", "settings", "--save", "bluetooth.autoswitch-to-headset-profile", "false" if on else "true"])
+    ok = rc == 0 and keep_quality() == on
+    print(json.dumps({"ok": ok, "keepQuality": keep_quality()}))
+    return 0 if ok else 1
+
+
+def set_bt(level: str, mac: str) -> int:
+    order = {"best": BEST, "stable": STABLE, "safest": SAFEST}.get(level)
+    if not order:
+        print(json.dumps({"ok": False, "error": "best | stable | safest"}))
+        return 2
+    done = []
+    for c in bt_cards():
+        if mac and c["mac"] != mac.upper():
+            continue
+        codec = pick(c["profiles"], order)
+        if not codec:
+            continue
+        want = f"a2dp-sink-{codec}"
+        if c["active"] != want:
+            rc, _ = run(["pactl", "set-card-profile", c["card"], want])
+            if rc != 0:
+                continue
+        done.append({"mac": c["mac"], "codec": codec, "changed": c["active"] != want})
+    print(json.dumps({"ok": True, "level": level, "devices": done}))
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── selftest
+def selftest() -> int:
+    problems = []
+    if mac_of("bluez_output.00_22_BB_71_2B_21.1") != "00:22:BB:71:2B:21":
+        problems.append("mac from a sink name")
+    if pick({"aptx_hd": True, "aptx": True, "sbc": True}, STABLE) != "aptx":
+        problems.append("STABLE takes aptX before SBC")
+    if pick({"aptx_hd": True, "sbc": True, "sbc_xq": True}, STABLE) != "sbc":
+        problems.append("STABLE never takes SBC-XQ (552 kbit/s)")
+    if pick({"sbc": True}, BEST) != "sbc":
+        problems.append("a speaker with SBC only")
+    base = {"default": "bluez_output.00_22_BB_71_2B_21.1", "names": {"00:22:BB:71:2B:21": "Amiron wireless", "2C:FD:B4:A5:38:60": "JBL"},
+            "outputs": [{"name": "bluez_output.00_22_BB_71_2B_21.1", "description": "Amiron wireless", "kind": "bluetooth", "codec": "aptx_hd"}],
+            "drops": {"00:22:BB:71:2B:21": [1.0, 2.0, 3.0], "2C:FD:B4:A5:38:60": [4.0]},
+            "wifi": {"band": "2.4", "freq": 2437, "sameOn5": False, "fiveNearby": True}, "chip": "MediaTek",
+            "keepQuality": False, "otherMic": True}
+    f = findings(dict(base))
+    texts = " | ".join(x["text"] for x in f)
+    if "not the speakers" not in texts:
+        problems.append("two devices dropping → the PC's link")
+    if "ONE antenna" not in texts:
+        problems.append("MediaTek on 2.4 GHz")
+    if "APTX HD" not in texts:
+        problems.append("aptX HD named")
+    if not any("router's 5 GHz" in x["fix"] for x in f):
+        problems.append("no 5 GHz for this network → the router's or a cable")
+    quiet = dict(base, default="alsa_output.x", drops={}, wifi={"band": "5", "freq": 5200, "sameOn5": True, "fiveNearby": True},
+                 outputs=[{"name": "alsa_output.x", "description": "x", "kind": "analog", "codec": None}], keepQuality=True)
+    if findings(quiet):
+        problems.append(f"a calm machine has no findings: {findings(quiet)}")
+    path = os.path.join(tempfile.gettempdir(), f"velvet-chime-test-{os.getpid()}.wav")
+    chime(path)
+    with wave.open(path) as w:
+        ok = w.getnframes() == int(48000 * 0.95) and w.getnchannels() == 2
+    os.remove(path)
+    if not ok:
+        problems.append("chime file")
+    if problems:
+        print("velvet-sound selftest: FAILED")
+        for p in problems:
+            print("  ·", p)
+        return 1
+    print("velvet-sound selftest: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    a = sys.argv[1:]
+    if a[:1] == ["--selftest"]:
+        sys.exit(selftest())
+    if a[:1] == ["test"]:
+        sys.exit(test(a[1] if len(a) > 1 else ""))
+    if a[:1] == ["keep-quality"] and len(a) > 1 and a[1] in ("on", "off"):
+        sys.exit(set_keep(a[1] == "on"))
+    if a[:1] == ["bt"] and len(a) > 1:
+        sys.exit(set_bt(a[1], a[2] if len(a) > 2 else ""))
+    if a and a[0] not in ("--json",):
+        print(__doc__ or "velvet-sound [test|keep-quality on|off|bt best|stable|safest] — see the head of this file")
+        sys.exit(2)
+    print(json.dumps(state(), ensure_ascii=False))

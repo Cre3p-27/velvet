@@ -10,13 +10,28 @@
 #  header often says 0 x 0 cm, which is why Hyprland reports 0 mm.
 #
 #    velvet-monitors            JSON for every screen
+#    velvet-monitors --watch    one JSON line whenever a screen mode does not take
 #    velvet-monitors --selftest the picking rules on made-up screens
+#
+#  --watch reads Hyprland's own log as it grows. A mode the screen lists is not
+#  always one the port and the cable can carry (4K at 240 Hz over HDMI needs the
+#  full 48 Gbit/s link — the processor's graphics list it and fail it every time,
+#  a long or older cable fails it every few plug-ins). Measured on the user's
+#  4K 240 Hz screen, two ways it goes wrong after "Modesetting <output> with <mode>":
+#    · the driver REFUSES the mode change itself ("failed to commit … ALLOW_MODESET",
+#      once with max_bpc and once without), then every frame — "no signal";
+#    · the screen DROPS the cable a moment later (Connector … disconnected) and
+#      comes back, sometimes without its EDID (Hyprland then offers 1024×768).
+#  Either is a failure of that mode on that port. One or two refused page flips
+#  right after a mode change (a flip still pending) are normal and ignored.
 import glob
 import json
 import math
+import os
 import re
 import subprocess
 import sys
+import time
 
 SCALES = (1.0, 1.25, 1.5, 1.6, 1.75, 2.0, 2.5, 3.0)
 
@@ -122,6 +137,10 @@ def screens() -> list:
             seen.add(key)
             modes.append(mode_str(*p))
         edid = edid_of(name)
+        # no EDID (an empty file — the screen did not answer, often for a moment
+        # after it dropped the link): Hyprland falls back to 1024x768 and nothing
+        # read from it says what the screen really is
+        told = bool(edid)
         mm = edid.get("mm")
         if not mm and m.get("physicalWidth") and m.get("physicalHeight"):
             mm = [int(m["physicalWidth"]), int(m["physicalHeight"])]
@@ -137,6 +156,7 @@ def screens() -> list:
                         "x": int(m.get("x") or 0), "y": int(m.get("y") or 0)},
             "modes": modes,
             "native": edid.get("native"),
+            "edid": told,
             "mm": mm,
             "best": {"mode": mode_str(*best), "w": best[0], "h": best[1], "rr": round(best[2], 2),
                      "scale": best_scale(best[0], best[1], mm)},
@@ -162,6 +182,7 @@ def selftest() -> int:
         got = best_scale(w, h, mm)
         if got != want:
             problems.append(f"scale {w}x{h} {mm}: {got} (want {want})")
+    selftest_watch(problems)
     if problems:
         print("velvet-monitors selftest: FAILED")
         for p in problems:
@@ -171,7 +192,155 @@ def selftest() -> int:
     return 0
 
 
+# ─────────────────────────────────────────────────────────────── --watch
+MODESET = re.compile(r"Modesetting (\S+) with (\d+)x(\d+)@([\d.]+)Hz")
+REFUSED = re.compile(r"failed to commit|atomic commit failed")
+REFUSED_MODE = re.compile(r"failed to commit.*ALLOW_MODESET")
+DROPPED = re.compile(r"Connector (\S+) disconnected")
+FAIL_AFTER = 8          # refused page flips …
+FAIL_WITHIN = 4.0       # … within this many seconds of a mode change
+DROP_WITHIN = 6.0       # the screen let go of the cable this soon after a mode change
+
+
+class Watch:
+    """turns log lines into failure events; time is passed in (testable)"""
+
+    def __init__(self):
+        self.last = None        # (output, mode, t)
+        self.modesets = 0       # refused mode changes since
+        self.flips = 0          # refused page flips since
+        self.told = False
+
+    def fail(self, why: str):
+        self.told = True
+        out, mode, _ = self.last
+        return {"event": "fail", "output": out, "mode": mode, "why": why, "refused": self.modesets + self.flips}
+
+    def line(self, text: str, t: float):
+        m = MODESET.search(text)
+        if m:
+            self.last = (m.group(1), mode_str(int(m.group(2)), int(m.group(3)), float(m.group(4))), t)
+            self.modesets = self.flips = 0
+            self.told = False
+            return None
+        if not self.last or self.told:
+            return None
+        out, _, at = self.last
+        d = DROPPED.search(text)
+        if d:
+            if d.group(1) != out:
+                return None
+            if t - at <= DROP_WITHIN:
+                return self.fail("dropped")
+            self.last = None    # unplugged long after: not this mode's doing
+            return None
+        if REFUSED.search(text):
+            if t - at > FAIL_WITHIN:
+                return None
+            if REFUSED_MODE.search(text):
+                self.modesets += 1
+            else:
+                self.flips += 1
+            # the driver said no to the mode itself (twice: with and without
+            # max_bpc), or once and the frames after it bounce, or a flood of
+            # refused frames
+            if self.modesets >= 2 or (self.modesets and self.flips >= 4) or self.flips >= FAIL_AFTER:
+                return self.fail("refused")
+        return None
+
+
+def log_path():
+    rt = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    path = os.path.join(rt, "hypr", sig, "hyprland.log") if sig else ""
+    if path and os.path.exists(path):
+        return path
+    logs = sorted(glob.glob(os.path.join(rt, "hypr", "*", "hyprland.log")), key=os.path.getmtime)
+    return logs[-1] if logs else ""
+
+
+def watch() -> int:
+    path = log_path()
+    if not path:
+        print(json.dumps({"event": "nolog"}), flush=True)
+        return 1
+    w = Watch()
+    f = open(path, "r", errors="replace")
+    f.seek(0, os.SEEK_END)
+    while True:
+        line = f.readline()
+        if not line:
+            # Hyprland restarted (a new log) or rotated it: follow the new one
+            try:
+                if os.path.getsize(path) < f.tell() or log_path() != path:
+                    f.close()
+                    path = log_path() or path
+                    f = open(path, "r", errors="replace")
+            except OSError:
+                pass
+            time.sleep(0.25)
+            continue
+        ev = w.line(line, time.monotonic())
+        if ev:
+            print(json.dumps(ev), flush=True)
+
+
+def selftest_watch(problems: list):
+    def run(lines):
+        w = Watch()
+        return [e for e in (w.line(text, t) for t, text in lines) if e]
+
+    flood = [(0.0, "DEBUG from aquamarine ]: drm: Modesetting HDMI-A-2 with 3840x2160@60.00Hz"),
+             (0.1, "ERR from aquamarine ]: drm: Cannot commit when a page-flip is awaiting"),
+             (0.2, "ERR from aquamarine ]: drm: Cannot commit when a page-flip is awaiting"),
+             (5.0, "DEBUG from aquamarine ]: drm: Modesetting HDMI-A-2 with 3840x2160@240.02Hz")]
+    flood += [(5.1 + i * 0.05, "ERR from aquamarine ]: atomic drm request: failed to commit: Invalid argument, flags: ATOMIC_NONBLOCK") for i in range(12)]
+    ev = run(flood)
+    if len(ev) != 1 or ev[0]["output"] != "HDMI-A-2" or ev[0]["mode"] != "3840x2160@240.02":
+        problems.append(f"watch: one failure for a flood of refused frames, got {ev}")
+
+    # the real sequence (Hyprland log, 2026-10-22): the mode change itself refused twice, then frames
+    refused = [(0.0, "DEBUG from aquamarine ]: drm: Modesetting HDMI-A-1 with 3840x2160@240.02Hz"),
+               (0.05, "ERR from aquamarine ]: drm: No Adaptive sync support for output"),
+               (0.06, "ERR from aquamarine ]: atomic drm request: failed to commit: Invalid argument, flags: ATOMIC_NONBLOCK PAGE_FLIP_EVENT "),
+               (0.07, "ERR from aquamarine ]: atomic drm request: failed to commit: Invalid argument, flags: ATOMIC_ALLOW_MODESET PAGE_FLIP_EVENT "),
+               (0.08, "WARN from aquamarine ]: drm: atomic commit failed with max_bpc set, retrying without max_bpc"),
+               (0.09, "ERR from aquamarine ]: atomic drm request: failed to commit: Invalid argument, flags: ATOMIC_ALLOW_MODESET PAGE_FLIP_EVENT ")]
+    refused += [(0.1 + i * 0.02, "ERR from aquamarine ]: atomic drm request: failed to commit: Invalid argument, flags: ATOMIC_NONBLOCK PAGE_FLIP_EVENT ") for i in range(25)]
+    refused += [(1.2, "DEBUG from aquamarine ]: drm: Connector HDMI-A-1 disconnected")]
+    ev = run(refused)
+    if len(ev) != 1 or ev[0]["why"] != "refused" or ev[0]["mode"] != "3840x2160@240.02":
+        problems.append(f"watch: a refused mode change is one failure, got {ev}")
+
+    dropped = [(0.0, "drm: Modesetting HDMI-A-1 with 3840x2160@240.02Hz"),
+               (0.4, "drm: Got a hotplug event for /dev/dri/card1"),
+               (0.5, "drm: Connector HDMI-A-1 disconnected")]
+    ev = run(dropped)
+    if len(ev) != 1 or ev[0]["why"] != "dropped":
+        problems.append(f"watch: the screen letting go right after a mode change, got {ev}")
+
+    later = [(0.0, "drm: Modesetting HDMI-A-1 with 3840x2160@240.02Hz"), (900.0, "drm: Connector HDMI-A-1 disconnected")]
+    if run(later):
+        problems.append("watch: an unplug long after a mode change is not this mode's")
+    other = [(0.0, "drm: Modesetting HDMI-A-1 with 3840x2160@240.02Hz"), (0.5, "drm: Connector DP-1 disconnected")]
+    if run(other):
+        problems.append("watch: another screen letting go is not this one's")
+    late = [(0.0, "drm: Modesetting DP-1 with 2560x1440@143.97Hz")] + [(10.0 + i, "failed to commit") for i in range(20)]
+    if run(late):
+        problems.append("watch: refusals long after a mode change are not this mode's")
+    retry = [(0.0, "drm: Modesetting DP-1 with 2560x1440@143.97Hz"),
+             (0.1, "failed to commit: Invalid argument, flags: ATOMIC_ALLOW_MODESET PAGE_FLIP_EVENT"),
+             (0.1, "drm: atomic commit failed with max_bpc set, retrying without max_bpc")]
+    if run(retry):
+        problems.append("watch: one refusal that the retry without max_bpc fixed is no failure")
+
+
 if __name__ == "__main__":
+    if "--watch" in sys.argv[1:]:
+        try:
+            sys.exit(watch())
+        except KeyboardInterrupt:
+            sys.exit(0)
     if "--selftest" in sys.argv[1:]:
         sys.exit(selftest())
     print(json.dumps(screens(), ensure_ascii=False))

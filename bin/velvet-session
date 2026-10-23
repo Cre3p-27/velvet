@@ -100,6 +100,11 @@ if [ -z "${QS_ICON_THEME:-}" ]; then
         "${XDG_CONFIG_HOME:-$HOME/.config}/gtk-3.0/settings.ini" 2>/dev/null | head -n 1)
     [ -n "$theme" ] && [ "$theme" != hicolor ] && export QS_ICON_THEME="$theme"
 fi
+# `velvet stop` finds the keeper here and stops it before the shell — else a
+# shell that crashes on its way out would be started again.
+PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/velvet-session.pid"
+echo $$ > "$PIDFILE"
+trap '[ "$(cat "$PIDFILE" 2>/dev/null)" = "$$" ] && rm -f "$PIDFILE"' EXIT
 crashes=()
 while :; do
     say "starting the shell"

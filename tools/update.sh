@@ -11,7 +11,8 @@
 #     that are already wired up; the old ones are kept as *.before-update)
 #  3. rebuilds the zoom plugin when its source is newer than the build
 #  4. swaps a running older zoom plugin for the new one (no logging out)
-#  5. reloads Hyprland and restarts the shell
+#  5. links the velvet command (and its tab completion) when it is missing
+#  6. reloads Hyprland and restarts the shell
 #
 #  --check   only say what an update would do (exit 0: all current, 10: something to do)
 set -u
@@ -134,7 +135,22 @@ elif [ -n "$running" ]; then
     ok "Hyprland runs zoom plugin $running"
 fi
 
-# ── 5. reload and restart ────────────────────────────────────────────────────
+# ── 5. the velvet command ───────────────────────────────────────────────────
+printf '\n%sCommand%s\n' "$W" "$N"
+LB="$HOME/.local/bin"
+COMP="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/velvet"
+if [ "$(readlink -f "$LB/velvet" 2>/dev/null)" = "$SRC/bin/velvet" ] && [ -s "$COMP" ]; then
+    ok "velvet is linked"
+else
+    chmod +x "$SRC/bin/velvet" 2>/dev/null
+    mkdir -p "$LB" "$(dirname "$COMP")"
+    ln -sf "$SRC/bin/velvet" "$LB/velvet"
+    python3 "$SRC/bin/velvet" completion bash > "$COMP" 2>/dev/null
+    ok "Linked the velvet command  ${D}(velvet help)${N}"
+fi
+case ":$PATH:" in *":$LB:"*) : ;; *) todo "~/.local/bin is not on your PATH — add  export PATH=\"\$HOME/.local/bin:\$PATH\"  to ~/.bashrc" ;; esac
+
+# ── 6. reload and restart ────────────────────────────────────────────────────
 printf '\n%sRestart%s\n' "$W" "$N"
 if [ "$reload" = 1 ] && command -v hyprctl >/dev/null 2>&1; then
     hyprctl reload >/dev/null 2>&1 && ok "Hyprland reloaded"

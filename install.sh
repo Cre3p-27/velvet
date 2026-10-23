@@ -230,6 +230,18 @@ for prog in "$SRC"/bin/velvet-*; do
     linked=$((linked + 1))
 done
 ok "Linked $linked desktop programs into ~/.local/bin"
+
+# ── the velvet command ───────────────────────────────────────────────────────
+# velvet start · stop · restart · status · doctor · display safe · help …
+# Tab completes its commands in bash (and fish, when it is installed).
+chmod +x "$SRC/bin/velvet" 2>/dev/null || true
+ln -sf "$SRC/bin/velvet" "$LOCAL_BIN/velvet"
+COMP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions"
+mkdir -p "$COMP_DIR" && python3 "$SRC/bin/velvet" completion bash > "$COMP_DIR/velvet" 2>/dev/null || true
+if command -v fish >/dev/null 2>&1; then
+    mkdir -p "$HOME/.config/fish/completions" && python3 "$SRC/bin/velvet" completion fish > "$HOME/.config/fish/completions/velvet.fish" 2>/dev/null || true
+fi
+ok "The velvet command  ${D}(velvet start · stop · restart · doctor · help)${N}"
 case ":$PATH:" in
     *":$LOCAL_BIN:"*) : ;;
     *) warn "~/.local/bin is not on your PATH  ${D}— the desktop still starts them by full path${N}" ;;

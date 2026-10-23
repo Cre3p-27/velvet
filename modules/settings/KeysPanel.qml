@@ -280,7 +280,8 @@ PanelWindow {
                         readonly property bool listening: row.chosen && panel.capturing
 
                         width: rows.width
-                        height: 58
+                        // 58 where there is room; on a short screen every row gives a little
+                        height: Math.max(40, Math.min(58, (rail.height - rows.anchors.topMargin) / Math.max(1, Binds.defs.length) - rows.spacing))
                         scale: row.chosen ? 1.02 : 1
 
                         Behavior on scale {

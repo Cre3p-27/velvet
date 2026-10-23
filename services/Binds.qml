@@ -22,6 +22,7 @@ Singleton {
     readonly property string hyprDir: `${Quickshell.env("XDG_CONFIG_HOME") || (root.homeDir + "/.config")}/hypr`
     readonly property string storePath: `${root.homeDir}/.config/velvet/binds.json`
     readonly property string recordScript: `${Qt.resolvedUrl("../hypr/scripts/velvet-record.sh")}`.replace(/^file:\/\//, "")
+    readonly property string velvetBin: `${Qt.resolvedUrl("../bin/velvet")}`.replace(/^file:\/\//, "")
 
     property var overrides: ({})   // id → { mods: ["SUPER","SHIFT"], key: "K" }
     property bool ready: false
@@ -56,14 +57,16 @@ Singleton {
         { id: "scene",         label: "Desktop you arranged",  def: ["SUPER", "SHIFT", "S"],     ipc: "qs -c velvet ipc call scene start",         globalName: "scene" },
         { id: "lyrics",        label: "Lyrics",                def: ["SUPER", "SHIFT", "L"],     ipc: "qs -c velvet ipc call lyrics toggle",       globalName: "lyrics" },
         { id: "keys",          label: "This list",             def: ["SUPER", "SHIFT", "K"],     ipc: "qs -c velvet ipc call keys toggle",         globalName: "keys" },
-        { id: "velly",         label: "Velly · talk",          def: ["SUPER", "A"],              ipc: "qs -c velvet ipc call velly summon",        globalName: "" }
+        { id: "velly",         label: "Velly · talk",          def: ["SUPER", "A"],              ipc: "qs -c velvet ipc call velly summon",        globalName: "" },
+        // straight to Hyprland (bin/velvet), so it works while the shell itself hangs
+        { id: "screenSafe",    label: "Black screen? 60 Hz",   def: ["SUPER", "CTRL", "ALT", "R"], ipc: `"${root.velvetBin}" display safe`,       globalName: "" }
     ]
 
     // Binds added after an install: the Hyprland files in ~/.config/hypr only
     // learn them at the next UPDATE & REPAIR, so until then the shell adds
     // them itself (and again after every config reload, which forgets them).
     // Only when nothing is bound to the combo yet — never over the user's own.
-    readonly property var lateDefs: ["velly"]
+    readonly property var lateDefs: ["velly", "screenSafe"]
 
     function ensureLate(): void {
         let script = "";

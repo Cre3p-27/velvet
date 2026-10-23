@@ -1,0 +1,995 @@
+#!/usr/bin/env python3
+"""
+VELVET · velvet — the shell from a terminal.
+
+    velvet                        what runs, and the commands used most
+    velvet start                  start Velvet (with its keeper, exactly as at login)
+    velvet stop                   stop Velvet
+    velvet restart                stop and start again — fixes most glitches
+    velvet status                 since when, the look, the lock, the screens, the sound
+    velvet logs [-f] [-n N] [--errors] [--session]
+    velvet doctor                 check everything and say what to do
+
+    velvet look [NAME]            the looks, or put one on
+    velvet wallpaper [FILE|next|random]
+    velvet lock                   lock the screen
+    velvet record                 start or stop a screen recording
+    velvet settings [PAGE|KEY]    open the settings (at a page)
+    velvet display [safe|auto|forget]
+                                  the screens · safe: every screen at 60 Hz (when one stays
+                                  black — also Super+Ctrl+Alt+R) · auto: back to the best
+                                  mode that works · forget: try the fast modes again
+    velvet sound [test]           the outputs, Bluetooth, what goes wrong · test: a short chime
+    velvet livewall [list|make FILE|favourites]
+                                  live wallpapers (Velly makes one for every favourite)
+
+    velvet backup [FILE] [--with-secrets]
+    velvet restore FILE
+    velvet update [--check]       update and repair
+    velvet uninstall              remove Velvet completely (asks first) · also: remove, delete
+    velvet version
+    velvet completion bash|zsh|fish
+    velvet help [COMMAND]
+
+Standard library only.
+"""
+import datetime
+import difflib
+import glob
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tarfile
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+VELVET = os.path.dirname(HERE)
+CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "velvet")
+RUNDIR = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+KEEPER = os.path.join(VELVET, "bin", "velvet-session")
+KEEPER_PID = os.path.join(RUNDIR, "velvet-session.pid")
+QS = shutil.which("qs") or shutil.which("quickshell") or "qs"
+
+COMMANDS = ["start", "stop", "restart", "status", "logs", "doctor", "look", "wallpaper", "lock", "record",
+            "settings", "display", "sound", "livewall", "backup", "restore", "update", "uninstall", "remove",
+            "delete", "version", "completion", "help"]
+
+
+# ─────────────────────────────────────────────────────────────── output
+class C:
+    on = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    accent = "\033[38;5;204m" if on else ""
+    good = "\033[38;5;114m" if on else ""
+    warn = "\033[38;5;221m" if on else ""
+    bad = "\033[38;5;203m" if on else ""
+    dim = "\033[2m" if on else ""
+    bold = "\033[1m" if on else ""
+    end = "\033[0m" if on else ""
+
+
+def say(text=""):
+    print(text, flush=True)
+
+
+def title(text):
+    say(f"{C.bold}{C.accent}{text}{C.end}")
+
+
+def row(key, value):
+    say(f"  {C.dim}{key:<10}{C.end}{value}")
+
+
+def ok(text):
+    say(f"  {C.good}✓{C.end} {text}")
+
+
+def warn(text, fix=""):
+    say(f"  {C.warn}!{C.end} {text}")
+    if fix:
+        say(f"    {C.dim}→ {fix}{C.end}")
+
+
+def bad(text, fix=""):
+    say(f"  {C.bad}✗{C.end} {text}")
+    if fix:
+        say(f"    {C.dim}→ {fix}{C.end}")
+
+
+def die(text, code=1):
+    say(f"{C.bad}velvet:{C.end} {text}")
+    sys.exit(code)
+
+
+# ─────────────────────────────────────────────────────────────── plumbing
+def run(cmd, timeout=10, env=None):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+        return p.returncode, p.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+
+
+def qs(*args, timeout=6):
+    return run([QS, "-c", "velvet", *args], timeout=timeout)
+
+
+def ipc(target, fn, *args):
+    rc, out = qs("ipc", "call", target, fn, *args)
+    return out.strip() if rc == 0 else None
+
+
+def running():
+    rc, out = qs("ipc", "show", timeout=4)
+    return rc == 0 and bool(out.strip())
+
+
+def instances():
+    """[{pid, since}] of the running Velvet shells (more than one is a problem)"""
+    rc, out = qs("list", "--all", timeout=4)
+    found = []
+    cur = None
+    for line in out.splitlines():
+        line = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        if line.startswith("Instance "):
+            cur = {}
+            found.append(cur)
+        elif cur is not None and line.startswith("Process ID:"):
+            cur["pid"] = int(line.split(":", 1)[1].strip() or 0)
+        elif cur is not None and line.startswith("Launch time:"):
+            cur["since"] = line.split(":", 1)[1].strip().split(" (")[0]
+    return [f for f in found if f.get("pid")]
+
+
+def env_of(pid):
+    try:
+        raw = open(f"/proc/{pid}/environ", "rb").read().split(b"\0")
+    except OSError:
+        return {}
+    out = {}
+    for item in raw:
+        k, _, v = item.partition(b"=")
+        out[k.decode(errors="replace")] = v.decode(errors="replace")
+    return out
+
+
+def argv_of(pid):
+    try:
+        return [a.decode(errors="replace") for a in open(f"/proc/{pid}/cmdline", "rb").read().split(b"\0") if a]
+    except OSError:
+        return []
+
+
+def keeper_pids():
+    """the keepers (bin/velvet-session) of THIS session: matched by their exact script argument and their runtime
+    dir — never by a word somewhere in a command line"""
+    pids = []
+    try:
+        p = int(open(KEEPER_PID).read().strip())
+        if any(a.endswith("/bin/velvet-session") for a in argv_of(p)[:3]):
+            pids.append(p)
+    except (OSError, ValueError):
+        pass
+    me, uid = os.getpid(), os.getuid()
+    for d in os.listdir("/proc"):
+        if not d.isdigit() or int(d) in pids or int(d) == me:
+            continue
+        try:
+            if os.stat(f"/proc/{d}").st_uid != uid:
+                continue
+        except OSError:
+            continue
+        a = argv_of(int(d))
+        if len(a) >= 2 and os.path.basename(a[0]) in ("bash", "sh") and a[1].endswith("/bin/velvet-session"):
+            if env_of(int(d)).get("XDG_RUNTIME_DIR") == RUNDIR:
+                pids.append(int(d))
+    return pids
+
+
+def hyprland_up():
+    rc, out = run(["hyprctl", "instances", "-j"], timeout=4)
+    try:
+        return rc == 0 and len(json.loads(out or "[]")) > 0
+    except ValueError:
+        return False
+
+
+def hypr(*args, timeout=6):
+    cmd = ["hyprctl"]
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        cmd += ["-i", "0"]
+    return run(cmd + list(args), timeout=timeout)
+
+
+def hypr_exec(command):
+    """start a program inside Hyprland's own environment (both config dialects)"""
+    lua = 'hl.dsp.exec_cmd("%s")' % command.replace("\\", "\\\\").replace('"', '\\"')
+    rc, out = hypr("dispatch", lua)
+    if rc == 0 and out.strip().lower() == "ok":
+        return True
+    rc, out = hypr("dispatch", "exec", command)
+    return rc == 0 and "ok" in out.lower()
+
+
+def hypr_json(what):
+    rc, out = hypr(what, "-j")
+    try:
+        return json.loads(out) if rc == 0 else None
+    except ValueError:
+        return None
+
+
+def version():
+    try:
+        return open(os.path.join(VELVET, "VERSION")).read().strip()
+    except OSError:
+        return "?"
+
+
+def ago(since):
+    try:
+        t = datetime.datetime.strptime(since, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return since
+    s = int((datetime.datetime.now() - t).total_seconds())
+    h, m = s // 3600, (s % 3600) // 60
+    return f"since {t:%H:%M} ({h} h {m} min)" if h else f"since {t:%H:%M} ({m} min)"
+
+
+def confirm(question):
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(f"{question} [y/N] ").strip().lower() in ("y", "yes", "j", "ja")
+    except (EOFError, KeyboardInterrupt):
+        say()
+        return False
+
+
+# ─────────────────────────────────────────────────────────────── start · stop
+def cmd_start(args):
+    if running():
+        inst = instances()
+        since = ago(inst[0]["since"]) if inst and inst[0].get("since") else ""
+        say(f"Velvet is already running {since}. {C.dim}velvet restart starts it fresh.{C.end}")
+        return 0
+    if not hyprland_up():
+        die("Hyprland is not running — Velvet lives inside it. Log in to Hyprland first.")
+    if not os.access(KEEPER, os.X_OK):
+        die(f"{KEEPER} is missing or not executable — velvet update repairs it.")
+    t0 = time.monotonic()
+    say(f"{C.dim}starting Velvet …{C.end}")
+    if not hypr_exec(KEEPER):
+        # Hyprland would not take it: from here, in this terminal's environment
+        subprocess.Popen(["setsid", "-f", KEEPER], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(60):
+        time.sleep(0.25)
+        if running():
+            say(f"{C.good}✓{C.end} Velvet is running {C.dim}({time.monotonic() - t0:.1f} s){C.end}")
+            return 0
+    die(f"Velvet did not come up in 15 s. What it said: velvet logs --session   (and velvet doctor)")
+
+
+def stop_quietly():
+    """the keeper first (else a shell that crashes on its way out is started again), then the shell"""
+    for p in keeper_pids():
+        try:
+            os.kill(p, signal.SIGTERM)
+        except OSError:
+            pass
+    if running():
+        qs("kill", timeout=8)
+    for _ in range(40):
+        if not running():
+            break
+        time.sleep(0.15)
+    if running():
+        for inst in instances():
+            try:
+                os.kill(inst["pid"], signal.SIGTERM)
+            except OSError:
+                pass
+        time.sleep(1.5)
+    return not running()
+
+
+def cmd_stop(args):
+    if not running() and not keeper_pids():
+        say("Velvet is not running.")
+        return 0
+    if stop_quietly():
+        say(f"{C.good}✓{C.end} Velvet stopped")
+        return 0
+    die("Velvet did not stop. Its pid: " + ", ".join(str(i["pid"]) for i in instances()))
+
+
+def cmd_restart(args):
+    if running() or keeper_pids():
+        if not stop_quietly():
+            die("Velvet did not stop — not starting a second one.")
+        say(f"{C.good}✓{C.end} stopped")
+        time.sleep(0.4)
+    return cmd_start(args)
+
+
+# ─────────────────────────────────────────────────────────────── status
+def sinks():
+    rc, out = run(["pactl", "-f", "json", "list", "sinks"], timeout=5)
+    try:
+        return json.loads(out) if rc == 0 else []
+    except ValueError:
+        return []
+
+
+def default_sink():
+    rc, out = run(["pactl", "get-default-sink"], timeout=4)
+    return out.strip() if rc == 0 else ""
+
+
+def sink_line(s):
+    p = s.get("properties", {})
+    vol = s.get("volume", {})
+    v = next(iter(vol.values()), {}).get("value_percent", "?") if isinstance(vol, dict) and vol else "?"
+    kind = "Bluetooth" if s["name"].startswith("bluez") else ("HDMI" if "hdmi" in s["name"] else ("USB" if ".usb-" in s["name"] else "analog"))
+    codec = p.get("api.bluez5.codec")
+    extra = f", {codec.replace('_', ' ')}" if codec else ""
+    mute = f" {C.warn}muted{C.end}" if s.get("mute") else ""
+    return f"{p.get('device.description') or s.get('description') or s['name']} {C.dim}({kind}{extra}){C.end} · {v}{mute}"
+
+
+def screens_line(m):
+    who = f"{m.get('make', '')} {m.get('model', '')}".strip()
+    return (f"{m['name']} · {m['width']}×{m['height']} @ {round(m['refreshRate'])} Hz · scale {m['scale']:g}"
+            + (f" · {C.dim}{who}{C.end}" if who else ""))
+
+
+def cmd_status(args):
+    up = running()
+    inst = instances()
+    title(f"VELVET {version()}")
+    if not up:
+        row("shell", f"{C.bad}not running{C.end} {C.dim}— velvet start{C.end}")
+    else:
+        i = inst[0] if inst else {}
+        keepers = keeper_pids()
+        kept = f"{C.good}kept{C.end}" if keepers else f"{C.warn}not kept{C.end} {C.dim}(a crash would not bring it back — velvet restart fixes that){C.end}"
+        row("shell", f"running {ago(i.get('since', ''))} · pid {i.get('pid', '?')} · {kept}")
+        if len(inst) > 1:
+            row("", f"{C.bad}{len(inst)} Velvets are running{C.end} {C.dim}— velvet restart leaves one{C.end}")
+        try:
+            looks = json.loads(ipc("looks", "describe") or "[]")
+            look = next((l for l in looks if l.get("on")), None)
+            # no look matches every setting: changed by hand since one was put on
+            row("look", look["name"] if look else f"your own mix {C.dim}(no look matches every setting — velvet look lists them){C.end}")
+        except (ValueError, TypeError):
+            pass
+        row("lock", ipc("lock", "state") or "?")
+        try:
+            v = json.loads(ipc("velly", "status") or "{}")
+            row("velly", f"{'awake' if v.get('active') else 'asleep'} · brain {v.get('brain', '?')}{'' if v.get('brainOk', True) else ' ' + C.warn + '(not ready)' + C.end}")
+        except ValueError:
+            pass
+        u = ipc("update", "status")
+        if u:
+            row("update", u.lower())
+    mons = hypr_json("monitors") or []
+    for k, m in enumerate(mons):
+        row("screens" if k == 0 else "", screens_line(m))
+    d = default_sink()
+    s = next((s for s in sinks() if s["name"] == d), None)
+    row("sound", sink_line(s) if s else (d or f"{C.dim}no output{C.end}"))
+    rc, out = hypr("plugin", "list")
+    zv = re.search(r"velvetzoom.*?Version:\s*([\d.]+)", out, re.S)
+    row("zoom", f"plugin {zv.group(1)} loaded" if zv else f"{C.dim}plugin not loaded (zoom-out falls back){C.end}")
+    rec = os.path.join(RUNDIR, "velvet-record.pid")
+    if os.path.exists(rec):
+        row("recording", f"{C.bad}●{C.end} on — Super+Enter stops it")
+    return 0
+
+
+def cmd_default(args):
+    cmd_status(args)
+    say()
+    say(f"{C.dim}velvet start · stop · restart · doctor · logs · look · display · sound · help{C.end}")
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── logs
+def cmd_logs(args):
+    if "--session" in args:
+        path = os.path.join(RUNDIR, "velvet-session.log")
+        if not os.path.exists(path):
+            die("no keeper log yet (the keeper writes it when it starts the shell)")
+        os.execvp("tail", ["tail", "-n", "60"] + (["-f"] if "-f" in args else []) + [path])
+    n = 80
+    if "-n" in args:
+        try:
+            n = int(args[args.index("-n") + 1])
+        except (IndexError, ValueError):
+            die("-n wants a number of lines", 2)
+    cmd = [QS, "-c", "velvet", "log", "-t", str(n)] + (["-f"] if "-f" in args else [])
+    if "--errors" not in args:
+        os.execvp(QS, cmd)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    try:
+        for line in p.stdout:
+            if re.search(r"\b(ERROR|WARN|FATAL|CRITICAL)\b", re.sub(r"\x1b\[[0-9;]*m", "", line)):
+                sys.stdout.write(line)
+                sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── looks, wallpaper, lock, record, settings
+def cmd_look(args):
+    try:
+        looks = json.loads(ipc("looks", "describe") or "[]")
+    except ValueError:
+        looks = []
+    if not looks:
+        die("Velvet is not running (or did not answer) — velvet start")
+    if not args:
+        title("LOOKS")
+        for l in looks:
+            mark = f"{C.accent}●{C.end}" if l.get("on") else " "
+            saved = f" {C.dim}· saved{C.end}" if l.get("saved") else ""
+            say(f"  {mark} {l['name']:<26} {C.dim}{l['id']}{C.end}{saved}")
+        say(f"\n{C.dim}velvet look NAME puts one on{C.end}")
+        return 0
+    want = " ".join(args).strip().lower()
+    by = {l["id"].lower(): l for l in looks}
+    by.update({l["name"].lower(): l for l in looks})
+    hit = by.get(want)
+    if not hit:
+        close = difflib.get_close_matches(want, list(by), n=1, cutoff=0.5)
+        hit = by.get(close[0]) if close else None
+    if not hit:
+        die(f"no look called “{want}” — velvet look lists them", 2)
+    out = ipc("looks", "apply", hit["id"])
+    say(f"{C.good}✓{C.end} {hit['name']}" + (f" {C.dim}({out}){C.end}" if out and out.lower().startswith("no") else ""))
+    return 0
+
+
+def cmd_wallpaper(args):
+    if not running():
+        die("Velvet is not running — velvet start")
+    if not args:
+        try:
+            cur = json.load(open(os.path.join(CONF, "config.json"))).get("wallpaper", {}).get("current", "")
+        except (OSError, ValueError):
+            cur = ""
+        say(cur or "no wallpaper set")
+        return 0
+    a = args[0]
+    if a in ("next", "random"):
+        ipc("velly", "wallpaper", a)
+        say(f"{C.good}✓{C.end} {a} wallpaper")
+        return 0
+    path = os.path.realpath(os.path.expanduser(a))
+    if not os.path.isfile(path):
+        die(f"no such file: {a}", 2)
+    ipc("velly", "set", "wallpaper.current", json.dumps(path))
+    say(f"{C.good}✓{C.end} {os.path.basename(path)}")
+    return 0
+
+
+def cmd_lock(args):
+    if not running():
+        die("Velvet is not running — velvet start")
+    ipc("lock", "lock")
+    return 0
+
+
+def cmd_record(args):
+    script = os.path.join(VELVET, "hypr", "scripts", "velvet-record.sh")
+    os.execvp("bash", ["bash", script])
+
+
+def cmd_settings(args):
+    if not running():
+        die("Velvet is not running — velvet start")
+    if not args:
+        ipc("panels", "settings")
+        return 0
+    a = " ".join(args)
+    if "." in a and " " not in a:
+        ipc("panels", "key", a)
+    else:
+        ipc("panels", "settings")
+        time.sleep(0.4)
+        ipc("panels", "tab", a.upper())
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── display
+def gpu_name(conn):
+    for path in glob.glob(f"/sys/class/drm/card*-{conn}"):
+        card = os.path.basename(path).split("-")[0]
+        dev = os.path.realpath(f"/sys/class/drm/{card}/device")
+        try:
+            boot = open(os.path.join(dev, "boot_vga")).read().strip() == "1"
+        except OSError:
+            boot = False
+        rc, out = run(["lspci", "-s", os.path.basename(dev)], timeout=3)
+        name = out.split(":", 2)[-1].strip() if rc == 0 and out else os.path.basename(dev)
+        name = re.sub(r"^.*?\[AMD/ATI\]\s*", "", name)
+        return name, boot
+    return "", False
+
+
+def learned():
+    try:
+        return json.load(open(os.path.join(CONF, "screens.json")))
+    except (OSError, ValueError):
+        return {}
+
+
+def safe_mode(m):
+    """the screen's own resolution at its best refresh up to 60 Hz"""
+    w, h = m["width"], m["height"]
+    best = None
+    for text in m.get("availableModes") or []:
+        mm = re.match(r"^(\d+)x(\d+)@([\d.]+)", text)
+        if not mm:
+            continue
+        mw, mh, rr = int(mm.group(1)), int(mm.group(2)), float(mm.group(3))
+        if (mw, mh) == (w, h) and rr <= 60.5 and (best is None or rr > best[2]):
+            best = (mw, mh, rr)
+    return f"{best[0]}x{best[1]}@{best[2]:.2f}" if best else f"{w}x{h}@60"
+
+
+def cmd_display(args):
+    mons = hypr_json("monitors") or []
+    sub = args[0] if args else ""
+    if sub == "safe":
+        if running():
+            ipc("screens", "safe")
+        # straight to Hyprland as well: the shell may be the thing that hangs
+        for m in mons:
+            mode = safe_mode(m)
+            pos = f"{m['x']}x{m['y']}"
+            lua = f'hl.monitor({{ output = "{m["name"]}", mode = "{mode}", position = "{pos}", scale = "{m["scale"]:g}" }})'
+            rc, out = hypr("eval", lua)
+            if rc != 0 or "error" in out.lower():
+                hypr("keyword", "monitor", f"{m['name']},{mode},{pos},{m['scale']:g}")
+            say(f"{C.good}✓{C.end} {m['name']} → {mode.replace('x', '×').replace('@', ' @ ')} Hz")
+        say(f"{C.dim}velvet display auto goes back to the best mode that works{C.end}")
+        return 0
+    if sub == "auto":
+        if not running():
+            die("Velvet is not running — velvet start")
+        ipc("screens", "auto")
+        say(f"{C.good}✓{C.end} every screen on its best mode that works")
+        return 0
+    if sub == "forget":
+        path = os.path.join(CONF, "screens.json")
+        if os.path.exists(path):
+            os.replace(path, path + ".forgotten")
+        if running():
+            ipc("screens", "forget")
+        say(f"{C.good}✓{C.end} forgot which modes failed — the next start tries the fast ones again")
+        return 0
+    if sub:
+        die("velvet display [safe|auto|forget]", 2)
+    title("SCREENS")
+    lim = learned()
+    connected = []
+    for path in sorted(glob.glob("/sys/class/drm/card*-*")):
+        conn = os.path.basename(path).split("-", 1)[1]
+        try:
+            if open(os.path.join(path, "status")).read().strip() == "connected":
+                connected.append(conn)
+        except OSError:
+            pass
+    used = {m["name"] for m in mons}
+    for m in mons:
+        gpu, boot = gpu_name(m["name"])
+        say(f"  {C.accent}●{C.end} {screens_line(m)}")
+        if gpu:
+            say(f"    {C.dim}on {gpu}{' (the main GPU)' if boot else ''}{C.end}")
+        for key, info in lim.items():
+            if key.startswith(m["name"] + "|") and info.get("bad"):
+                say(f"    {C.warn}learned:{C.end} this port could not run {', '.join(info['bad'])} {C.dim}(velvet display forget retries){C.end}")
+    for conn in connected:
+        if conn not in used:
+            say(f"  {C.bad}●{C.end} {conn}: a screen is plugged in, but Hyprland does not show it")
+            say(f"    {C.dim}→ plug it out and in again; if it stays dark, use the other port (DisplayPort is the most reliable){C.end}")
+    if not mons and not connected:
+        say("  no screens found")
+    say(f"\n{C.dim}a screen stays black? Super+Ctrl+Alt+R (or velvet display safe) puts every screen on 60 Hz{C.end}")
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── sound
+def journal(since, pattern, unit_args=()):
+    rc, out = run(["journalctl", "--no-pager", "-q", "--since", since, *unit_args], timeout=8)
+    if rc != 0:
+        return None
+    return [l for l in out.splitlines() if re.search(pattern, l)]
+
+
+SOUND = os.path.join(VELVET, "bin", "velvet-sound")
+
+
+def sound_facts():
+    """bin/velvet-sound's facts (the same the settings' SOUND PROBLEMS page shows)"""
+    rc, out = run(["python3", SOUND], timeout=20)
+    try:
+        return json.loads(out) if rc == 0 else {}
+    except ValueError:
+        return {}
+
+
+def sound_findings():
+    """[(level, text, fix)] — the things that make sound drop, hop or turn thin"""
+    return [(f["level"], f["text"], f["fix"]) for f in sound_facts().get("findings", [])]
+
+
+def cmd_sound(args):
+    if args and args[0] == "test":
+        rc, out = run(["python3", SOUND, "test"] + args[1:2], timeout=15)
+        try:
+            r = json.loads(out)
+        except ValueError:
+            die("the test sound did not play")
+        if not r.get("ok"):
+            die(r.get("error") or f"could not play on {r.get('output', 'the output')}")
+        say(f"♪ played a short chime on {r['description']}")
+        say(f"{C.dim}heard it clean? then that output works — a problem is in the app or the stream. Not heard: the device's own volume, its power or cable, then velvet sound{C.end}")
+        return 0
+    title("SOUND")
+    facts = sound_facts()
+    for o in facts.get("outputs", []):
+        mark = f"{C.accent}●{C.end}" if o.get("default") else " "
+        how = (o["codec"] or "").replace("_", " ")
+        mute = f" {C.warn}muted{C.end}" if o.get("muted") else ""
+        say(f"  {mark} {o['description']} {C.dim}({o['kind']}{', ' + how if how else ''}){C.end} · {o['volume']}%{mute}")
+    findings = facts.get("findings", [])
+    if findings:
+        say()
+        for f in findings:
+            if f["level"] == "bad":
+                bad(f["text"], f["fix"])
+            elif f["level"] == "warn":
+                warn(f["text"], f["fix"])
+            else:
+                say(f"  {C.dim}i {f['text']}{C.end}")
+                say(f"    {C.dim}→ {f['fix']}{C.end}")
+    else:
+        say(f"\n  {C.good}✓{C.end} nothing that would make sound drop out")
+    say(f"\n{C.dim}velvet sound test [OUTPUT] plays a short chime · Settings → AUDIO → SOUND PROBLEMS{C.end}")
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── live wallpapers
+def cmd_livewall(args):
+    tool = os.path.join(VELVET, "bin", "velvet-livewall")
+    if not os.access(tool, os.X_OK):
+        die("this Velvet has no live wallpapers yet — velvet update")
+    os.execvp("python3", ["python3", tool] + (args or ["list"]))
+
+
+# ─────────────────────────────────────────────────────────────── doctor
+def cmd_doctor(args):
+    problems = 0
+    warnings = 0
+
+    def p(text, fix=""):
+        nonlocal problems
+        problems += 1
+        bad(text, fix)
+
+    def w(text, fix=""):
+        nonlocal warnings
+        warnings += 1
+        warn(text, fix)
+
+    title(f"VELVET {version()} · doctor")
+    say(f"\n{C.bold}shell{C.end}")
+    if hyprland_up():
+        rc, out = hypr("version", "-j")
+        try:
+            ok(f"Hyprland {json.loads(out).get('tag', '').lstrip('v') or 'running'}")
+        except ValueError:
+            ok("Hyprland running")
+    else:
+        p("Hyprland is not running", "log in to Hyprland — Velvet lives inside it")
+    rc, out = run([QS, "--version"], timeout=4)
+    ok(out.strip().split(" (")[0]) if rc == 0 else p("Quickshell is not installed", "sudo pacman -S quickshell")
+    inst = instances()
+    if running():
+        ok(f"Velvet running {ago(inst[0]['since']) if inst and inst[0].get('since') else ''}")
+        if len(inst) > 1:
+            p(f"{len(inst)} Velvets are running at once", "velvet restart")
+        if not keeper_pids():
+            w("no keeper: a crash would not bring Velvet back", "velvet restart")
+    else:
+        p("Velvet is not running", "velvet start")
+    try:
+        json.load(open(os.path.join(CONF, "config.json")))
+        ok("settings file is valid")
+    except FileNotFoundError:
+        w("no settings file yet", "it appears with the first change in Settings")
+    except ValueError as e:
+        p(f"the settings file is broken ({e})", "velvet restore a backup, or move ~/.config/velvet/config.json aside")
+    rc, out = run(["bash", "-c", "grep -rls 'velvet-shell' ~/.config/hypr/*.lua ~/.config/hypr/*.conf 2>/dev/null | head -1"], timeout=4)
+    ok("Hyprland starts Velvet at login") if out.strip() else w("Hyprland's config does not start Velvet at login", "velvet update wires it in again")
+
+    say(f"\n{C.bold}command{C.end}")
+    lb = os.path.expanduser("~/.local/bin")
+    if lb in os.environ.get("PATH", "").split(":"):
+        ok("~/.local/bin is on the PATH")
+    else:
+        w("~/.local/bin is not on the PATH", "add  export PATH=\"$HOME/.local/bin:$PATH\"  to ~/.bashrc")
+    link = os.path.join(lb, "velvet")
+    ok("velvet is linked") if os.path.realpath(link) == os.path.realpath(__file__) else w("velvet is not linked into ~/.local/bin", "velvet update links it")
+
+    say(f"\n{C.bold}lock{C.end}")
+    told = ipc("lock", "status") if running() else None
+    if told:
+        # the shell's own answer: what really happens when you lock
+        line = told.lower().replace("pam service", "PAM service").replace("velvet's", "Velvet's")
+        if told.startswith("READY"):
+            ok(line)
+        else:
+            w(line, "Settings → LOCK SCREEN → STATUS says why")
+    else:
+        try:
+            svc = json.load(open(os.path.join(CONF, "config.json"))).get("lock", {}).get("pamConfig") or "auto"
+        except (OSError, ValueError):
+            svc = "auto"
+        # "auto": the first of these that exists (as services/Locker.qml picks it)
+        names = [svc] if svc != "auto" else ["velvet", "hyprlock", "swaylock", "system-auth", "system-local-login", "login", "su"]
+        have = next((n for n in names if os.path.exists(f"/etc/pam.d/{n}")), "")
+        ok(f"PAM service {have}") if have else p("no PAM service: the lock cannot check passwords", "velvet update (it asks for your password once)")
+
+    say(f"\n{C.bold}screens{C.end}")
+    mons = hypr_json("monitors") or []
+    used = {m["name"] for m in mons}
+    for m in mons:
+        gpu, boot = gpu_name(m["name"])
+        line = screens_line(m)
+        hdmi_fast = m["name"].startswith("HDMI") and m["refreshRate"] > 145 and m["width"] >= 3840
+        if hdmi_fast:
+            w(f"{line}", "4K above 144 Hz over HDMI is at the edge of what the link carries — if the screen drops out, DisplayPort is the reliable way")
+        else:
+            ok(line)
+        if gpu and not boot and len(glob.glob("/sys/class/drm/card*/device/boot_vga")) > 1:
+            w(f"{m['name']} is on {gpu} — the processor's graphics, not the graphics card", "plug the screen into the graphics card: it is faster and can do more")
+    for path in sorted(glob.glob("/sys/class/drm/card*-*")):
+        conn = os.path.basename(path).split("-", 1)[1]
+        try:
+            if open(os.path.join(path, "status")).read().strip() == "connected" and conn not in used:
+                p(f"{conn}: a screen is plugged in, but Hyprland does not show it", "plug it out and in again; if it stays dark: the other port (DisplayPort)")
+        except OSError:
+            pass
+    k = journal("-24h", r"Restoring old state failed|failed to commit|link training fail", ("-k",))
+    if k:
+        w(f"the graphics driver failed to set a screen mode {len(k)}× in the last 24 h", "Velvet now steps down to a mode that works by itself; velvet display shows what it learned")
+    for key, info in learned().items():
+        if info.get("bad"):
+            say(f"  {C.dim}i {key.split('|')[0]} could not run {', '.join(info['bad'])} — learned{C.end}")
+
+    say(f"\n{C.bold}sound{C.end}")
+    d = default_sink()
+    s = next((s for s in sinks() if s["name"] == d), None)
+    ok(f"plays on {sink_line(s)}") if s else p("no sound output", "Settings → AUDIO")
+    for level, text, fix in sound_findings():
+        if level == "bad":
+            p(text, fix)
+        elif level == "warn":
+            w(text, fix)
+        else:
+            say(f"  {C.dim}i {text}{C.end}")
+
+    say(f"\n{C.bold}recording & tools{C.end}")
+    rec = shutil.which("wf-recorder") or shutil.which("wl-screenrec") or (os.path.expanduser("~/.local/bin/wf-recorder") if os.path.exists(os.path.expanduser("~/.local/bin/wf-recorder")) else "")
+    ok(f"screen recorder {os.path.basename(rec)}") if rec else w("no screen recorder", "sudo pacman -S wf-recorder")
+    ok("ffmpeg") if shutil.which("ffmpeg") else w("no ffmpeg: recordings keep no colour label, live wallpapers cannot be made", "sudo pacman -S ffmpeg")
+    rc, out = hypr("plugin", "list")
+    if "velvetzoom" in out:
+        ok("zoom plugin loaded")
+    elif os.path.exists(os.path.join(VELVET, "plugin", "velvetzoom", "build", "velvetzoom.so")):
+        w("zoom plugin built but not loaded", "log out and in once")
+    else:
+        w("zoom plugin not built: the zoom-out uses its slower fallback", "velvet update builds it")
+
+    say()
+    if problems == 0 and warnings == 0:
+        say(f"{C.good}✓ everything looks right{C.end}")
+    else:
+        say(f"{C.bad if problems else C.warn}{problems} problem{'s' if problems != 1 else ''}, {warnings} warning{'s' if warnings != 1 else ''}{C.end}")
+    return 1 if problems else 0
+
+
+# ─────────────────────────────────────────────────────────────── backup · restore
+SECRET = ("ai.json", "ai-memory.json", "composio.json")
+NOISE = re.compile(r"(\.wav|\.lock|\.ctl|\.touch|ai-state\.json|ai-req\.json|ai-session\.json|ai-speech\.json|levels\.json|"
+                   r"palette\.json|\.bak-.*|\.vor-.*|\.before-.*|\.forgotten)$")
+
+
+def cmd_backup(args):
+    secrets = "--with-secrets" in args
+    rest = [a for a in args if not a.startswith("--")]
+    out = os.path.realpath(os.path.expanduser(rest[0])) if rest else os.path.expanduser(f"~/velvet-backup-{datetime.datetime.now():%Y%m%d-%H%M}.tar.gz")
+    if not os.path.isdir(CONF):
+        die("there are no Velvet settings to save yet")
+    count = 0
+    with tarfile.open(out, "w:gz") as tar:
+        for name in sorted(os.listdir(CONF)):
+            path = os.path.join(CONF, name)
+            if not os.path.isfile(path) or NOISE.search(name):
+                continue
+            if name in SECRET and not secrets:
+                continue
+            tar.add(path, arcname=f"velvet/{name}")
+            count += 1
+    os.chmod(out, 0o600)
+    say(f"{C.good}✓{C.end} {count} files → {out}")
+    if not secrets:
+        say(f"{C.dim}Velly's key and memory were left out (--with-secrets keeps them){C.end}")
+    return 0
+
+
+def cmd_restore(args):
+    if not args:
+        die("velvet restore FILE", 2)
+    path = os.path.realpath(os.path.expanduser(args[0]))
+    try:
+        tar = tarfile.open(path, "r:gz")
+        members = [m for m in tar.getmembers() if m.isfile() and m.name.startswith("velvet/") and "/" not in m.name[7:] and ".." not in m.name]
+    except (OSError, tarfile.TarError) as e:
+        die(f"not a Velvet backup: {e}")
+    if not members:
+        die("this file holds no Velvet settings")
+    say(f"{len(members)} files: {', '.join(m.name[7:] for m in members[:8])}{' …' if len(members) > 8 else ''}")
+    if not confirm("Put them back? Velvet restarts; the current settings are kept in a folder beside them."):
+        say("nothing changed")
+        return 1
+    was = running()
+    if was:
+        stop_quietly()
+    keep = f"{CONF}.before-restore-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    if os.path.isdir(CONF):
+        shutil.copytree(CONF, keep)
+    os.makedirs(CONF, exist_ok=True)
+    for m in members:
+        data = tar.extractfile(m).read()
+        target = os.path.join(CONF, os.path.basename(m.name))
+        tmp = target + ".restoring"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, target)
+    say(f"{C.good}✓{C.end} restored · the old settings: {keep}")
+    if was:
+        return cmd_start([])
+    return 0
+
+
+# ─────────────────────────────────────────────────────────────── update · uninstall
+def cmd_update(args):
+    os.execvp("bash", ["bash", os.path.join(VELVET, "tools", "update.sh")] + args)
+
+
+def cmd_uninstall(args):
+    script = os.path.join(VELVET, "uninstall.sh")
+    if not os.path.exists(script):
+        die(f"{script} is missing")
+    if "-y" not in args and "--yes" not in args:
+        say(f"{C.bold}This removes Velvet completely{C.end}: the shell, its Hyprland lines, its programs and fonts,")
+        say("and — unless you say otherwise next — your Velvet settings and Velly's models.")
+        say(f"{C.dim}Hyprland, Quickshell and your own files stay. velvet backup first keeps your settings.{C.end}")
+        if not confirm("Remove Velvet?"):
+            say("nothing changed")
+            return 1
+    os.execvp("bash", ["bash", script] + args)
+
+
+# ─────────────────────────────────────────────────────────────── version · completion · help
+def cmd_version(args):
+    say(f"Velvet {version()}")
+    rc, out = run(["git", "-C", VELVET, "log", "-1", "--format=%h %cs"], timeout=3)
+    if rc == 0 and out.strip():
+        say(f"{C.dim}  commit {out.strip()}{C.end}")
+    rc, out = run([QS, "--version"], timeout=3)
+    say(f"{C.dim}  {out.strip().split(' (')[0]}{C.end}")
+    rc, out = hypr("version", "-j")
+    try:
+        say(f"{C.dim}  Hyprland {json.loads(out).get('tag', '?')}{C.end}")
+    except ValueError:
+        pass
+    return 0
+
+
+COMPLETION_BASH = r'''# velvet — bash completion (velvet completion bash)
+_velvet() {
+    local cur prev words
+    cur="${COMP_WORDS[COMP_CWORD]}"; prev="${COMP_WORDS[COMP_CWORD-1]}"
+    if [ "$COMP_CWORD" -eq 1 ]; then
+        COMPREPLY=($(compgen -W "%s" -- "$cur")); return
+    fi
+    case "${COMP_WORDS[1]}" in
+        look) COMPREPLY=($(compgen -W "$(qs -c velvet ipc call looks describe 2>/dev/null | python3 -c 'import json,sys; print(" ".join(l["id"] for l in json.load(sys.stdin)))' 2>/dev/null)" -- "$cur")) ;;
+        wallpaper|restore|backup) COMPREPLY=($(compgen -f -- "$cur")); [ "${COMP_WORDS[1]}" = wallpaper ] && COMPREPLY+=($(compgen -W "next random" -- "$cur")) ;;
+        display) COMPREPLY=($(compgen -W "safe auto forget" -- "$cur")) ;;
+        sound) COMPREPLY=($(compgen -W "test" -- "$cur")) ;;
+        livewall) COMPREPLY=($(compgen -W "list make favourites" -- "$cur")) ;;
+        logs) COMPREPLY=($(compgen -W "-f -n --errors --session" -- "$cur")) ;;
+        update) COMPREPLY=($(compgen -W "--check" -- "$cur")) ;;
+        uninstall|remove|delete) COMPREPLY=($(compgen -W "--keep-config --keep-ai --yes" -- "$cur")) ;;
+        completion) COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur")) ;;
+        help) COMPREPLY=($(compgen -W "%s" -- "$cur")) ;;
+    esac
+}
+complete -F _velvet velvet
+'''
+
+
+def cmd_completion(args):
+    shell = args[0] if args else "bash"
+    words = " ".join(COMMANDS)
+    if shell == "bash":
+        sys.stdout.write(COMPLETION_BASH % (words, words))
+    elif shell == "zsh":
+        sys.stdout.write("#compdef velvet\n_arguments '1: :(%s)' '*:file:_files'\n" % words)
+    elif shell == "fish":
+        sys.stdout.write("complete -c velvet -f -n '__fish_use_subcommand' -a '%s'\n" % words)
+    else:
+        die("velvet completion bash|zsh|fish", 2)
+    return 0
+
+
+def cmd_help(args):
+    if args:
+        lines = [l for l in __doc__.splitlines() if re.match(rf"\s+velvet {re.escape(args[0])}\b", l)]
+        if lines:
+            i = __doc__.splitlines().index(lines[0])
+            block = [lines[0]]
+            for l in __doc__.splitlines()[i + 1:]:
+                if re.match(r"\s{30,}\S", l):
+                    block.append(l)
+                else:
+                    break
+            say("\n".join(block))
+            return 0
+    say(__doc__.strip("\n").split("Standard library only.")[0].rstrip())
+    return 0
+
+
+def main(argv):
+    # `velvet status | head` must end quietly, not with a traceback
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    if not argv:
+        return cmd_default([])
+    cmd, args = argv[0], argv[1:]
+    if cmd in ("-h", "--help"):
+        return cmd_help(args)
+    if cmd in ("-v", "--version"):
+        return cmd_version(args)
+    table = {
+        "start": cmd_start, "stop": cmd_stop, "restart": cmd_restart, "status": cmd_status, "logs": cmd_logs,
+        "log": cmd_logs, "doctor": cmd_doctor, "look": cmd_look, "looks": cmd_look, "wallpaper": cmd_wallpaper,
+        "lock": cmd_lock, "record": cmd_record, "settings": cmd_settings, "display": cmd_display,
+        "screens": cmd_display, "sound": cmd_sound, "audio": cmd_sound, "livewall": cmd_livewall,
+        "backup": cmd_backup, "restore": cmd_restore, "update": cmd_update, "uninstall": cmd_uninstall,
+        "remove": cmd_uninstall, "delete": cmd_uninstall, "version": cmd_version, "completion": cmd_completion,
+        "help": cmd_help,
+    }
+    fn = table.get(cmd)
+    if not fn:
+        close = difflib.get_close_matches(cmd, list(table), n=1)
+        die(f"unknown command “{cmd}”" + (f" — did you mean velvet {close[0]}?" if close else " — velvet help"), 2)
+    try:
+        return fn(args) or 0
+    except KeyboardInterrupt:
+        say()
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

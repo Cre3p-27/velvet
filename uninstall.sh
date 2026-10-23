@@ -104,9 +104,12 @@ done
 
 # ── 3. the shell itself ──────────────────────────────────────────────────────
 printf '\n%sFiles%s\n' "$W" "$N"
-for p in "$HOME"/.local/bin/velvet-*; do
+for p in "$HOME"/.local/bin/velvet-* "$HOME/.local/bin/velvet"; do
     [ -L "$p" ] && gone "$p"
 done
+# the velvet command's tab completion
+gone "${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/velvet"
+gone "$HOME/.config/fish/completions/velvet.fish"
 gone "$HOME/.local/share/fonts/velvet" && command -v fc-cache >/dev/null 2>&1 && fc-cache -f >/dev/null 2>&1
 # the folder Quickshell loads (a link to the checkout, or a real folder)
 gone "$QS_LINK"

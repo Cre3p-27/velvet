@@ -229,7 +229,7 @@ Singleton {
             echo '---'
             nmcli -t -f WIFI radio 2>/dev/null || echo 'enabled'
             echo '---'
-            nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY device wifi list --rescan no 2>/dev/null | head -40
+            nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY,FREQ device wifi list --rescan no 2>/dev/null | head -40
         `]
 
         stdout: StdioCollector {
@@ -274,10 +274,18 @@ Singleton {
                     if (name.length === 0)
                         continue;
                     const sig = parseInt(parts[2]) || 0;
-                    // Strongest AP wins when the same network shows twice.
+                    const mhz = parseInt(parts[4]) || 0;
+                    const band = mhz >= 5925 ? "6" : (mhz >= 4900 ? "5" : (mhz > 0 ? "2.4" : ""));
+                    // Strongest AP wins when the same network shows twice;
+                    // a dual-band network lists both bands.
                     if (seen[name] !== undefined) {
-                        if (nets[seen[name]].signal < sig)
-                            nets[seen[name]].signal = sig;
+                        const n = nets[seen[name]];
+                        if (n.signal < sig)
+                            n.signal = sig;
+                        if (band !== "" && n.bands.indexOf(band) < 0)
+                            n.bands = n.bands.concat([band]).sort((a, b) => parseFloat(a) - parseFloat(b));
+                        if ((parts[0] ?? "").trim() === "*")
+                            n.active = true;
                         continue;
                     }
                     seen[name] = nets.length;
@@ -285,6 +293,7 @@ Singleton {
                         ssid: name,
                         signal: sig,
                         security: root.unescapeTsv(parts[3] ?? ""),
+                        bands: band !== "" ? [band] : [],
                         active: (parts[0] ?? "").trim() === "*"
                     });
                 }

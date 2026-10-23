@@ -1132,14 +1132,23 @@ Item {
     Component {
         id: infoC
 
-        P5Text {
-            text: `${Bridge.get(root.item)}`
-            color: root.fgDim
-            font.family: Appearance.fontFamily.mono
-            font.pixelSize: Appearance.font.size.small
-            elide: Text.ElideLeft
-            width: 320
-            horizontalAlignment: Text.AlignRight
+        // as wide as its text, up to 320 px (40 % of a wide row): the right edge
+        // stays the row's — a fixed width pushed short values out of view
+        Item {
+            implicitWidth: Math.min(Math.max(320, root.width * 0.4), infoValue.implicitWidth)
+            implicitHeight: infoValue.implicitHeight
+
+            P5Text {
+                id: infoValue
+
+                width: parent.width
+                text: `${Bridge.get(root.item)}`
+                color: root.fgDim
+                font.family: Appearance.fontFamily.mono
+                font.pixelSize: Appearance.font.size.small
+                elide: Text.ElideLeft
+                horizontalAlignment: Text.AlignRight
+            }
         }
     }
 

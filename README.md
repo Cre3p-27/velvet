@@ -69,6 +69,7 @@ Velvet's own — add your pictures there.
 | `Super + Alt + right click` | every window at a glance · `left click` back to 1:1 |
 | `Super + W` | wallpapers |
 | `Super + Shift + K` | every shortcut on one screen |
+| `Super + Ctrl + Alt + R` | the screen went black? every screen on 60 Hz (works even when the shell hangs) |
 
 ---
 
@@ -1238,7 +1239,58 @@ applied to whichever job had moved into the finished one's place.
 
 ---
 
+## The velvet command
+
+Everything you would otherwise dig for, from any terminal. `install.sh` links it
+to `~/.local/bin/velvet` and installs its tab completion (`velvet update` repairs
+both).
+
+| | |
+|---|---|
+| `velvet start` · `stop` · `restart` | the shell, with its keeper — exactly as at login. `restart` fixes most glitches |
+| `velvet status` | since when it runs, the look, the lock, Velly, the screens, the sound |
+| `velvet doctor` | checks everything (Hyprland, the lock's PAM service, the screens, the sound, the tools) and says what to do |
+| `velvet logs [-f] [-n N] [--errors] [--session]` | the shell's log (`--session`: the keeper's) |
+| `velvet look [NAME]` | the looks, or put one on (`velvet look papr` finds PAPER) |
+| `velvet wallpaper [FILE\|next\|random]` | the wallpaper |
+| `velvet display [safe\|auto\|forget]` | the screens and what failed on their ports · `safe`: 60 Hz (also `Super+Ctrl+Alt+R`) · `auto`: the best that works · `forget`: try the fast modes again |
+| `velvet sound [test [OUTPUT]]` | the outputs and why the sound drops · `test`: a short chime |
+| `velvet livewall …` | live wallpapers (see LIVE WALLPAPERS) |
+| `velvet backup [FILE] [--with-secrets]` · `restore FILE` | your settings in one file — Velly's key and memory only with `--with-secrets`. `restore` asks first and keeps the old settings beside the new ones |
+| `velvet update [--check]` | update and repair |
+| `velvet uninstall` (also `remove`, `delete`) | removes Velvet completely — asks first, and asks again about your settings and Velly's models |
+| `velvet version` · `velvet help [COMMAND]` · `velvet completion bash\|zsh\|fish` | |
+
+`velvet stop` stops the keeper first, so the shell is not started again behind
+your back; `velvet start` starts it through Hyprland, so it gets the session's
+own environment wherever you type it.
+
 ## When something is wrong
+
+**The screen says NO SIGNAL, or the graphics card does not seem to see it.** A
+screen lists every mode it can show, not every mode the port and the cable can
+carry. 4K at 240 Hz over HDMI needs the full 48 Gbit/s link: the processor's
+graphics refuse it every time, and on a graphics card a long or older cable fails
+it every few plug-ins — the driver refuses the mode, the screen drops the cable
+and comes back, sometimes without saying what it is (Hyprland then offers
+1024×768). Velvet watches Hyprland's log for exactly that, remembers the mode as
+failed for that port and that screen, and steps down to the fastest mode below it
+at once (**DISPLAY → RESOLUTION** says `240 HZ FAILED ON HDMI-A-1`). Still black?
+`Super + Ctrl + Alt + R` puts every screen on 60 Hz. **The reliable way to 4K at
+240 Hz is DisplayPort** (a DP 1.4 or 2.1 cable from the graphics card), which
+also brings FreeSync; after a new cable, **DISPLAY → TRY THE FAST MODES AGAIN**.
+
+**The sound drops out or stutters.** **AUDIO → SOUND PROBLEMS** (or `velvet
+sound`) reads the facts: how often a Bluetooth device dropped today, which band
+the Wi-Fi uses, which codec plays. Two different devices dropping the same way is
+the PC's Bluetooth link, not the speakers. The usual cause is Wi-Fi on 2.4 GHz —
+Bluetooth's own band; combined cards (MediaTek, many Intel and Realtek ones) even
+share one antenna. The fix is the router's 5 GHz network (QUICK → WI-FI shows each
+network's band) or a network cable. Meanwhile **RECONNECT AFTER A DROP** brings a
+dropped device back by itself, **BLUETOOTH SOUND → STABLE** trades aptX HD for a
+codec that rides out a busy band, and **KEEP MUSIC QUALITY** stops a headset from
+switching to its thin call mode when an app opens a microphone. **PLAY A TEST
+SOUND** tells a broken output from a broken app.
 
 **The bar only half hides.** It used to: `REVEAL THRESHOLD` doubled as the slide
 distance, so the strip that listens for your pointer was also the strip left

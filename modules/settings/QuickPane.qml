@@ -2014,13 +2014,26 @@ FocusScope {
                         P5Text {
                             anchors.left: parent.left
                             anchors.leftMargin: 42
-                            anchors.right: parent.right
-                            anchors.rightMargin: (net?.active ?? false) ? 78 : 46
+                            anchors.right: bandTag.left
+                            anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
                             text: net?.ssid ?? ""
                             color: Colours.ink
                             font.pixelSize: Appearance.font.size.small
                             elide: Text.ElideRight
+                        }
+
+                        // the band: 2.4 GHz is Bluetooth's (AUDIO → SOUND PROBLEMS)
+                        P5Text {
+                            id: bandTag
+
+                            anchors.right: parent.right
+                            anchors.rightMargin: (net?.active ?? false) ? 78 : 46
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: (net?.bands ?? []).length ? `${(net?.bands ?? []).join(" · ")} GHZ` : ""
+                            color: (net?.bands ?? []).indexOf("5") >= 0 || (net?.bands ?? []).indexOf("6") >= 0 ? Colours.alpha(Colours.accentInk, 0.85) : Colours.alpha(Colours.ink, 0.45)
+                            font.pixelSize: Appearance.font.size.tiny
+                            tracking: 1.2
                         }
 
                         Icon {

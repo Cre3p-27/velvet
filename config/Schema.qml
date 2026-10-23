@@ -3412,6 +3412,88 @@ Singleton {
             fn: "openBluetooth"
         },
         {
+            kind: "page",
+            name: "SOUND PROBLEMS",
+            aka: "SOUND DROPS · TON BRICHT AB · BLUETOOTH ABBRÜCHE · AUSSETZER · LAUTSPRECHER · CRACKLE · STOTTERN",
+            help: "Why the sound drops, cuts or turns thin — and what stops it. Velvet reads the facts itself: which output plays, how often a Bluetooth device dropped today (the journal says so), which band the Wi-Fi uses and which codec the Bluetooth sound runs. Two different devices dropping the same way is the PC's Bluetooth link, not the speakers.",
+            sub: "DROPOUTS, THE CAUSE AND THE FIX",
+            icon: "graphic_eq",
+            items: [
+                {
+                    kind: "info",
+                    name: "THE CAUSE",
+                    help: "What the facts point to. Bluetooth shares the 2.4 GHz band with Wi-Fi — on a combined card (MediaTek, many Intel and Realtek ones) even one antenna — so a busy 2.4 GHz Wi-Fi is the most common reason Bluetooth sound stutters or drops. One device dropping alone can also be distance, a wall or a USB 3 port right next to the PC's antenna.",
+                    sub: "WHAT THE FACTS POINT TO",
+                    live: "soundVerdict"
+                },
+                {
+                    kind: "info",
+                    name: "PLAYS ON",
+                    help: "The output that plays now, and how: the Bluetooth codec, or the kind of connection.",
+                    sub: "THE OUTPUT AND ITS CODEC",
+                    live: "soundPlays"
+                },
+                {
+                    kind: "info",
+                    name: "DROPOUTS",
+                    help: "How often a Bluetooth device lost its link in the last 24 hours (WirePlumber logs every one), when the last one was, and on how many devices.",
+                    sub: "BLUETOOTH, THE LAST 24 HOURS",
+                    live: "soundDrops"
+                },
+                {
+                    kind: "info",
+                    name: "WI-FI BAND",
+                    help: "The band your Wi-Fi uses. 2.4 GHz is Bluetooth's band. The fix: your router's 5 GHz network (QUICK → WI-FI shows each network's band), or a network cable — then Bluetooth has the air to itself.",
+                    sub: "2.4 GHZ IS BLUETOOTH'S BAND",
+                    live: "soundWifi"
+                },
+                {
+                    kind: "toggle",
+                    key: "services.btReconnect",
+                    name: "RECONNECT AFTER A DROP",
+                    aka: "AUTO RECONNECT · WIEDER VERBINDEN",
+                    help: "When a Bluetooth device's link breaks (not when you switch it off), Velvet connects it again — after 2, 8 and 25 seconds — and the sound goes back to it.",
+                    sub: "A DROPPED DEVICE COMES BACK BY ITSELF"
+                },
+                {
+                    kind: "choice",
+                    key: "services.btQuality",
+                    name: "BLUETOOTH SOUND",
+                    aka: "CODEC · APTX · LDAC · SBC · AAC",
+                    help: "BEST is the codec with the most detail (aptX HD, LDAC) — and the highest bitrate, the first to break up when the air is busy. STABLE takes aptX, AAC or SBC: a lower bitrate that rides out a busy band, you will hardly hear the difference. SAFEST is plain SBC. Applied to every Bluetooth output the moment it connects.",
+                    sub: "STABLE IF IT DROPS",
+                    options: [
+                        { value: "best", label: "BEST · APTX HD, LDAC" },
+                        { value: "stable", label: "STABLE · APTX, AAC, SBC" },
+                        { value: "safest", label: "SAFEST · SBC" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    live: "keepMusicQuality",
+                    name: "KEEP MUSIC QUALITY",
+                    aka: "HEADSET MODE · HFP · CALL MODE · MONO",
+                    help: "An app that opens a microphone (a call, Discord, a game) can switch a Bluetooth headset into its call mode: mono, thin, telephone sound. On, the headset stays in music mode — right when you speak into another microphone. This is WirePlumber's own setting, saved by WirePlumber.",
+                    sub: "NO THIN CALL MODE WHEN AN APP OPENS A MIC"
+                },
+                {
+                    kind: "action",
+                    fn: "soundTest",
+                    name: "PLAY A TEST SOUND",
+                    aka: "SOUND TEST · TESTTON",
+                    help: "A short chime on the output that plays now. Heard it clean? The output and the device work — a problem is in the app or the stream. Switch the output in the bar's sound menu and test the next one to compare.",
+                    sub: "A SHORT CHIME ON THE OUTPUT THAT PLAYS NOW"
+                },
+                {
+                    kind: "action",
+                    fn: "openQuick",
+                    name: "WI-FI NETWORKS AND THEIR BANDS",
+                    help: "Opens QUICK: every network shows its band (2.4 GHZ or 5 GHZ). Join the 5 GHz one of your router to give Bluetooth its band back.",
+                    sub: "JOIN A 5 GHZ NETWORK"
+                }
+            ]
+        },
+        {
             kind: "action",
             name: "RESTART SOUND SERVER",
             help: "Restarts PipeWire, its Pulse layer and WirePlumber. Fixes missing sound or stuck devices; audio cuts out for a moment.",
@@ -3435,9 +3517,25 @@ Singleton {
             key: "display.mode",
             name: "RESOLUTION",
             aka: "AUFLÖSUNG · REFRESH RATE · HZ · MODE",
-            help: "AUTO is the screen's own resolution (the sharpest — anything else is scaled and soft) at the fastest refresh it offers there. Pick another to override it; it only applies to a screen that offers that mode, and only while AUTO SCREEN SETUP is on.",
-            sub: "AUTO = THE SCREEN'S OWN, AT ITS FASTEST REFRESH",
+            help: "AUTO is the screen's own resolution (the sharpest — anything else is scaled and soft) at the fastest refresh that works on its port. A mode the screen lists but the port or cable cannot carry (4K at 240 Hz over HDMI often fails: no signal, the screen drops out) is noticed the moment it fails, remembered for that port, and AUTO steps down to the fastest mode below it. SAFE is the screen's own resolution at 60 Hz — every cable carries it. Pick another to override it; it only applies to a screen that offers that mode, and only while AUTO SCREEN SETUP is on.",
+            sub: "AUTO = THE SCREEN'S OWN, AT THE FASTEST REFRESH THAT WORKS",
             options: Config.monitorModes
+        },
+        {
+            kind: "info",
+            name: "RIGHT NOW",
+            aka: "SCREEN STATUS · MONITOR · KEIN SIGNAL · NO SIGNAL",
+            help: "What every screen runs now, and which modes failed on its port. A screen that shows NO EDID did not say what it is — usually a loose or too-long cable, or the screen still waking up.",
+            sub: "WHAT EACH SCREEN RUNS — AND WHAT FAILED",
+            live: "screenStatus"
+        },
+        {
+            kind: "action",
+            fn: "screensForget",
+            name: "TRY THE FAST MODES AGAIN",
+            aka: "240 HZ · RETRY · FORGET FAILED MODES · NEU VERSUCHEN",
+            help: "Forgets which modes failed on which port and puts every screen on its fastest mode again — after you changed the cable or the port. Should the picture go black: Super + Ctrl + Alt + R puts every screen on 60 Hz, even when the shell itself is stuck (or run  velvet display safe).",
+            sub: "AFTER A NEW CABLE · BLACK SCREEN? SUPER+CTRL+ALT+R"
         },
         {
             kind: "choice",

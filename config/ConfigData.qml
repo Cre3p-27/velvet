@@ -323,6 +323,13 @@ JsonAdapter {
         property bool weatherMetric: true
         property int weatherInterval: 20   // minutes
         property string screenshotCommand: "grim -g \"$(slurp)\" - | wl-copy"
+        // ── SOUND PROBLEMS (services/SoundCheck.qml) ────────────────
+        // A Bluetooth device whose link broke is connected again by
+        // itself (2, 8 and 25 s after the drop).
+        property bool btReconnect: true
+        // The Bluetooth codec: "best" (aptX HD, LDAC …), "stable" (aptX,
+        // AAC or SBC — a lower bitrate rides out a busy band), "safest" (SBC).
+        property string btQuality: "best"
     }
 
     // ================================================================= MAP
