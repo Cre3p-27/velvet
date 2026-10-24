@@ -1555,10 +1555,14 @@ FloatingWindow {
                     required property int index
 
                     readonly property bool sel: ztab.index === (root.flipTarget >= 0 ? root.flipTarget : root.zone)
+                    // Under the pointer a room tab answers: an accent edge, a
+                    // warm tint and a small lift (it was 7 % → 14 % grey —
+                    // easy to miss).
+                    readonly property bool hot: ztabArea.containsMouse && !ztab.sel
 
                     width: zrow.implicitWidth + 46
                     height: 46
-                    scale: ztab.sel ? 1.05 : 1
+                    scale: ztab.sel ? 1.05 : (ztab.hot ? 1.025 : 1)
 
                     Behavior on scale {
                         NumberAnimation {
@@ -1571,11 +1575,16 @@ FloatingWindow {
                     Slash {
                         anchors.fill: parent
                         shear: Appearance.skew
-                        color: ztab.sel ? Colours.alpha(Colours.ink, 0.12) : (ztabArea.containsMouse ? Colours.alpha(Colours.ink, 0.14) : Colours.alpha(Colours.ink, 0.07))
-                        borderColor: ztab.sel ? Colours.alpha(Colours.ink, 0.28) : Colours.alpha(Colours.ink, 0.2)
+                        color: ztab.sel ? Colours.alpha(Colours.ink, 0.12) : (ztab.hot ? Colours.alpha(Colours.accent, 0.16) : Colours.alpha(Colours.ink, 0.07))
+                        borderColor: ztab.sel ? Colours.alpha(Colours.ink, 0.28) : (ztab.hot ? Colours.alpha(Colours.accent, 0.6) : Colours.alpha(Colours.ink, 0.2))
                         borderWidth: 1
 
                         Behavior on color {
+                            ColorAnimation {
+                                duration: Appearance.anim.fast
+                            }
+                        }
+                        Behavior on borderColor {
                             ColorAnimation {
                                 duration: Appearance.anim.fast
                             }
@@ -1599,7 +1608,13 @@ FloatingWindow {
                             anchors.verticalCenter: parent.verticalCenter
                             display: true
                             text: ztab.modelData.name
-                            color: ztab.sel ? Colours.accent : Colours.ink
+                            color: ztab.sel || ztab.hot ? Colours.accent : Colours.ink
+
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: Appearance.anim.fast
+                                }
+                            }
                             font.pixelSize: Appearance.font.size.small
                             tracking: 1.4
                         }
@@ -1837,9 +1852,13 @@ FloatingWindow {
         SettingsList {
             id: listPane
 
-            visible: root.zone === 1 && !root.overlayOpen && !root.isPane
             // On the front page the list stands down entirely — invisible,
             // inert, parked off to the right until a category calls for it.
+            // Truly invisible once it has faded: parked there at opacity 0 it
+            // still lay over the categories and took their hover (only LOOKS,
+            // above it, ever lit up, and the pointer showed a hand over dark
+            // rows).
+            visible: root.zone === 1 && !root.overlayOpen && !root.isPane && (!root.home || listPane.opacity > 0.01)
             enabled: !root.home
             opacity: root.home || root.flipping ? 0 : 1
             x: root.listX

@@ -88,7 +88,17 @@ Item {
     implicitHeight: root.headH + root.fold
 
     // The cursor is a bar and a lift; the rest of the list stays readable.
-    x: shift.value
+    // The pointer's nudge eases in and out without the cursor's bounce —
+    // swept across the rows, a spring on every one of them wobbled.
+    x: shift.value + root.nudge
+    property real nudge: root.hot && !root.selected ? 4 : 0
+
+    Behavior on nudge {
+        NumberAnimation {
+            duration: 180
+            easing.type: Easing.OutCubic
+        }
+    }
     scale: selected ? 1.006 : 1.0
     opacity: selected || hot ? 1.0 : (root.styled && !root.inUse ? 0.62 : 0.9)
     z: selected ? 10 : 1
@@ -98,7 +108,7 @@ Item {
     Spring {
         id: shift
 
-        to: root.selected ? 10 : (root.hot ? 4 : 0)
+        to: root.selected ? 10 : 0
         spring: 4.0
         damping: 0.34
         epsilon: 0.5
@@ -150,6 +160,11 @@ Item {
         z: -1
 
         Behavior on color {
+            ColorAnimation {
+                duration: Appearance.anim.fast
+            }
+        }
+        Behavior on borderColor {
             ColorAnimation {
                 duration: Appearance.anim.fast
             }

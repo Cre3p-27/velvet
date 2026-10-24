@@ -92,14 +92,23 @@ Item {
                 // categories into grey noise. The selected one still moves and
                 // fills; the others stay legible, because you choose between
                 // them by reading them.
-                x: tabShift.value
+                // the pointer's nudge eases, the cursor's lift springs
+                x: tabShift.value + tab.nudge
+                property real nudge: tab.hot && !tab.selected ? 6 : 0
+
+                Behavior on nudge {
+                    NumberAnimation {
+                        duration: 180
+                        easing.type: Easing.OutCubic
+                    }
+                }
                 scale: selected ? 1.02 : 1.0
                 opacity: selected || hot ? 1.0 : (root.focused ? 0.9 : 0.78)
 
                 Spring {
                     id: tabShift
 
-                    to: tab.selected ? 16 : (tab.hot ? 6 : 0)
+                    to: tab.selected ? 16 : 0
                     spring: 4.0
                     damping: 0.32
                     epsilon: 0.5
@@ -122,10 +131,15 @@ Item {
                     anchors.fill: parent
                     shear: Appearance.skew
                     color: tab.selected ? Colours.accent : (tab.hot ? Colours.alpha(Colours.ink, 0.08) : "transparent")
-                    borderColor: !tab.selected && tab.hot ? Colours.alpha(Colours.ink, 0.22) : "transparent"
+                    borderColor: !tab.selected && tab.hot ? Colours.alpha(Colours.ink, 0.22) : Colours.alpha(Colours.ink, 0)
                     borderWidth: 1
 
                     Behavior on color {
+                        ColorAnimation {
+                            duration: Appearance.anim.fast
+                        }
+                    }
+                    Behavior on borderColor {
                         ColorAnimation {
                             duration: Appearance.anim.fast
                         }

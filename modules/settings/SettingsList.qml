@@ -70,23 +70,75 @@ Item {
     readonly property color headInk: root.win && root.wv === "7" ? "#1e395b" : (root.win ? WinTheme.text : Colours.ink)
 
     // ── the pointer
+    // The lit row is worked out from where the pointer IS, not from rows
+    // saying "entered" / "left": a row that slid under a resting pointer (a
+    // scroll, a fold opening, the rows rebuilt after a click) never said
+    // "entered", so it stayed dark until you left it and came back. Between
+    // two rows the light stays on the nearer one, so the help strip does not
+    // flicker back to the cursor's row on the way down; and the row's own
+    // nudge to the right can no longer pull it out from under the pointer.
     property int hoverIndex: -1
     // Which hand moved last: the help strip follows it.
     property bool mouseLast: false
-    // When the list last scrolled. Rows sliding under a resting pointer
-    // report a hover too; for a moment after a scroll those are not real.
+    // When the list last scrolled. While it moves nothing is lit (rows
+    // passing under a resting pointer are not chosen); once it rests, the
+    // row under the pointer lights up again.
     property real lastScroll: 0
+    property point pointer: Qt.point(-1, -1)
 
-    function hoverRow(i: int): void {
-        if (Date.now() - root.lastScroll < 260)
-            return;
-        root.hoverIndex = i;
-        root.mouseLast = true;
+    function rowUnderPointer(): int {
+        if (!pointerWatch.hovered)
+            return -1;
+        const v = list.mapFromItem(root, root.pointer.x, root.pointer.y);
+        // over the rows only — not the header, the banner, the help strip
+        // or the scrollbar's strip on the right
+        if (v.x < 0 || v.y < 0 || v.y > list.height || v.x > list.width - 44)
+            return -1;
+        const c = list.contentItem.mapFromItem(root, root.pointer.x, root.pointer.y);
+        const midX = (list.width - 48) / 2;
+        let i = list.indexAt(midX, c.y);
+        if (i < 0)
+            i = list.indexAt(midX, c.y - list.spacing / 2 - 1);
+        if (i < 0)
+            i = list.indexAt(midX, c.y + list.spacing / 2 + 1);
+        return i;
     }
 
-    function unhoverRow(i: int): void {
-        if (root.hoverIndex === i)
-            root.hoverIndex = -1;
+    function rehover(): void {
+        if (Date.now() - root.lastScroll < 120)
+            return;
+        const i = root.rowUnderPointer();
+        if (i !== root.hoverIndex)
+            root.hoverIndex = i;
+    }
+
+    // Look again once things have come to rest (a scroll, new rows, a fold).
+    function settle(ms: int): void {
+        rehoverLater.interval = Math.max(60, ms);
+        rehoverLater.restart();
+    }
+
+    Timer {
+        id: rehoverLater
+
+        onTriggered: root.rehover()
+    }
+
+    HoverHandler {
+        id: pointerWatch
+
+        onPointChanged: {
+            const p = pointerWatch.point.position;
+            if (Math.abs(p.x - root.pointer.x) < 0.5 && Math.abs(p.y - root.pointer.y) < 0.5)
+                return;
+            root.pointer = p;
+            root.mouseLast = true;
+            root.rehover();
+        }
+        onHoveredChanged: {
+            if (!pointerWatch.hovered)
+                root.hoverIndex = -1;
+        }
     }
 
     readonly property var helpItem: root.mouseLast && root.hoverIndex >= 0 ? (root.rows[root.hoverIndex]?.item ?? null) : root.currentItem
@@ -385,8 +437,9 @@ Item {
     }
 
     onRowsChanged: {
-        root.hoverIndex = -1;
         root.sync();
+        // the row under the pointer once the new rows have landed
+        root.settle(Appearance.anim.normal + 40);
     }
     Component.onCompleted: root.sync()
 
@@ -570,8 +623,13 @@ Item {
         currentIndex: -1
         cacheBuffer: 800
 
-        onContentYChanged: root.lastScroll = Date.now()
+        onContentYChanged: {
+            root.lastScroll = Date.now();
+            root.settle(140);
+        }
         onMovementStarted: root.hoverIndex = -1
+        // a fold opening or closing moves the rows below it
+        onContentHeightChanged: root.settle(Appearance.anim.normal + 40)
 
         // Staggered fly-in: rows arrive one after another, not as a block.
         add: Transition {
@@ -607,8 +665,6 @@ Item {
             open: index === root.openIndex
             armed: index === root.armedIndex
 
-            onHovered: root.hoverRow(index)
-            onUnhovered: root.unhoverRow(index)
             onActivate: root.picked(index)
             onTouched: root.touched(index)
         }
@@ -625,6 +681,7 @@ Item {
         onScrolled: {
             root.lastScroll = Date.now();
             root.hoverIndex = -1;
+            root.settle(140);
         }
     }
 
@@ -665,7 +722,23 @@ Item {
         readonly property string text: root.helpItem ? ((root.helpItem.help ?? "") !== "" ? root.helpItem.help : "") : ""
         // Three lines, so the list keeps its room; a click shows it all.
         property bool full: false
-        onTextChanged: helpStrip.full = false
+        // A new text settles in (a quick fade from faint) instead of
+        // snapping — sweeping down the rows reads as one motion.
+        onTextChanged: {
+            helpStrip.full = false;
+            helpSettle.restart();
+        }
+
+        NumberAnimation {
+            id: helpSettle
+
+            target: helpText
+            property: "opacity"
+            from: 0.3
+            to: 1
+            duration: 170
+            easing.type: Easing.OutCubic
+        }
         height: helpStrip.text !== "" ? Math.max(helpIcon.height, helpText.implicitHeight) + 26 : 0
         visible: height > 0
         clip: true
