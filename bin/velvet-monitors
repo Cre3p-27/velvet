@@ -267,9 +267,14 @@ def watch() -> int:
     w = Watch()
     f = open(path, "r", errors="replace")
     f.seek(0, os.SEEK_END)
+    # gone with the shell that started it: a shell that is killed (not reloaded)
+    # leaves its children behind, and every restart used to add one more watcher
+    start_ppid = os.getppid()
     while True:
         line = f.readline()
         if not line:
+            if os.getppid() != start_ppid:
+                return 0
             # Hyprland restarted (a new log) or rotated it: follow the new one
             try:
                 if os.path.getsize(path) < f.tell() or log_path() != path:
