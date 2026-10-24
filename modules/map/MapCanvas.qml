@@ -895,14 +895,15 @@ Item {
 
                     width: 62
                     height: 28
-                    scale: chip.target ? 1.1 : (chipHover.hovered ? 1.04 : 1)
+                    scale: chipLift.value
 
-                    Behavior on scale {
-                        SpringAnimation {
-                            spring: 3.4
-                            damping: 0.6
-                            epsilon: 0.01
-                        }
+                    Spring {
+                        id: chipLift
+
+                        to: chip.target ? 1.1 : (chipHover.hovered ? 1.04 : 1)
+                        spring: 3.4
+                        damping: 0.6
+                        epsilon: 0.01
                     }
 
                     Rectangle {
@@ -1383,14 +1384,15 @@ Item {
                 y: card.isDragged ? field.sy(root.dragWY) : field.sy((card.win?.y ?? 0) - (field.cell?.monY ?? 0))
                 width: Math.max(16, (card.win?.w ?? 0) * root.zoom)
                 height: Math.max(12, (card.win?.h ?? 0) * root.zoom)
-                scale: (card.isDragged ? 1.03 : (card.hot ? 1.015 : 1)) * (0.9 + 0.1 * card.arrive)
+                scale: cardScale.value
 
-                Behavior on scale {
-                    SpringAnimation {
-                        spring: 3
-                        damping: 0.6
-                        epsilon: 0.01
-                    }
+                Spring {
+                    id: cardScale
+
+                    to: (card.isDragged ? 1.03 : (card.hot ? 1.015 : 1)) * (0.9 + 0.1 * card.arrive)
+                    spring: 3
+                    damping: 0.6
+                    epsilon: 0.01
                 }
 
                 // The one under the pointer comes forward.
@@ -1729,14 +1731,15 @@ Item {
                     color: beaconArea.containsPress ? Colours.accent : Colours.alpha(Colours.surface, 0.94)
                     border.width: 1
                     border.color: Colours.alpha(Colours.accent, beaconHover.hovered ? 0.95 : 0.55)
-                    scale: beaconHover.hovered ? 1.12 : 1
+                    scale: beaconLift.value
 
-                    Behavior on scale {
-                        SpringAnimation {
-                            spring: 3.4
-                            damping: 0.6
-                            epsilon: 0.01
-                        }
+                    Spring {
+                        id: beaconLift
+
+                        to: beaconHover.hovered ? 1.12 : 1
+                        spring: 3.4
+                        damping: 0.6
+                        epsilon: 0.01
                     }
 
                     AppIcon {
@@ -1863,14 +1866,15 @@ Item {
                     color: toolArea.pressed ? Colours.alpha(Colours.accent, 0.4) : (toolHover.hovered ? Colours.alpha(root.ink, 0.12) : Colours.alpha(root.ink, 0.05))
                     border.width: 1
                     border.color: tool.lit ? Colours.alpha(Colours.accent, 0.7) : Colours.alpha(root.ink, toolHover.hovered ? 0.24 : 0.1)
-                    scale: toolArea.pressed ? 0.94 : 1
+                    scale: toolPress.value
 
-                    Behavior on scale {
-                        SpringAnimation {
-                            spring: 4
-                            damping: 0.5
-                            epsilon: 0.01
-                        }
+                    Spring {
+                        id: toolPress
+
+                        to: toolArea.pressed ? 0.94 : 1
+                        spring: 4
+                        damping: 0.5
+                        epsilon: 0.01
                     }
                     Behavior on color {
                         ColorAnimation {

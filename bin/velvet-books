@@ -1220,7 +1220,10 @@ def paint(prompt: str, out: str, width: int, height: int, seed: int, steps: int 
            "--vae", os.path.join(IMAGE_MODELS, ENGINE["files"][1]["name"]),
            "--llm", ENGINE["encoder"],
            "-p", prompt, "--cfg-scale", "1.0", "--steps", str(steps), "-W", str(width), "-H", str(height),
-           "-s", str(seed), "-o", out]
+           "-s", str(seed), "-o", out,
+           # flash attention in the diffusion model: without it a 1344×1360 picture took 127 s per step on
+           # the RX 9070 XT (the attention did not fit a Vulkan buffer), with it 5 s — 34 s a picture
+           "--diffusion-fa"]
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
     while proc.poll() is None:
         if stopping() or gpu_game():

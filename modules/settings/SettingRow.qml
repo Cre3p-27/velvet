@@ -88,17 +88,20 @@ Item {
     implicitHeight: root.headH + root.fold
 
     // The cursor is a bar and a lift; the rest of the list stays readable.
-    x: selected ? 10 : (hot ? 4 : 0)
+    x: shift.value
     scale: selected ? 1.006 : 1.0
     opacity: selected || hot ? 1.0 : (root.styled && !root.inUse ? 0.62 : 0.9)
     z: selected ? 10 : 1
 
-    Behavior on x {
-        SpringAnimation {
-            spring: 4.0
-            damping: 0.34
-            epsilon: 0.5
-        }
+    // sprung (components/Spring.qml: SpringAnimation's physics, drawn on
+    // every frame of a fast screen)
+    Spring {
+        id: shift
+
+        to: root.selected ? 10 : (root.hot ? 4 : 0)
+        spring: 4.0
+        damping: 0.34
+        epsilon: 0.5
     }
     Behavior on scale {
         NumberAnimation {
@@ -155,7 +158,7 @@ Item {
 
     // The white tab that punches out on the left when selected.
     Rectangle {
-        width: root.selected ? 13 : 0
+        width: punch.value
         height: root.headH * 0.66
         y: (root.headH - height) / 2
         anchors.left: parent.left
@@ -166,12 +169,13 @@ Item {
             matrix: Qt.matrix4x4(1, Math.tan(Appearance.skew * Math.PI / 180), 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
         }
 
-        Behavior on width {
-            SpringAnimation {
-                spring: 4.5
-                damping: 0.3
-                epsilon: 0.3
-            }
+        Spring {
+            id: punch
+
+            to: root.selected ? 13 : 0
+            spring: 4.5
+            damping: 0.3
+            epsilon: 0.3
         }
     }
 
@@ -499,19 +503,22 @@ Item {
             }
 
             Slash {
+                id: knob
+
                 width: Math.round(38 * Appearance.densityScale)
                 height: parent.height - 10
                 y: 5
-                x: parent.checked ? parent.width - width - 5 : 5
+                x: knobSlide.value
                 shear: Appearance.skew
                 color: parent.checked ? (root.selected ? Colours.accent : Colours.paper) : Colours.ink
 
-                Behavior on x {
-                    SpringAnimation {
-                        spring: 5.0
-                        damping: 0.34
-                        epsilon: 0.4
-                    }
+                Spring {
+                    id: knobSlide
+
+                    to: knob.parent.checked ? knob.parent.width - knob.width - 5 : 5
+                    spring: 5.0
+                    damping: 0.34
+                    epsilon: 0.4
                 }
             }
 

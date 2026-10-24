@@ -76,7 +76,9 @@ PanelWindow {
         bottom: root.position !== "top"
     }
 
-    implicitWidth: root.vertical ? root.barFootprint + 380 : 0
+    // room for the widest card next to a side bar: a tip of up to 480 px
+    // of text (popouts/Tip.qml) plus its padding and the slide-in
+    implicitWidth: root.vertical ? root.barFootprint + 560 : 0
     implicitHeight: root.vertical ? 0 : root.barFootprint + 320
 
     mask: Region {
@@ -94,37 +96,41 @@ PanelWindow {
         // new content fades in once there is room for it.
         width: card.cw
         height: card.ch
-        property real cw: content.implicitWidth
-        property real ch: content.implicitHeight
-        Behavior on cw {
-            enabled: root.entered
-            SpringAnimation {
-                spring: 5
-                damping: 0.42
-                epsilon: 0.3
-            }
+        readonly property real cw: cwSpring.value
+        readonly property real ch: chSpring.value
+        // (components/Spring.qml: the same springs, drawn on every frame)
+        Spring {
+            id: cwSpring
+
+            to: content.implicitWidth
+            live: root.entered
+            spring: 5
+            damping: 0.42
+            epsilon: 0.3
         }
-        Behavior on ch {
-            enabled: root.entered
-            SpringAnimation {
-                spring: 5
-                damping: 0.42
-                epsilon: 0.3
-            }
+        Spring {
+            id: chSpring
+
+            to: content.implicitHeight
+            live: root.entered
+            spring: 5
+            damping: 0.42
+            epsilon: 0.3
         }
 
         // The anchor glides (a tip moving on to the next button), the slide
         // eases, the size springs — and the position is simply where they put
         // it. A curve on x itself was restarted by every frame of the size's
         // spring and never moved (measured: stuck at the old place).
-        property real ax: Popout.anchorPos
-        Behavior on ax {
-            enabled: root.entered
-            SpringAnimation {
-                spring: 5
-                damping: 0.42
-                epsilon: 0.3
-            }
+        readonly property real ax: axSpring.value
+        Spring {
+            id: axSpring
+
+            to: Popout.anchorPos
+            live: root.entered
+            spring: 5
+            damping: 0.42
+            epsilon: 0.3
         }
         property real sl: card.slide
         Behavior on sl {

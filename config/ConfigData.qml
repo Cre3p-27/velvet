@@ -376,6 +376,10 @@ JsonAdapter {
         // The TASKS module in the island's swipe cycle, between the
         // map and the weather — configure it in WORKFLOW.
         property bool islandTasks: true
+        // SWIPE LIKE A PHONE: the pill's face sticks to the hand, so a swipe
+        // to the left brings the next module in from the right. Off: drag
+        // towards the module you want, like a cursor along the tabs.
+        property bool islandSwipeNatural: true
         // How wide the plate is, as a share of the screen. There is no
         // height dial on purpose: the plate is cut to your monitor's
         // shape, which is what makes one workspace fill it exactly.

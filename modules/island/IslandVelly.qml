@@ -32,6 +32,10 @@ Item {
 
     readonly property int pad: 24
     readonly property string phase: Velly.phase
+    // false while the island is folded, hidden or on another tab (Island.qml
+    // binds it): the orb, the motes and the blinkers rest, so the island stops
+    // redrawing itself for an animation nobody can see
+    property bool onScreen: true
     readonly property bool livePhase: phase === "listening" || phase === "hearing" || phase === "thinking" || phase === "speaking"
 
     // The conversation as the answer area draws it: everything from memory,
@@ -62,8 +66,12 @@ Item {
         tracking: 2.4
 
         SequentialAnimation on opacity {
-            running: root.livePhase
+            running: root.livePhase && root.onScreen
             loops: Animation.Infinite
+            onRunningChanged: {
+                if (!running)
+                    wordmark.opacity = 1;
+            }
             NumberAnimation {
                 to: 0.72
                 duration: 900
@@ -157,9 +165,13 @@ Item {
         readonly property bool listening: root.phase === "listening" || root.phase === "hearing"
         readonly property bool thinking: root.phase === "thinking"
         readonly property bool speaking: root.phase === "speaking"
-        readonly property real energy: Velly.listenEnergy()
+        // the live levels arrive ~25 times a second while she listens: off
+        // screen they are not read at all, or the hidden orb keeps redrawing
+        readonly property real energy: root.onScreen ? Velly.listenEnergy() : 0.08
 
         function barLength(i: int): real {
+            if (!root.onScreen)
+                return 4;
             if (orb.listening)
                 return 4 + Velly.band(i, orb.bars) * 40;
             if (orb.speaking)
@@ -181,7 +193,7 @@ Item {
 
         // Two clocks, one for each kind of motion; both stop when she sleeps.
         NumberAnimation on sweep {
-            running: orb.thinking
+            running: orb.thinking && root.onScreen
             loops: Animation.Infinite
             from: 0
             to: 1
@@ -189,7 +201,7 @@ Item {
             easing.type: Easing.Linear
         }
         NumberAnimation on pulse {
-            running: !orb.thinking
+            running: !orb.thinking && root.onScreen
             loops: Animation.Infinite
             from: 0
             to: Math.PI * 2
@@ -292,7 +304,7 @@ Item {
             opacity: orb.thinking ? 1 : 0
 
             RotationAnimation on rotation {
-                running: true
+                running: orb.thinking && root.onScreen
                 loops: Animation.Infinite
                 from: 0
                 to: 360
@@ -505,7 +517,7 @@ Item {
                     color: Colours.accent
 
                     SequentialAnimation on opacity {
-                        running: liveDot.visible
+                        running: liveDot.visible && root.onScreen
                         loops: Animation.Infinite
                         NumberAnimation {
                             to: 0.25
@@ -587,7 +599,7 @@ Item {
                     visible: root.phase === "thinking" || root.phase === "speaking"
 
                     SequentialAnimation on opacity {
-                        running: caret.visible
+                        running: caret.visible && root.onScreen
                         loops: Animation.Infinite
                         NumberAnimation {
                             to: 0.15
@@ -617,8 +629,11 @@ Item {
 
                 P5Text {
                     width: parent.width
+                    // the two ways to ask, said where you ask (velvet-ai MODES)
                     text: Velly.brainOk
-                        ? `TYPE OR TALK — ${Binds.display("velly").toUpperCase()} CALLS ME FROM ANYWHERE. I ONLY LISTEN WHILE I AM AWAKE.`
+                        ? (Config.velly.speakWhen === "always"
+                            ? `TYPE OR TALK — ${Binds.display("velly").toUpperCase()} CALLS ME FROM ANYWHERE. I ONLY LISTEN WHILE I AM AWAKE.`
+                            : `TALK: A QUICK ANSWER, OUT LOUD · TYPE: A THOROUGH ONE, IN WRITING — ${Binds.display("velly").toUpperCase()} CALLS ME FROM ANYWHERE.`)
                         : "SETUP LOADS A BRAIN, EARS AND A VOICE ON THIS PC — NO KEY, NO COST. A KEY IS ONLY FOR CLOUD BRAINS."
                     color: Colours.inkDim
                     font.pixelSize: Appearance.font.size.tiny
@@ -1048,10 +1063,10 @@ Item {
         Rectangle {
             anchors.left: parent.left
             anchors.bottom: parent.bottom
-            width: parent.width * Math.min(1, Velly.level * 1.6)
+            width: root.onScreen ? parent.width * Math.min(1, Velly.level * 1.6) : 0
             height: 2
             color: Colours.alpha(Colours.accent, 0.75)
-            visible: Velly.listening
+            visible: Velly.listening && root.onScreen
             Behavior on width {
                 NumberAnimation {
                     duration: 70

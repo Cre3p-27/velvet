@@ -6,6 +6,7 @@
 //  Ways in: type "aim" in the launcher, the Konami code on the open island,
 //  "starte den Aim Trainer" to Velly, `qs -c velvet ipc call panels aim`.
 import qs.config
+import qs.components
 import qs.services
 import Quickshell
 import Quickshell.Io
@@ -689,14 +690,15 @@ Item {
                     color: chip.on ? Colours.alpha(Colours.accent, 0.2) : (chipHover.hovered ? Colours.alpha(Colours.ink, 0.08) : Colours.alpha(Colours.ink, 0.03))
                     border.width: 1
                     border.color: chip.on ? Colours.accent : Colours.alpha(Colours.ink, 0.14)
-                    scale: chipArea.pressed ? 0.95 : (chipHover.hovered ? 1.03 : 1)
+                    scale: chipLift.value
 
-                    Behavior on scale {
-                        SpringAnimation {
-                            spring: 4
-                            damping: 0.5
-                            epsilon: 0.01
-                        }
+                    Spring {
+                        id: chipLift
+
+                        to: chipArea.pressed ? 0.95 : (chipHover.hovered ? 1.03 : 1)
+                        spring: 4
+                        damping: 0.5
+                        epsilon: 0.01
                     }
                     Behavior on color {
                         ColorAnimation {

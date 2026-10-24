@@ -110,19 +110,20 @@ Plate {
                 name: line.icon
                 color: line.lit ? Colours.paper : Colours.accent
                 font.pixelSize: 21
-                scale: line.lit ? 1.12 : 1
+                scale: lineLift.value
 
                 Behavior on color {
                     ColorAnimation {
                         duration: Appearance.anim.fast
                     }
                 }
-                Behavior on scale {
-                    SpringAnimation {
-                        spring: 6
-                        damping: 0.38
-                        epsilon: 0.002
-                    }
+                Spring {
+                    id: lineLift
+
+                    to: line.lit ? 1.12 : 1
+                    spring: 6
+                    damping: 0.38
+                    epsilon: 0.002
                 }
             }
 
@@ -180,7 +181,7 @@ Plate {
 
         x: body.x
         width: body.width
-        y: plate.atY
+        y: atSpring.value
         height: plate.atH
         color: Colours.accent
         opacity: plate.line ? 1 : 0
@@ -194,13 +195,14 @@ Plate {
             }
         }
 
-        Behavior on atY {
-            enabled: plate.opacity > 0.05
-            SpringAnimation {
-                spring: 5.5
-                damping: 0.42
-                epsilon: 0.2
-            }
+        Spring {
+            id: atSpring
+
+            to: plate.atY
+            live: plate.opacity > 0.05
+            spring: 5.5
+            damping: 0.42
+            epsilon: 0.2
         }
         Behavior on opacity {
             NumberAnimation {

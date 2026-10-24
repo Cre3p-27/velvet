@@ -88,15 +88,18 @@ PanelWindow {
                 // hand; far enough (or flicked) it is swiped away, else it
                 // springs back. After the entrance x simply IS the sprung
                 // dragX (a timed curve on x chasing a spring never moves).
+                // dragX is where the hand (or the swipe's verdict) puts it;
+                // dragAt is where the spring has it on this frame.
                 readonly property real away: root.onRight ? width + 30 : -width - 30
-                x: card.shown ? card.dragX : card.away
-                opacity: shown && !leaving ? 1 - Math.min(0.6, Math.abs(card.dragX) / Math.max(1, width) * 0.9) : 0
+                x: card.shown ? card.dragAt : card.away
+                opacity: shown && !leaving ? 1 - Math.min(0.6, Math.abs(card.dragAt) / Math.max(1, width) * 0.9) : 0
                 scale: shown ? 1 : 0.92
                 property bool shown: false
                 property bool inPlace: false
                 property bool leaving: false
                 property bool closing: false
                 property real dragX: 0
+                readonly property real dragAt: dragSpring.value
 
                 swipeable: true
                 Component.onCompleted: shown = true
@@ -146,13 +149,16 @@ PanelWindow {
                         easing.type: Easing.OutExpo
                     }
                 }
-                Behavior on dragX {
-                    enabled: !card.swiping
-                    SpringAnimation {
-                        spring: 4.5
-                        damping: 0.38
-                        epsilon: 0.3
-                    }
+                // (components/Spring.qml: SpringAnimation's physics, drawn
+                // on every frame of a fast screen; the hand moves it directly)
+                Spring {
+                    id: dragSpring
+
+                    to: card.dragX
+                    live: !card.swiping
+                    spring: 4.5
+                    damping: 0.38
+                    epsilon: 0.3
                 }
                 Behavior on scale {
                     NumberAnimation {

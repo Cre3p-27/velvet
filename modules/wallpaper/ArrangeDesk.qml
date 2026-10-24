@@ -29,14 +29,15 @@ FocusScope {
     // the host flips it: true lifts the desk, false puts it back
     property bool shown: false
     // 0 → 1 as the desk lifts: the scale, the corners, the dark around it
-    property real lift: root.shown ? 1 : 0
-    Behavior on lift {
-        enabled: Config.appearance.animationScale > 0
-        SpringAnimation {
-            spring: 3.4
-            damping: 0.44
-            epsilon: 0.002
-        }
+    readonly property real lift: deskLift.value
+    Spring {
+        id: deskLift
+
+        to: root.shown ? 1 : 0
+        live: Config.appearance.animationScale > 0
+        spring: 3.4
+        damping: 0.44
+        epsilon: 0.002
     }
     readonly property bool settled: Math.abs(root.lift - (root.shown ? 1 : 0)) < 0.004
 
@@ -417,15 +418,16 @@ FocusScope {
         color: chip.strong ? (chipHover.hovered ? Colours.accentHot : Colours.accent) : (chipHover.hovered ? Qt.rgba(1, 1, 1, 0.2) : Qt.rgba(1, 1, 1, 0.09))
         border.width: chip.strong ? 0 : 1
         border.color: Qt.rgba(1, 1, 1, 0.16)
-        scale: chipTap.pressed ? 0.92 : (chipHover.hovered ? 1.05 : 1)
+        scale: chipLift.value
         antialiasing: true
 
-        Behavior on scale {
-            SpringAnimation {
-                spring: 7
-                damping: 0.4
-                epsilon: 0.002
-            }
+        Spring {
+            id: chipLift
+
+            to: chipTap.pressed ? 0.92 : (chipHover.hovered ? 1.05 : 1)
+            spring: 7
+            damping: 0.4
+            epsilon: 0.002
         }
         Behavior on color {
             ColorAnimation {
@@ -501,39 +503,42 @@ FocusScope {
         property real grabY: 0
         property bool moved: false
 
-        x: ai.dragging ? ai.gx : ai.fx
-        y: ai.dragging ? ai.gy : ai.fy
+        x: handX.value
+        y: handY.value
         width: ai.resizing ? ai.gw : ai.fw
         height: ai.resizing ? ai.gh : ai.fh
         z: ai.dragging || ai.resizing ? 10 : (ai.hot ? 2 : 1)
 
         // the hand's spring: the module trails the pointer a little
-        Behavior on x {
-            enabled: root.settled && !ai.resizing
-            SpringAnimation {
-                spring: 6
-                damping: 0.5
-                epsilon: 0.2
-            }
+        Spring {
+            id: handX
+
+            to: ai.dragging ? ai.gx : ai.fx
+            live: root.settled && !ai.resizing
+            spring: 6
+            damping: 0.5
+            epsilon: 0.2
         }
-        Behavior on y {
-            enabled: root.settled && !ai.resizing
-            SpringAnimation {
-                spring: 6
-                damping: 0.5
-                epsilon: 0.2
-            }
+        Spring {
+            id: handY
+
+            to: ai.dragging ? ai.gy : ai.fy
+            live: root.settled && !ai.resizing
+            spring: 6
+            damping: 0.5
+            epsilon: 0.2
         }
 
         // the wiggle (still while it is in the hand), the lift in the hand
         rotation: root.wiggles && !ai.dragging && !ai.resizing && !aiHover.hovered ? 0.6 * Math.sin(root.clock * Math.PI * 2 * 1.6 + ai.index * 1.9) * root.lift : 0
-        scale: ai.dragging ? 1.045 : (aiHover.hovered ? 1.015 : 1)
-        Behavior on scale {
-            SpringAnimation {
-                spring: 5
-                damping: 0.38
-                epsilon: 0.002
-            }
+        scale: handScale.value
+        Spring {
+            id: handScale
+
+            to: ai.dragging ? 1.045 : (aiHover.hovered ? 1.015 : 1)
+            spring: 5
+            damping: 0.38
+            epsilon: 0.002
         }
 
         // the shadow under a module in the hand
@@ -729,19 +734,20 @@ FocusScope {
             border.color: Qt.rgba(1, 1, 1, 0.3)
             opacity: ai.hot && !ai.dragging ? root.lift : 0
             visible: opacity > 0.02
-            scale: offHover.hovered ? 1.12 : 1
+            scale: offLift.value
 
             Behavior on opacity {
                 NumberAnimation {
                     duration: Appearance.anim.fast
                 }
             }
-            Behavior on scale {
-                SpringAnimation {
-                    spring: 7
-                    damping: 0.4
-                    epsilon: 0.002
-                }
+            Spring {
+                id: offLift
+
+                to: offHover.hovered ? 1.12 : 1
+                spring: 7
+                damping: 0.4
+                epsilon: 0.002
             }
 
             Icon {

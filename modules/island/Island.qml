@@ -6,11 +6,18 @@
 //  out of it, in one gesture:
 //
 //    · hold the left button and PULL DOWN      → the active module expands,
-//                                                following your hand
-//    · hold and SWIPE LEFT or RIGHT            → cycle the four modules; on
-//                                                release the pill settles into
-//                                                a small text view of the new
-//                                                module
+//                                                following your hand from the
+//                                                first pixel; a quick tug
+//                                                opens it too
+//    · hold and SWIPE LEFT or RIGHT            → the pill's face sticks to
+//                                                your hand and the next
+//                                                module's slides in beside it
+//                                                (like a phone; MODULES →
+//                                                DYNAMIC ISLAND → SWIPE LIKE A
+//                                                PHONE). Past the commit point
+//                                                a soft tick: let go and it
+//                                                changes. A flick does it from
+//                                                a short way too.
 //    · a plain CLICK                           → opens or closes the module
 //
 //  The modules, with the map in the middle of the swipe cycle:
@@ -311,11 +318,96 @@ PanelWindow {
 
     // ───────────────────────────────────────────────────────────── the gesture
     property bool pressed: false
+    // The hand holds the capsule: its springs follow the pointer directly.
+    // Let go BEFORE `pressed` (and with it every target) changes, so the
+    // springs are already live when their targets move and they spring from
+    // where the hand left them instead of jumping there.
+    property bool holding: false
     property string axis: ""      // "", "h" or "v" — locked on the first clear move
     property real dragDX: 0
     property real dragDY: 0
-    property real progress: 0     // 0…1, vertical pull
+    property real progress: 0     // 0…1 (a little more past the end), vertical pull
     property bool expanded: false
+
+    // ── the swipe's feel ────────────────────────────────────────────────────
+    //  The pill's face (icon and text) sticks to the hand, rubber-banded, and
+    //  the next module's face (the ghost) slides in from the other side. Past
+    //  the commit point a soft tick says "let go and it changes"; a quick flick
+    //  changes it from a short way too. Let go, everything carries on at the
+    //  hand's own speed (Spring's `carry`) and settles.
+    readonly property bool swipeNatural: Config.map.islandSwipeNatural
+    readonly property real swipeCommit: 60      // px of hand travel that change the module
+    // the two faces lie a whole face apart, like pages: the next one's icon
+    // peeks in at the edge, they never overlap
+    readonly property real swipeSpan: Math.max(160, root.textW - 76)
+    property bool swipePast: false             // past the commit point (the tick has sounded)
+    property int ghostIdx: -1                  // the face sliding in — or out, after a change
+    property real ghostSide: 1                 // the ghost's side of the face: -1 left, 1 right
+    property int swipeHand: 0                  // which way a committed swipe went (+1 right)
+    // the hand's last tenth of a second, for flicks: [ms, along, out]
+    property var trail: []
+
+    // close to 1:1 for a short way, then a softer and softer give (k·tanh)
+    function rubber(x: real, k: real): real {
+        return k * Math.tanh(x / k);
+    }
+
+    function track(along: real, out: real): void {
+        const t = Date.now();
+        const tr = root.trail;
+        tr.push([t, along, out]);
+        while (tr.length > 2 && t - tr[0][0] > 120)
+            tr.shift();
+        root.trail = tr;
+    }
+
+    // the hand's speed as it lets go, px/s along (k = 1) or out (k = 2), over
+    // its last 60 ms of moving — 0 when it had come to rest before letting go
+    // (a still beat between press and flick must not water the flick down)
+    function fling(k: int): real {
+        const tr = root.trail;
+        if (tr.length < 2)
+            return 0;
+        const b = tr[tr.length - 1];
+        if (Date.now() - b[0] > 70)
+            return 0;
+        let i = tr.length - 2;
+        while (i > 0 && b[0] - tr[i - 1][0] <= 60)
+            i--;
+        const a = tr[i];
+        const dt = (b[0] - a[0]) / 1000;
+        return dt >= 0.008 ? (b[k] - a[k]) / dt : 0;
+    }
+
+    // The pull: 1:1 with the hand (it used to be eased twice — the first
+    // 75 px of a pull moved the pill by 7 % and it felt stuck), with a little
+    // give past the open size. And how much of the module that shows: an
+    // ease-out, so the first pixels of a pull already move it.
+    function pullOf(out: real): real {
+        const t = Math.max(0, (out - 12) / root.travel);
+        return t <= 1 ? t : 1 + 0.08 * Math.tanh((t - 1) * 2.2);
+    }
+    function pullEase(p: real): real {
+        if (p >= 1)
+            return p;
+        const q = Math.max(0, p);
+        return 1 - (1 - q) * (1 - q);
+    }
+
+    // where the face is: the rubber-banded hand while it swipes, sprung home —
+    // or on into the new face — when it lets go
+    readonly property real swipeX: root.pressed && root.axis === "h" && !root.onSide ? root.rubber(root.dragDX, root.swipeSpan) : 0
+
+    Spring {
+        id: swipeTrack
+
+        to: root.swipeX
+        live: !root.holding
+        carry: true
+        spring: 3.4
+        damping: 0.46
+        epsilon: 0.25
+    }
 
     // ──────────────────────────────────────────────────────── the long press
     //  Holding the pill without moving it wakes Velly: the assistant lives
@@ -365,6 +457,7 @@ PanelWindow {
     function fireVelly(): void {
         root.disarm();
         root.consumed = true;
+        root.holding = false;
         root.pressed = false;
         root.axis = "";
         root.progress = 0;
@@ -413,7 +506,9 @@ PanelWindow {
     readonly property int labelW: 300
     property int railHot: -1
     property int pressIdx: -1
-    readonly property int shownIdx: root.pressed && root.axis === "h" ? root.previewIdx : root.moduleIdx
+    // the module the dots, tabs and rail mark: on the top pill the preview
+    // only once the swipe is past its commit point (that is the promise)
+    readonly property int shownIdx: root.pressed && root.axis === "h" && (root.onSide || root.swipePast) ? root.previewIdx : root.moduleIdx
     readonly property bool sideLabels: root.onSide && !root.expanded && !(root.pressed && root.axis === "v") && (root.hoverPeek || (root.pressed && root.axis === "h"))
     readonly property real sideFullW: root.railW + root.meta[root.moduleIdx].w
     readonly property real sideFullH: Math.max(root.railH, root.meta[root.moduleIdx].h)
@@ -449,14 +544,14 @@ PanelWindow {
             if (root.expanded)
                 return root.sideFullW;
             if (root.pressed && root.axis === "v")
-                return rest + (root.sideFullW - rest) * root.ease(root.progress);
+                return rest + (root.sideFullW - rest) * root.pullEase(root.progress);
             return rest;
         }
         if (root.expanded)
             return m.w;
         if (root.pressed && root.axis === "v") {
             const from = root.showText ? root.textW : root.restW;
-            return from + (m.w - from) * root.ease(root.progress);
+            return from + (m.w - from) * Math.min(1, root.pullEase(root.progress));
         }
         return root.showText ? root.textW : root.restW;
     }
@@ -466,13 +561,13 @@ PanelWindow {
             if (root.expanded)
                 return root.sideFullH;
             if (root.pressed && root.axis === "v")
-                return root.railH + (root.sideFullH - root.railH) * root.ease(root.progress);
+                return root.railH + (root.sideFullH - root.railH) * root.pullEase(root.progress);
             return root.railH;
         }
         if (root.expanded)
             return root.meta[root.moduleIdx].h;
         if (root.pressed && root.axis === "v")
-            return root.pillH + (root.meta[root.moduleIdx].h - root.pillH) * root.ease(root.progress);
+            return root.pillH + (root.meta[root.moduleIdx].h - root.pillH) * root.pullEase(root.progress);
         return root.pillH;
     }
 
@@ -647,6 +742,13 @@ PanelWindow {
     property int switchDir: 0
     property int lastIdx: root.moduleIdx
     onModuleIdxChanged: {
+        // a swipe's change slides on the way the hand went
+        if (root.swipeHand !== 0) {
+            root.switchDir = -root.swipeHand;
+            root.swipeHand = 0;
+            root.lastIdx = root.moduleIdx;
+            return;
+        }
         const n = Math.max(1, root.meta.length);
         let d = root.moduleIdx - root.lastIdx;
         // a swipe that wrapped round the ends still moves the short way
@@ -695,10 +797,14 @@ PanelWindow {
         root.poke();
         root.gStartX = px;
         root.gStartY = py;
+        root.holding = true;
         root.pressed = true;
         root.axis = "";
         root.dragDX = 0;
         root.dragDY = 0;
+        root.swipePast = false;
+        root.trail = [];
+        root.track(0, 0);
         root.pressIdx = idx;
         root.awaitIntent();
     }
@@ -712,10 +818,13 @@ PanelWindow {
         const along = root.onSide ? dy : dx;
         root.dragDX = along;
         root.dragDY = out;
+        root.track(along, out);
         if (root.axis === "") {
             if (Math.abs(along) > 14) {
                 root.axis = "h";
-                Sfx.cursor();
+                // the rail scrubs from here; the pill ticks at its commit point
+                if (root.onSide)
+                    Sfx.cursor();
             } else if (out > 12) {
                 root.axis = "v";
                 // pulled out of the rail: the module you took hold of
@@ -728,14 +837,33 @@ PanelWindow {
                 root.disarm();
         }
         if (root.axis === "v") {
-            root.progress = root.ease((out - 12) / root.travel);
+            root.progress = root.pullOf(out);
+            // halfway: let go now and it opens — a soft tick says so
+            const past = root.progress >= 0.5;
+            if (past !== root.swipePast) {
+                root.swipePast = past;
+                if (past)
+                    Sfx.cursor();
+            }
         } else if (root.axis === "h") {
             const n = root.meta.length;
             if (root.onSide && root.pressIdx >= 0) {
                 const i = root.railIdxAt(py);
                 root.previewIdx = i >= 0 ? i : (py < root.railTop ? 0 : n - 1);
             } else {
-                root.previewIdx = (root.moduleIdx + (along > 0 ? 1 : -1) + n) % n;
+                // SWIPE LIKE A PHONE: the face follows the hand, so dragging
+                // it left brings the next module in from the right; off, the
+                // hand moves towards the module it wants
+                const step = (along > 0 ? 1 : -1) * (root.swipeNatural ? -1 : 1);
+                root.previewIdx = (root.moduleIdx + step + n) % n;
+                root.ghostIdx = root.previewIdx;
+                root.ghostSide = along > 0 ? -1 : 1;
+                const past = Math.abs(along) >= root.swipeCommit;
+                if (past !== root.swipePast) {
+                    root.swipePast = past;
+                    if (past)
+                        Sfx.cursor();
+                }
             }
         }
     }
@@ -766,6 +894,7 @@ PanelWindow {
         // A hold that already fired Velly owns this release.
         if (root.consumed) {
             root.consumed = false;
+            root.holding = false;
             root.pressed = false;
             root.axis = "";
             root.progress = 0;
@@ -774,18 +903,42 @@ PanelWindow {
         const ax = root.axis;
         const dx = root.dragDX;
         const at = root.pressIdx;
+        const vAlong = root.fling(1);
+        const vOut = root.fling(2);
+        // let go first: the springs are live before their targets move
+        root.holding = false;
         root.pressed = false;
         root.pressIdx = -1;
         if (ax === "h") {
-            // the rail scrubs: where you let go is the module
-            if (root.onSide ? root.previewIdx !== root.moduleIdx : Math.abs(dx) >= 70) {
-                root.moduleIdx = root.previewIdx;
-                root.touched = true;
-                Sfx.cursor();
+            if (root.onSide) {
+                // the rail scrubs: where you let go is the module
+                if (root.previewIdx !== root.moduleIdx) {
+                    root.moduleIdx = root.previewIdx;
+                    root.touched = true;
+                    Sfx.cursor();
+                }
+            } else {
+                // far enough, or a quick flick the same way from a short way
+                const flick = Math.abs(vAlong) > 650 && Math.abs(dx) > 16 && Math.sign(vAlong) === Math.sign(dx);
+                if (Math.abs(dx) >= root.swipeCommit || flick) {
+                    const was = root.moduleIdx;
+                    root.swipeHand = dx > 0 ? 1 : -1;
+                    root.moduleIdx = root.previewIdx;
+                    root.touched = true;
+                    // the face that slid in IS the new one now: it carries on
+                    // from where it already is, the old one leaves the way the
+                    // hand went
+                    root.ghostIdx = was;
+                    root.ghostSide = dx > 0 ? 1 : -1;
+                    swipeTrack.shift(dx > 0 ? -root.swipeSpan : root.swipeSpan);
+                    if (!root.swipePast)
+                        Sfx.cursor();
+                }
             }
             root.previewIdx = root.moduleIdx;
         } else if (ax === "v") {
-            if (root.progress >= 0.5)
+            // halfway or a quick tug down opens it; a flick back up never does
+            if (vOut > -450 && (root.progress >= 0.5 || (vOut > 450 && root.progress > 0.08)))
                 root.openModule();
         } else if (at >= 0) {
             // A click on one of the rail's icons: that module, open — or,
@@ -814,9 +967,11 @@ PanelWindow {
         }
         root.axis = "";
         root.progress = 0;
+        root.swipePast = false;
     }
 
     function abort(): void {
+        root.holding = false;
         root.pressed = false;
         root.pressIdx = -1;
         root.axis = "";
@@ -833,6 +988,7 @@ PanelWindow {
         Panels.islandScreen = "";
         root.expanded = false;
         root.progress = 0;
+        root.holding = false;
         root.pressed = false;
         root.axis = "";
         root.previewIdx = root.moduleIdx;
@@ -846,7 +1002,26 @@ PanelWindow {
         dismissQuiet();
     }
 
+    // Sliding out of sight after it closed: the capsule's springs keep
+    // working until it is gone, then they rest at once — a pill nobody can
+    // see used to settle its last sub-pixels for ~2 s, redrawing every frame.
+    property bool retreating: false
+
+    Timer {
+        id: retreat
+
+        interval: Appearance.anim.normal + 120
+        onTriggered: root.retreating = false
+    }
+
     onActiveChanged: {
+        if (root.active) {
+            retreat.stop();
+            root.retreating = false;
+        } else {
+            root.retreating = true;
+            retreat.restart();
+        }
         if (root.active) {
             openWatchdog.restart();
             if (Panels.islandWantMap)
@@ -857,6 +1032,7 @@ PanelWindow {
             root.disarm();
             root.expanded = false;
             root.progress = 0;
+            root.holding = false;
             root.pressed = false;
             root.axis = "";
             root.previewIdx = root.moduleIdx;
@@ -1157,16 +1333,25 @@ PanelWindow {
 
             // the top pill leans into a sideways swipe; the rail stays put
             // (it scrubs — it must not move under the pointer)
-            readonly property real wobble: !root.onSide && root.axis === "h" ? Math.max(-30, Math.min(30, root.dragDX * 0.12)) : 0
+            // (rubber-banded: it gives a little, then less and less — no wall)
+            readonly property real wobble: !root.onSide && root.axis === "h" && root.pressed ? root.rubber(root.dragDX * 0.16, 22) : 0
             // the rail's y inside the capsule: fixed on screen while the
             // capsule grows round it
             readonly property real railY: root.railTop - edgeClip.y - capsule.y
 
-            x: root.capsuleX(capsule.width) + capsule.wobble
-            y: root.capsuleY(capsule.height)
-            width: root.shellW
-            height: root.shellH
-            scale: root.expanded ? 1 : (root.pressed && root.axis === "v" && !root.onSide ? 0.985 : 1)
+            // On top the capsule grows and shrinks about its own centre: x
+            // follows the width spring exactly and only the centre eases (a
+            // shift, the lean of a swipe). The ease used to aim x and y at the
+            // springing size itself, a target that moved every frame, so it
+            // restarted every frame and stood still: the pill grew to one side,
+            // sat up to ~40 px off-centre, and lingered ~3 s before it hid
+            // (measured in the test bed).
+            readonly property real midX: root.capsuleX(root.shellW) + root.shellW / 2 + capsule.wobble
+            x: root.onSide ? root.capsuleX(capsule.width) : Math.round(lean.value - capsule.width / 2)
+            y: root.capsuleY(root.onSide ? capsule.height : root.shellH)
+            width: grow.value
+            height: rise.value
+            scale: pop.value
             clip: true
 
             HoverHandler {
@@ -1183,14 +1368,18 @@ PanelWindow {
             }
 
             // On a side edge x and y follow the width/height spring and the
-            // slide exactly (the edge it keeps to must not wobble); on top it
-            // settles with its own ease.
-            Behavior on x {
-                enabled: !root.pressed && !root.onSide
-                NumberAnimation {
-                    duration: Appearance.anim.normal
-                    easing.type: Easing.OutExpo
-                }
+            // slide exactly (the edge it keeps to must not wobble); on top the
+            // centre has its own spring: the hand's lean while it holds,
+            // sprung home at the hand's own speed when it lets go.
+            Spring {
+                id: lean
+
+                to: capsule.midX
+                live: !root.holding && !root.onSide
+                carry: true
+                spring: 3.6
+                damping: 0.42
+                epsilon: 0.25
             }
             Behavior on y {
                 enabled: !root.pressed && !root.onSide
@@ -1199,34 +1388,43 @@ PanelWindow {
                     easing.type: Easing.OutExpo
                 }
             }
-            Behavior on width {
-                enabled: !root.pressed
-                // A spring, like the height: the two edges of the capsule
-                // settle together instead of one snapping and the other
-                // sagging behind.
-                SpringAnimation {
-                    spring: 2.6
-                    damping: 0.74
-                    epsilon: 0.01
-                }
+            // Springs, the width like the height: the two edges of the
+            // capsule settle together instead of one snapping and the other
+            // sagging behind (components/Spring.qml: SpringAnimation's own
+            // physics, drawn on every frame of a fast screen). A quarter
+            // pixel is "there" — Qt's advice for pixels; 0.01 crawled on for
+            // seconds over sub-pixel distances, redrawing every frame.
+            Spring {
+                id: grow
+
+                to: root.shellW
+                live: !root.holding && (root.active || root.retreating)
+                carry: true
+                spring: 2.6
+                damping: 0.74
+                epsilon: 0.25
             }
-            Behavior on height {
-                enabled: !root.pressed
-                SpringAnimation {
-                    spring: 2.4
-                    damping: 0.72
-                    epsilon: 0.01
-                }
+            Spring {
+                id: rise
+
+                to: root.shellH
+                live: !root.holding && (root.active || root.retreating)
+                carry: true
+                spring: 2.4
+                damping: 0.72
+                epsilon: 0.25
             }
             // Opening is a small pop, closing a small settle — the same
             // spring language as every button in the shell.
-            Behavior on scale {
-                enabled: !root.pressed
-                SpringAnimation {
-                    spring: 2.2
-                    damping: 0.7
-                    epsilon: 0.01
-                }
+            Spring {
+                id: pop
+
+                to: root.expanded ? 1 : (root.pressed && root.axis === "v" && !root.onSide ? 0.985 : 1)
+                live: !root.holding && (root.active || root.retreating)
+                carry: true
+                spring: 2.2
+                damping: 0.7
+                epsilon: 0.01
             }
 
             // FREE: one surface, a pill when closed, a sheet when open. The
@@ -1320,18 +1518,19 @@ PanelWindow {
                 readonly property bool wide: root.sideLabels
                 visible: root.onSide && root.shownIdx >= 0
                 x: (root.edge === "left" || wide ? 0 : capsule.width - root.railW) + 6
-                y: capsule.railY + root.railPad + root.shownIdx * root.cellH + 4
+                y: litGlide.value
                 width: (wide ? capsule.width : root.railW) - 12
                 height: root.cellH - 8
                 radius: Appearance.r(12)
                 color: Colours.alpha(Colours.accent, root.expanded || root.touched ? 0.2 : 0.12)
 
-                Behavior on y {
-                    SpringAnimation {
-                        spring: 3.2
-                        damping: 0.62
-                        epsilon: 0.01
-                    }
+                Spring {
+                    id: litGlide
+
+                    to: capsule.railY + root.railPad + root.shownIdx * root.cellH + 4
+                    spring: 3.2
+                    damping: 0.62
+                    epsilon: 0.25
                 }
             }
 
@@ -1349,15 +1548,16 @@ PanelWindow {
                 opacity: root.onSide && root.railHot >= 0 && root.railHot !== root.shownIdx && !root.pressed ? 1 : 0
                 visible: opacity > 0.01
                 x: litRow.x
-                y: capsule.railY + root.railPad + hotRow.at * root.cellH + 4
+                y: hotGlide.value
 
-                Behavior on y {
-                    enabled: hotRow.visible
-                    SpringAnimation {
-                        spring: 4.5
-                        damping: 0.6
-                        epsilon: 0.05
-                    }
+                Spring {
+                    id: hotGlide
+
+                    to: capsule.railY + root.railPad + hotRow.at * root.cellH + 4
+                    live: hotRow.visible
+                    spring: 4.5
+                    damping: 0.6
+                    epsilon: 0.05
                 }
                 Behavior on opacity {
                     NumberAnimation {
@@ -1404,17 +1604,18 @@ PanelWindow {
                             x: root.edge === "left" ? 2 : cell.width - 5
                             anchors.verticalCenter: parent.verticalCenter
                             width: 3
-                            height: cell.lit ? 20 : (cell.hot ? 8 : 0)
+                            height: cellBar.value
                             radius: 1.5
                             color: Colours.accent
                             opacity: cell.lit || cell.hot ? 1 : 0
 
-                            Behavior on height {
-                                SpringAnimation {
-                                    spring: 3.4
-                                    damping: 0.6
-                                    epsilon: 0.01
-                                }
+                            Spring {
+                                id: cellBar
+
+                                to: cell.lit ? 20 : (cell.hot ? 8 : 0)
+                                spring: 3.4
+                                damping: 0.6
+                                epsilon: 0.25
                             }
                             Behavior on opacity {
                                 NumberAnimation {
@@ -1428,14 +1629,15 @@ PanelWindow {
                             name: root.arming && cell.index === root.vellyIdx ? "auto_awesome" : (cell.playing ? "graphic_eq" : root.pillGlyph(cell.index))
                             color: cell.awake || (root.arming && cell.index === root.vellyIdx) ? Colours.accentHot : (cell.lit ? Colours.accent : Colours.alpha(Colours.ink, cell.hot ? 1 : 0.7))
                             font.pixelSize: 20
-                            scale: cell.hot && !root.pressed ? 1.16 : 1
+                            scale: cellLift.value
 
-                            Behavior on scale {
-                                SpringAnimation {
-                                    spring: 3.6
-                                    damping: 0.55
-                                    epsilon: 0.01
-                                }
+                            Spring {
+                                id: cellLift
+
+                                to: cell.hot && !root.pressed ? 1.16 : 1
+                                spring: 3.6
+                                damping: 0.55
+                                epsilon: 0.01
                             }
                             Behavior on color {
                                 ColorAnimation {
@@ -1455,7 +1657,7 @@ PanelWindow {
                             color: cell.awake ? Colours.accentHot : Colours.accent
 
                             SequentialAnimation on scale {
-                                running: cell.awake || cell.playing
+                                running: (cell.awake || cell.playing) && root.active
                                 loops: Animation.Infinite
                                 NumberAnimation {
                                     to: 1.5
@@ -1607,35 +1809,92 @@ PanelWindow {
                     height: pillH
                     z: 2
 
-                    Icon {
-                        id: pillIcon
+                    // The face — the module's icon and text. In a swipe on the top
+                    // pill it sticks to the hand and the next module's face (the
+                    // ghost) slides in beside it; let go, both glide on at the
+                    // hand's speed. Clipped short of the dots, so nothing slides
+                    // under them.
+                    Item {
+                        id: faceClip
 
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: 20
-                        width: 20
-                        visible: root.showText
-                        name: root.arming ? "auto_awesome" : root.pillGlyph(root.shownIdx)
-                        color: root.arming ? Colours.accentHot : Colours.accent
-                        font.pixelSize: 18
+                        width: root.onSide ? parent.width : Math.max(10, parent.width - dots.width - dots.anchors.rightMargin - 4)
+                        height: parent.height
+                        clip: !root.onSide
 
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: Appearance.anim.fast
+                        Item {
+                            id: face
+
+                            readonly property real off: root.onSide ? 0 : swipeTrack.value
+
+                            x: face.off
+                            width: pillRow.width
+                            height: pillRow.height
+                            opacity: 1 - 0.55 * Math.min(1, Math.abs(face.off) / root.swipeSpan)
+
+                            Icon {
+                                id: pillIcon
+
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 20
+                                width: 20
+                                visible: root.showText
+                                name: root.arming ? "auto_awesome" : root.pillGlyph(root.onSide ? root.shownIdx : root.moduleIdx)
+                                color: root.arming ? Colours.accentHot : Colours.accent
+                                font.pixelSize: 18
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: Appearance.anim.fast
+                                    }
+                                }
+                            }
+
+                            P5Text {
+                                id: pillLabel
+
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 48
+                                width: Math.max(10, pillRow.width - 48 - 10 - (root.onSide ? 0 : dots.width + dots.anchors.rightMargin))
+                                visible: root.showText
+                                text: root.arming ? "VELLY  ·  HOLD…" : root.pillText(root.onSide ? root.shownIdx : root.moduleIdx)
+                                color: root.arming ? Colours.accentInk : Colours.alpha(Colours.ink, 0.92)
+                                font.pixelSize: Appearance.font.size.small
+                                elide: Text.ElideRight
                             }
                         }
-                    }
 
-                    P5Text {
-                        id: pillLabel
+                        Item {
+                            id: ghostFace
 
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: 48
-                        width: Math.max(10, parent.width - 48 - 10 - (root.onSide ? 0 : dots.width + dots.anchors.rightMargin))
-                        visible: root.showText
-                        text: root.arming ? "VELLY  ·  HOLD…" : root.pillText(root.shownIdx)
-                        color: root.arming ? Colours.accentInk : Colours.alpha(Colours.ink, 0.92)
-                        font.pixelSize: Appearance.font.size.small
-                        elide: Text.ElideRight
+                            readonly property real off: swipeTrack.value + root.ghostSide * root.swipeSpan
+
+                            x: ghostFace.off
+                            width: pillRow.width
+                            height: pillRow.height
+                            opacity: 1 - 0.55 * Math.min(1, Math.abs(ghostFace.off) / root.swipeSpan)
+                            // there while a swipe moves the faces; at rest it lies a
+                            // whole face away, outside the clip
+                            visible: !root.onSide && root.showText && !root.arming && root.ghostIdx >= 0 && Math.abs(ghostFace.off) < root.swipeSpan - 0.5
+
+                            Icon {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 20
+                                width: 20
+                                name: root.pillGlyph(Math.max(0, root.ghostIdx))
+                                color: Colours.accent
+                                font.pixelSize: 18
+                            }
+
+                            P5Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                x: 48
+                                width: pillLabel.width
+                                text: root.ghostIdx >= 0 ? root.pillText(root.ghostIdx) : ""
+                                color: Colours.alpha(Colours.ink, 0.92)
+                                font.pixelSize: Appearance.font.size.small
+                                elide: Text.ElideRight
+                            }
+                        }
                     }
 
                     // One dot per module; the accent marks the active one. The
@@ -1653,7 +1912,7 @@ PanelWindow {
                         // the spring moves the TAB it sits on, never the row:
                         // the row itself moves with the capsule's width, and a
                         // plate that sprang after that sat beside the tabs
-                        property real at: Math.max(0, root.shownIdx)
+                        readonly property real at: plateGlide.value
                         x: dots.x + tabPlate.at * (27 + dots.spacing)
                         y: dots.y + (dots.height - 26) / 2
                         width: 27
@@ -1667,13 +1926,14 @@ PanelWindow {
                         opacity: tabPlate.shown ? 1 : 0
                         visible: opacity > 0.01
 
-                        Behavior on at {
-                            enabled: tabPlate.shown
-                            SpringAnimation {
-                                spring: 5.2
-                                damping: 0.5
-                                epsilon: 0.002
-                            }
+                        Spring {
+                            id: plateGlide
+
+                            to: Math.max(0, root.shownIdx)
+                            live: tabPlate.shown
+                            spring: 5.2
+                            damping: 0.5
+                            epsilon: 0.002
                         }
                         Behavior on opacity {
                             NumberAnimation {
@@ -1753,24 +2013,25 @@ PanelWindow {
                                     font.pixelSize: 15
                                     opacity: dot.tabbed ? 1 : 0
                                     visible: opacity > 0.01
-                                    scale: tabArea.pressed ? 0.84 : (tabHover.hovered && !dot.lit ? 1.12 : 1)
+                                    scale: dotLift.value
 
                                     Behavior on opacity {
                                         NumberAnimation {
                                             duration: Appearance.anim.normal
                                         }
                                     }
-                                    Behavior on scale {
-                                        SpringAnimation {
-                                            spring: 3.6
-                                            damping: 0.55
-                                            epsilon: 0.01
-                                        }
+                                    Spring {
+                                        id: dotLift
+
+                                        to: tabArea.pressed ? 0.84 : (tabHover.hovered && !dot.lit ? 1.12 : 1)
+                                        spring: 3.6
+                                        damping: 0.55
+                                        epsilon: 0.01
                                     }
                                 }
 
                                 SequentialAnimation on scale {
-                                    running: dot.awake && !dot.tabbed
+                                    running: dot.awake && !dot.tabbed && root.active
                                     loops: Animation.Infinite
                                     NumberAnimation {
                                         to: 1.7
@@ -2008,6 +2269,9 @@ PanelWindow {
                         onLoaded: {
                             if (slot.index === 0)
                                 slot.item.bridge = Qt.binding(() => root.bridge);
+                            // Velly's orb breathes only while you can see it
+                            if (slot.index === root.vellyIdx)
+                                slot.item.onScreen = Qt.binding(() => root.active && root.expanded && slot.current);
                             if (slot.index === root.deskIdx) {
                                 // live while open — and already while you pull it
                                 // out, so the pull reveals the real canvas

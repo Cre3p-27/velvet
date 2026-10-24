@@ -142,9 +142,12 @@ ShellRoot {
     //  `keep` seconds after it closes (components/Parked.qml). That is ~240 MB
     //  less for a shell that is just sitting there. The notification toasts
     //  and the volume pop-up stay: they are small and must be instant.
+    // Super+Tab is the front door: built in the background (no frozen
+    // frames on a cold open) and kept three minutes after it closes.
     Parked {
         open: Panels.settings
-        keep: 60
+        keep: 180
+        background: true
 
         Settings {}
     }
@@ -226,6 +229,7 @@ ShellRoot {
     Parked {
         open: Panels.keys
         keep: 20
+        background: true
 
         KeysPanel {}
     }

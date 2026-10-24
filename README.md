@@ -673,6 +673,17 @@ AMBIENT — only the clock, the lyric and the music stay until you move or type.
 Touch the top edge and the island rises: swipe it for music, the desktop map,
 tasks, weather, the system and Velly; pull it down to open one.
 
+**It moves with your hand.** The pill's face sticks to your hand like a page on
+a phone: drag it left and the next module slides in from the right (MODULES →
+DYNAMIC ISLAND → **SWIPE LIKE A PHONE**; off, you drag towards the module you
+want). A soft tick tells you when letting go will change it, a quick flick does
+it from a short way, and whatever you let go of carries on at your hand's speed
+and settles. A pull follows your hand from the very first pixel, and a quick
+tug down opens the module. Every spring in the shell — the island, the bar's
+buttons and pop-outs, the desktop indicator, the settings rows, the widgets on
+the desk — now moves on every frame of the screen: Qt's own springs step at
+62 per second, which on a 144 or 240 Hz screen read as stairs.
+
 **On a side edge it is built for the edge.** MODULES → DYNAMIC ISLAND →
 POSITION → **LEFT EDGE / RIGHT EDGE** turns it into a **rail**, like a vertical
 taskbar: one icon per module, sliding out of that side at **ISLAND HEIGHT**

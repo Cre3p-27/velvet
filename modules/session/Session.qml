@@ -227,7 +227,7 @@ PanelWindow {
                     width: 190
                     height: 210
                     scale: selected ? 1.06 : 1.0
-                    y: selected ? -10 : 0
+                    y: optRise.value
 
                     Behavior on scale {
                         NumberAnimation {
@@ -236,12 +236,13 @@ PanelWindow {
                             easing.overshoot: 2.2
                         }
                     }
-                    Behavior on y {
-                        SpringAnimation {
-                            spring: 4.5
-                            damping: 0.32
-                            epsilon: 0.4
-                        }
+                    Spring {
+                        id: optRise
+
+                        to: opt.selected ? -10 : 0
+                        spring: 4.5
+                        damping: 0.32
+                        epsilon: 0.4
                     }
 
                     // the button in the look's way (THIS LOOK → SHELL PARTS)

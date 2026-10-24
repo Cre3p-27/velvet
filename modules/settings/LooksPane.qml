@@ -558,26 +558,28 @@ FocusScope {
 
                         readonly property var tab: tabRepeater.count > 0 ? tabRepeater.itemAt(Math.max(0, root.cats.findIndex(c => c.id === root.cat))) : null
 
-                        x: tab ? tab.x : 0
-                        width: tab ? tab.width : 0
+                        x: plateX.value
+                        width: plateW.value
                         height: parent.height
                         shear: 0
                         color: Colours.accent
                         borderColor: "transparent"
 
-                        Behavior on x {
-                            SpringAnimation {
-                                spring: 4.5
-                                damping: 0.36
-                                epsilon: 0.25
-                            }
+                        Spring {
+                            id: plateX
+
+                            to: tabPlate.tab ? tabPlate.tab.x : 0
+                            spring: 4.5
+                            damping: 0.36
+                            epsilon: 0.25
                         }
-                        Behavior on width {
-                            SpringAnimation {
-                                spring: 4.5
-                                damping: 0.36
-                                epsilon: 0.25
-                            }
+                        Spring {
+                            id: plateW
+
+                            to: tabPlate.tab ? tabPlate.tab.width : 0
+                            spring: 4.5
+                            damping: 0.36
+                            epsilon: 0.25
                         }
                     }
 
@@ -899,15 +901,16 @@ FocusScope {
         color: bb.danger ? (bbHover.hovered ? Colours.danger : Colours.alpha(Colours.danger, 0.2)) : (bb.strong ? (bbHover.hovered ? Colours.accentHot : Colours.accent) : (bbHover.hovered ? Colours.alpha(Colours.ink, 0.12) : Colours.alpha(Colours.ink, 0.05)))
         border.width: bb.strong || bb.danger ? 0 : 1
         border.color: Colours.alpha(Colours.ink, 0.14)
-        scale: bbTap.pressed ? 0.94 : (bbHover.hovered ? 1.03 : 1)
+        scale: bbLift.value
         antialiasing: true
 
-        Behavior on scale {
-            SpringAnimation {
-                spring: 6
-                damping: 0.38
-                epsilon: 0.002
-            }
+        Spring {
+            id: bbLift
+
+            to: bbTap.pressed ? 0.94 : (bbHover.hovered ? 1.03 : 1)
+            spring: 6
+            damping: 0.38
+            epsilon: 0.002
         }
         Behavior on color {
             ColorAnimation {
@@ -978,19 +981,22 @@ FocusScope {
                 color: Presets.withColours ? Colours.accent : Colours.alpha(Colours.ink, 0.18)
 
                 Plate {
-                    x: Presets.withColours ? parent.width - width - 3 : 3
+                    id: colourKnob
+
+                    x: colourKnobX.value
                     anchors.verticalCenter: parent.verticalCenter
                     width: 13
                     height: 13
                     radius: Appearance.r(6.5)
                     color: Presets.withColours ? Colours.on(Colours.accent) : Colours.ink
 
-                    Behavior on x {
-                        SpringAnimation {
-                            spring: 5
-                            damping: 0.4
-                            epsilon: 0.2
-                        }
+                    Spring {
+                        id: colourKnobX
+
+                        to: Presets.withColours ? colourKnob.parent.width - colourKnob.width - 3 : 3
+                        spring: 5
+                        damping: 0.4
+                        epsilon: 0.2
                     }
                 }
             }
@@ -1188,7 +1194,7 @@ FocusScope {
         enabled: tile.rank >= 0
         opacity: tile.present ? 1 : 0
         visible: opacity > 0.01
-        scale: (tile.present ? 1 : 0.9) * (tilePress.pressed ? 0.975 : 1)
+        scale: tileScale.value
         transformOrigin: Item.Center
 
         Behavior on x {
@@ -1211,22 +1217,24 @@ FocusScope {
                 easing.type: Easing.OutCubic
             }
         }
-        Behavior on scale {
-            SpringAnimation {
-                spring: 5
-                damping: 0.4
-                epsilon: 0.002
-            }
+        Spring {
+            id: tileScale
+
+            to: (tile.present ? 1 : 0.9) * (tilePress.pressed ? 0.975 : 1)
+            spring: 5
+            damping: 0.4
+            epsilon: 0.002
         }
 
         // how far the card has come up to meet the pointer
-        property real lift: tile.hot ? 1 : 0
-        Behavior on lift {
-            SpringAnimation {
-                spring: 4.4
-                damping: 0.38
-                epsilon: 0.004
-            }
+        readonly property real lift: tileLift.value
+        Spring {
+            id: tileLift
+
+            to: tile.hot ? 1 : 0
+            spring: 4.4
+            damping: 0.38
+            epsilon: 0.004
         }
 
         // the shadow under a lifted card
@@ -1490,15 +1498,16 @@ FocusScope {
         height: 32
         radius: Appearance.r(16)
         color: tb.strong ? (tbHover.hovered ? Colours.accentHot : Colours.accent) : (tbHover.hovered ? Colours.alpha(Colours.surface, 0.98) : Colours.alpha(Colours.surface, 0.82))
-        scale: tbTap.pressed ? 0.9 : (tbHover.hovered ? 1.06 : 1)
+        scale: tbLift.value
         antialiasing: true
 
-        Behavior on scale {
-            SpringAnimation {
-                spring: 7
-                damping: 0.4
-                epsilon: 0.002
-            }
+        Spring {
+            id: tbLift
+
+            to: tbTap.pressed ? 0.9 : (tbHover.hovered ? 1.06 : 1)
+            spring: 7
+            damping: 0.4
+            epsilon: 0.002
         }
 
         P5Text {
@@ -1550,7 +1559,7 @@ FocusScope {
         color: sm.isSaved ? (smHover.hovered ? Colours.accentHot : Colours.accent) : (smHover.hovered ? Colours.alpha(Colours.surface, 0.98) : Colours.alpha(Colours.surface, 0.82))
         opacity: sm.shown ? 1 : 0
         visible: opacity > 0.01
-        scale: smTap.pressed ? 0.88 : (smHover.hovered ? 1.08 : 1)
+        scale: smLift.value
         antialiasing: true
         transform: Scale {
             origin.x: sm.width / 2
@@ -1569,12 +1578,13 @@ FocusScope {
                 duration: Appearance.anim.fast
             }
         }
-        Behavior on scale {
-            SpringAnimation {
-                spring: 7
-                damping: 0.38
-                epsilon: 0.002
-            }
+        Spring {
+            id: smLift
+
+            to: smTap.pressed ? 0.88 : (smHover.hovered ? 1.08 : 1)
+            spring: 7
+            damping: 0.38
+            epsilon: 0.002
         }
 
         Icon {
@@ -1817,7 +1827,7 @@ FocusScope {
         readonly property bool hot: chipHover.hovered && !root.detailOpen
         readonly property bool on: chip.entry?.why === "on"
         readonly property color accent: root.accentOf(chip.look)
-        property real lift: chip.hot ? 1 : 0
+        readonly property real lift: chipLift.value
 
         enabled: chip.look !== null
         opacity: chip.look !== null ? 1 : 0
@@ -1830,12 +1840,13 @@ FocusScope {
                 easing.type: Easing.OutCubic
             }
         }
-        Behavior on lift {
-            SpringAnimation {
-                spring: 4.4
-                damping: 0.38
-                epsilon: 0.004
-            }
+        Spring {
+            id: chipLift
+
+            to: chip.hot ? 1 : 0
+            spring: 4.4
+            damping: 0.38
+            epsilon: 0.004
         }
 
         // the shadow under a lifted chip
@@ -2157,15 +2168,16 @@ FocusScope {
                     required property int index
                     readonly property bool current: dot.index === heroRoot.at
 
-                    width: dot.current ? 34 : 9
+                    width: dotW.value
                     height: 9
 
-                    Behavior on width {
-                        SpringAnimation {
-                            spring: 4.5
-                            damping: 0.4
-                            epsilon: 0.25
-                        }
+                    Spring {
+                        id: dotW
+
+                        to: dot.current ? 34 : 9
+                        spring: 4.5
+                        damping: 0.4
+                        epsilon: 0.25
                     }
 
                     Rectangle {
@@ -2210,7 +2222,7 @@ FocusScope {
                 color: arrowHover.hovered ? Colours.alpha(Colours.surface, 0.98) : Colours.alpha(Colours.surface, 0.8)
                 opacity: heroHover.hovered ? 1 : 0
                 visible: opacity > 0.01 && (arrow.modelData > 0 || true)
-                scale: arrowTap.pressed ? 0.9 : 1
+                scale: arrowLift.value
                 antialiasing: true
 
                 Behavior on opacity {
@@ -2218,12 +2230,13 @@ FocusScope {
                         duration: Appearance.anim.fast
                     }
                 }
-                Behavior on scale {
-                    SpringAnimation {
-                        spring: 7
-                        damping: 0.4
-                        epsilon: 0.002
-                    }
+                Spring {
+                    id: arrowLift
+
+                    to: arrowTap.pressed ? 0.9 : 1
+                    spring: 7
+                    damping: 0.4
+                    epsilon: 0.002
                 }
 
                 Icon {

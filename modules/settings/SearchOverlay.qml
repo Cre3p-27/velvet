@@ -230,14 +230,15 @@ FocusScope {
 
                 width: list.width
                 height: 66
-                x: selected ? 16 : 0
+                x: hitShift.value
 
-                Behavior on x {
-                    SpringAnimation {
-                        spring: 4.5
-                        damping: 0.35
-                        epsilon: 0.4
-                    }
+                Spring {
+                    id: hitShift
+
+                    to: hit.selected ? 16 : 0
+                    spring: 4.5
+                    damping: 0.35
+                    epsilon: 0.4
                 }
 
                 Slash {

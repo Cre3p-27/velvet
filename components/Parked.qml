@@ -12,6 +12,13 @@
 //
 //  The window itself has to open when it is CREATED already-open (the flag it
 //  listens to went true before it existed) — see `present()` in the panels.
+//
+//  `background: true` builds the window over the next few frames instead of
+//  in one go (LazyLoader.activeAsync). The settings froze every other window
+//  for ~50–70 ms on a cold Super+Tab (measured in the test bed); built in the
+//  background, the live wallpaper and the bar keep moving and the window
+//  arrives a few frames later. For big windows only — the launcher and the
+//  island stay instant.
 import Quickshell
 import QtQuick
 
@@ -22,9 +29,13 @@ Scope {
     // seconds a closed window stays loaded
     property real keep: 45
     property bool held: false
+    // built over a few frames rather than at once (see the top)
+    property bool background: false
 
     readonly property bool loaded: loader.active
-    readonly property var item: loader.item
+    // never read while it is still being built: that would finish the build
+    // at once, frozen frames and all
+    readonly property var item: loader.active ? loader.item : null
     default property alias contents: loader.component
 
     // For windows that are summoned by an event rather than a flag (the
@@ -46,8 +57,12 @@ Scope {
 
     LazyLoader {
         id: loader
+    }
 
-        active: root.open || root.held
+    Binding {
+        target: loader
+        property: root.background ? "activeAsync" : "active"
+        value: root.open || root.held
     }
 
     Timer {

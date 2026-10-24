@@ -13,6 +13,7 @@
 //  every animation stops, so a still desktop still costs nothing.
 import qs.config
 import qs.services
+import qs.components
 import QtQuick
 
 Item {
@@ -57,45 +58,51 @@ Item {
 
     // 0 → 1 as the pointer arrives. Sprung: it overshoots a hair on the
     // way in and settles, which is what makes the lift feel physical.
-    property real hot: root.hovered ? 1 : 0
-    Behavior on hot {
-        enabled: root.motion
-        SpringAnimation {
-            spring: 4.2
-            damping: 0.34
-            epsilon: 0.004
-        }
+    // (components/Spring.qml: SpringAnimation's own physics, drawn on every
+    // frame of a fast screen instead of in 60 fps steps.)
+    readonly property real hot: hotSpring.value
+    Spring {
+        id: hotSpring
+
+        to: root.hovered ? 1 : 0
+        live: root.motion
+        spring: 4.2
+        damping: 0.34
+        epsilon: 0.004
     }
 
-    property real down: root.pressed ? 1 : 0
-    Behavior on down {
-        enabled: root.motion
-        SpringAnimation {
-            spring: 7
-            damping: 0.42
-            epsilon: 0.004
-        }
+    readonly property real down: downSpring.value
+    Spring {
+        id: downSpring
+
+        to: root.pressed ? 1 : 0
+        live: root.motion
+        spring: 7
+        damping: 0.42
+        epsilon: 0.004
     }
 
     // The pointer, normalised to -1…1 from the centre — the lean follows it
     // with a little lag, so a quick flick across still reads as smooth.
-    property real nx: root.hovered ? Math.max(-1, Math.min(1, hover.point.position.x / Math.max(1, root.width) * 2 - 1)) : 0
-    property real ny: root.hovered ? Math.max(-1, Math.min(1, hover.point.position.y / Math.max(1, root.height) * 2 - 1)) : 0
-    Behavior on nx {
-        enabled: root.motion
-        SpringAnimation {
-            spring: 3.4
-            damping: 0.42
-            epsilon: 0.003
-        }
+    readonly property real nx: nxSpring.value
+    readonly property real ny: nySpring.value
+    Spring {
+        id: nxSpring
+
+        to: root.hovered ? Math.max(-1, Math.min(1, hover.point.position.x / Math.max(1, root.width) * 2 - 1)) : 0
+        live: root.motion
+        spring: 3.4
+        damping: 0.42
+        epsilon: 0.003
     }
-    Behavior on ny {
-        enabled: root.motion
-        SpringAnimation {
-            spring: 3.4
-            damping: 0.42
-            epsilon: 0.003
-        }
+    Spring {
+        id: nySpring
+
+        to: root.hovered ? Math.max(-1, Math.min(1, hover.point.position.y / Math.max(1, root.height) * 2 - 1)) : 0
+        live: root.motion
+        spring: 3.4
+        damping: 0.42
+        epsilon: 0.003
     }
 
     // Where the light sits, in this item's pixels. It rides the pointer

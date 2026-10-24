@@ -947,15 +947,16 @@ FocusScope {
                     height: 20
                     radius: Appearance.r(10)
                     anchors.verticalCenter: parent.verticalCenter
-                    x: Config.map.islandTasks ? parent.width - width - 3 : 3
+                    x: knobSlide.value
                     color: "#050505"
 
-                    Behavior on x {
-                        SpringAnimation {
-                            spring: 3.4
-                            damping: 0.66
-                            epsilon: 0.01
-                        }
+                    Spring {
+                        id: knobSlide
+
+                        to: Config.map.islandTasks ? knob.parent.width - knob.width - 3 : 3
+                        spring: 3.4
+                        damping: 0.66
+                        epsilon: 0.25
                     }
                 }
 

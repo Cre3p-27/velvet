@@ -72,24 +72,18 @@ Item {
 
         width: root.vertical ? root.cell : root.cell
         height: root.vertical ? root.cell : root.cell
-        x: root.vertical ? (root.span - root.cell) / 2 : pos
-        y: root.vertical ? pos : (root.span - root.cell) / 2
+        x: root.vertical ? (root.span - root.cell) / 2 : slide.value
+        y: root.vertical ? slide.value : (root.span - root.cell) / 2
 
-        Behavior on x {
-            enabled: !root.vertical
-            SpringAnimation {
-                spring: 4.2
-                damping: 0.42
-                epsilon: 0.4
-            }
-        }
-        Behavior on y {
-            enabled: root.vertical
-            SpringAnimation {
-                spring: 4.2
-                damping: 0.42
-                epsilon: 0.4
-            }
+        // the jump to the new desktop, sprung (components/Spring.qml: drawn
+        // on every frame of a fast screen, not in 60 fps steps)
+        Spring {
+            id: slide
+
+            to: indicator.pos
+            spring: 4.2
+            damping: 0.42
+            epsilon: 0.4
         }
 
         // (No idle pulse: an infinite animation here redrew — and re-blurred —

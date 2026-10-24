@@ -92,16 +92,17 @@ Item {
                 // categories into grey noise. The selected one still moves and
                 // fills; the others stay legible, because you choose between
                 // them by reading them.
-                x: selected ? 16 : (hot ? 6 : 0)
+                x: tabShift.value
                 scale: selected ? 1.02 : 1.0
                 opacity: selected || hot ? 1.0 : (root.focused ? 0.9 : 0.78)
 
-                Behavior on x {
-                    SpringAnimation {
-                        spring: 4.0
-                        damping: 0.32
-                        epsilon: 0.5
-                    }
+                Spring {
+                    id: tabShift
+
+                    to: tab.selected ? 16 : (tab.hot ? 6 : 0)
+                    spring: 4.0
+                    damping: 0.32
+                    epsilon: 0.5
                 }
                 Behavior on scale {
                     NumberAnimation {
