@@ -754,7 +754,7 @@ Singleton {
     // The settings' one-click rows she may press herself: they show, tidy or
     // reset a look — nothing here deletes, uninstalls, powers off or touches
     // her own setup (those have their own tools with a yes, or stay yours).
-    readonly property var actionsAllowed: ["islandJoinFrame", "resetLauncherLook", "resetThisLook", "resetSoftArrangement", "randomWallpaper", "rescanWallpapers", "refetchLyrics", "saveLook", "openMap", "openWheel", "openLauncher", "openQuick", "openHome", "openWorkflow", "openDesktopTab", "openWallpaperTab", "openBluetooth", "openWelcome"]
+    readonly property var actionsAllowed: ["islandJoinFrame", "resetLauncherLook", "resetThisLook", "resetSoftArrangement", "fluidClassic", "fluidGlass", "fluidMinimal", "fluidFloating", "randomWallpaper", "rescanWallpapers", "refetchLyrics", "saveLook", "openMap", "openWheel", "openLauncher", "openQuick", "openHome", "openWorkflow", "openDesktopTab", "openWallpaperTab", "openBluetooth", "openWelcome"]
 
     function settingId(item: var): string {
         if (item.kind === "action")

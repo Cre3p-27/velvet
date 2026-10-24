@@ -151,6 +151,10 @@ icon, not a broken bar.
 are on, and the countdown is gone before the recording starts — it is never in
 the video. Press again during it to cancel. SHELL → SCREEN RECORDING sets 3, 5
 or 10 seconds (or off). The file lands in ~/Videos, with the sound you hear.
+If `Super + Enter` does nothing, a key of your own may sit on the recording
+(KEYBINDINGS in the settings): `qs -c velvet ipc call binds list` shows every
+key the shell binds, and `qs -c velvet ipc call binds reset record` puts the
+recording back on `Super + Enter`.
 
 **Wi-Fi.** The network lists show placeholder rows while they search, and the
 shell no longer makes the card scan every half minute in the background just to
@@ -1201,6 +1205,34 @@ the music card wears it on its cover. Desktop widgets in the SHAPES and SOFT
 frames morph on hover too (WALLPAPER → SHAPES CHANGE ON HOVER, and a HOVER
 SHAPE per widget). A built-in LOOK clears the hand
 arrangement (BACK brings it back); a look you saved yourself keeps its own.
+
+The **FLUID** lock — the card with side columns of modules — is dressed under
+LOCK SCREEN → FLUID LOCK:
+
+- **QUICK STYLES**: CLASSIC (as it was made), GLASS (see-through cards, the
+  wallpaper shining through), MINIMAL (outlines, nothing that is not needed)
+  and FLOATING (tinted cards on the wallpaper, as big as the screen) — one
+  press each; fine-tune afterwards.
+- **CARDS**: SOLID, GLASS, TINTED or OUTLINE; how much of the fill shows; one
+  corner radius for every card (or each module its own); the module's glyph at
+  the card's edge; RESPOND TO THE POINTER (a small lift, a lit edge, a new
+  glyph); and the BIG CARD behind it all — at 0 % the modules float on the
+  wallpaper.
+- **LAYOUT**: CARD SIZE and CARD SHAPE (16:9, 2:1, 21:9 or the screen's own —
+  a bigger card gives the columns room), CENTRE WIDTH, the GAP between cards,
+  FILL THE COLUMNS (one card takes the room left over, or every card keeps its
+  own height) and where a shorter column sits.
+- **THE CENTRE**: your photo large, medium, small or off; the date in three
+  spellings or off; the AM/PM pill; the caps-lock / layout line.
+- **MODULE DETAILS**: IDLE MUSIC and NO NOTIFICATIONS — with nothing to show,
+  the music card and the notification dock become one SLIM line (or HIDE until
+  something arrives) instead of a big empty card, and grow back the moment a
+  song plays or a notification comes in; POWER BUTTONS as a row of icons or
+  four labelled buttons; the fetch card's colour dots; the cover, the
+  forecast, the notification count and more.
+
+Every change shows at once in the live preview next to the list. The lock
+editor (ARRANGE THE COLUMNS) has a CARD STYLE button too.
 
 Velvet has its own, in the same language as the rest of the shell — the
 wallpaper dimmed behind it, an enormous clock, your password drawn as tally

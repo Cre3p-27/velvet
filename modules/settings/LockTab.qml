@@ -764,6 +764,22 @@ FocusScope {
                     Config.save();
                 }
             }
+
+            // The cards' dress, right where you see them (the rest of it:
+            // LOCK SCREEN → FLUID LOCK → CARDS).
+            SideButton {
+                readonly property var styles: ["solid", "glass", "tinted", "outline"]
+
+                width: parent.width
+                visible: Config.lock.tileCards
+                label: `CARD STYLE — ${Config.lock.fluidCardStyle.toUpperCase()}`
+                glyph: "style"
+                onClicked: {
+                    const i = styles.indexOf(Config.lock.fluidCardStyle);
+                    Config.set("lock.fluidCardStyle", styles[(i + 1) % styles.length]);
+                    Config.save();
+                }
+            }
         }
 
         Column {

@@ -13,6 +13,10 @@
 //  IS the card.
 //  The media card wears its cover artwork instead, dimmed by a veil so
 //  the text still reads. `carded` off = the bare look, content only.
+//  LOCK SCREEN → FLUID LOCK → CARDS dresses every card at once: SOLID,
+//  GLASS, TINTED or OUTLINE, how much of the fill shows, one corner radius
+//  for all (or each module its own), the watermark, and whether the cards
+//  answer the pointer.
 import qs.config
 import qs.services
 import qs.components
@@ -32,15 +36,25 @@ Item {
     // face-friendly forms for the avatar card.
     property var glyphHoverSet: []
 
-    readonly property bool hot: root.carded && root.glyphHover && hoverHandler.hovered
+    // The pointer is over the card (LOCK SCREEN → FLUID LOCK → CARDS →
+    // RESPOND TO THE POINTER): the edge lights up and, where the module
+    // allows it, the glyph changes.
+    readonly property bool hot: root.carded && Config.lock.fluidHover && hoverHandler.hovered
     property int hoverGlyph: -1
     property int _lastHover: -1
 
     property string title: ""
     property string titleIcon: ""
     property bool carded: true
-    // The fluid lock's per-card corner radius — the module decides.
+    // The fluid lock's per-card corner radius — the module decides…
     property int radius: 28
+    // …unless CORNERS gives every card the same one.
+    readonly property real corner: {
+        const v = parseInt(Config.lock.fluidCorners);
+        return Math.min(isNaN(v) ? root.radius : Math.max(0, v), root.height / 2);
+    }
+    readonly property string look: ["solid", "glass", "tinted", "outline"].indexOf(Config.lock.fluidCardStyle) >= 0 ? Config.lock.fluidCardStyle : "solid"
+    readonly property real strength: Math.max(0.2, Math.min(1, Config.lock.fluidCardOpacity))
     // The fluid lock's full-bleed artwork: the media card can wear its cover as
     // its background, dimmed by a surface veil so the text still reads.
     property string image: ""
@@ -53,14 +67,54 @@ Item {
         id: cardBg
 
         anchors.fill: parent
-        radius: root.radius
-        // Fully opaque — the fluid lock's solid surface container tone:
-        // whatever moves behind the card never bleeds through.
-        color: Colours.surfaceHigh
-        border.width: 1
-        border.color: Colours.alpha(Colours.outline, 0.6)
+        radius: root.corner
+        // SOLID is the fluid lock's own opaque surface container tone:
+        // whatever moves behind the card never bleeds through. GLASS lets
+        // the lock show through, TINTED leans into the accent, OUTLINE is
+        // little more than its line. CARD STRENGTH thins any of them.
+        color: {
+            const base = root.look === "tinted" ? Colours.mix(Colours.surfaceHigh, Colours.accent, 0.16) : Colours.surfaceHigh;
+            const share = root.look === "glass" ? 0.42 : (root.look === "outline" ? 0.18 : 1);
+            return Colours.alpha(base, share * root.strength);
+        }
+        border.width: root.look === "outline" ? 1.5 : 1
+        border.color: {
+            if (root.hot)
+                return Colours.alpha(Colours.accent, 0.6);
+            if (root.look === "glass")
+                return Colours.alpha(Colours.ink, 0.16);
+            if (root.look === "tinted")
+                return Colours.alpha(Colours.accent, 0.32);
+            if (root.look === "outline")
+                return Colours.alpha(Colours.ink, 0.26);
+            return Colours.alpha(Colours.outline, 0.6);
+        }
         antialiasing: true
         visible: root.carded
+
+        Behavior on border.color {
+            ColorAnimation {
+                duration: Appearance.anim.fast
+            }
+        }
+    }
+
+    // GLASS: a soft light falling on the top of the pane.
+    Rectangle {
+        anchors.fill: parent
+        radius: root.corner
+        visible: root.carded && root.look === "glass"
+        antialiasing: true
+        gradient: Gradient {
+            GradientStop {
+                position: 0
+                color: Colours.alpha(Colours.ink, 0.07)
+            }
+            GradientStop {
+                position: 0.45
+                color: "transparent"
+            }
+        }
     }
 
     // Watching the whole card — a HoverHandler observes without grabbing,
@@ -68,10 +122,10 @@ Item {
     HoverHandler {
         id: hoverHandler
 
-        enabled: root.carded && root.glyphHover
+        enabled: root.carded && Config.lock.fluidHover
 
         onHoveredChanged: {
-            if (hovered) {
+            if (hovered && root.glyphHover) {
                 const pool = root.glyphHoverSet.length > 0 ? root.glyphHoverSet : [0, 1, 2, 3, 4, 5, 6, 8];
                 const options = pool.filter(k => k !== root.glyphKind && k !== root._lastHover);
                 const src = options.length > 0 ? options : pool;
@@ -94,13 +148,14 @@ Item {
         id: glyphClip
 
         anchors.fill: parent
-        visible: root.carded
-        layer.enabled: root.carded
+        // LOCK SCREEN → FLUID LOCK → CARDS → GLYPH WATERMARK
+        visible: root.carded && Config.lock.fluidWatermark
+        layer.enabled: glyphClip.visible
         layer.effect: GE.OpacityMask {
             maskSource: Rectangle {
                 width: glyphClip.width
                 height: glyphClip.height
-                radius: root.radius
+                radius: root.corner
             }
         }
 
@@ -114,7 +169,7 @@ Item {
             x: root.width - glyph.side * 0.62
             y: (root.height - glyph.side) / 2
             rotation: root.hot ? -8 : 0
-            kind: root.hot && root.hoverGlyph >= 0 ? root.hoverGlyph : root.glyphKind
+            kind: root.hot && root.glyphHover && root.hoverGlyph >= 0 ? root.hoverGlyph : root.glyphKind
             // The shell's own accent — the glyphs speak in the accent tone.
             col: Colours.alpha(Colours.accent, root.hot ? 0.2 : 0.11)
 
@@ -154,7 +209,7 @@ Item {
             maskSource: Rectangle {
                 width: artClip.width
                 height: artClip.height
-                radius: root.radius
+                radius: root.corner
             }
         }
 
@@ -183,7 +238,7 @@ Item {
     // paper tone, the one the ink is made to read on.
     Rectangle {
         anchors.fill: parent
-        radius: root.radius
+        radius: root.corner
         color: Colours.alpha(Colours.paper, root.imageDim)
         visible: root.carded && root.image !== ""
         opacity: artClip.opacity

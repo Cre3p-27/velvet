@@ -50,10 +50,14 @@ Item {
 
     // Words when they fit: four labelled pills need about 450px, plus
     // air on both sides of the row.
-    readonly property bool labelled: !root.compact && root.width >= 500
+    // LOCK SCREEN → FLUID LOCK → MODULE DETAILS → POWER BUTTONS: a row of
+    // icons (words once the card is wide), or WORDS — two by two.
+    readonly property bool grid: !root.compact && Config.lock.powerLayout === "words"
+    readonly property bool labelled: root.grid || (!root.compact && root.width >= 500)
+    readonly property real cellW: (root.width - 40 - 8) / 2
 
-    implicitHeight: root.compact ? 36 : 84
-    implicitWidth: root.compact ? powerRow.implicitWidth : Math.max(340, powerRow.implicitWidth + 48)
+    implicitHeight: root.compact ? 36 : (root.grid ? 44 * 2 + 8 + 40 : 84)
+    implicitWidth: root.compact ? powerRow.implicitWidth : (root.grid ? 340 : Math.max(340, powerRow.implicitWidth + 48))
 
     function armed(what: string): bool {
         return !!root.host && root.host.pendingAction === what;
@@ -80,10 +84,11 @@ Item {
         visible: !root.compact
     }
 
-    Row {
+    Grid {
         id: powerRow
 
         anchors.centerIn: parent
+        columns: root.grid ? 2 : root.actions.length
         spacing: root.compact ? 6 : 8
 
         Repeater {
@@ -97,7 +102,7 @@ Item {
                 readonly property bool on: root.armed(btn.modelData.id)
                 readonly property bool hot: hover.hovered
 
-                width: root.labelled ? label.implicitWidth + 48 : (root.compact ? 30 : 44)
+                width: root.grid ? root.cellW : (root.labelled ? label.implicitWidth + 48 : (root.compact ? 30 : 44))
                 height: root.compact ? 30 : 44
                 radius: height / 2
                 color: btn.on ? Colours.warning : (btn.hot ? (btn.modelData.guarded ? Colours.alpha(Colours.warning, 0.22) : Colours.alpha(Colours.accent, 0.22)) : Colours.alpha(Colours.ink, 0.07))
@@ -134,6 +139,8 @@ Item {
                         id: label
 
                         anchors.verticalCenter: parent.verticalCenter
+                        width: root.grid ? Math.min(implicitWidth, root.cellW - 48) : implicitWidth
+                        elide: Text.ElideRight
                         visible: root.labelled
                         text: btn.on ? "Enter password" : btn.modelData.label
                         color: btn.on ? Colours.paper : (btn.hot ? Colours.ink : Colours.alpha(Colours.ink, 0.82))

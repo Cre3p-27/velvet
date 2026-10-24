@@ -643,6 +643,50 @@ JsonAdapter {
         property bool shapeCycle: true
         // The cards around the tile modules; off is bare.
         property bool tileCards: true
+        // ── the FLUID lock, dressed (LOCK SCREEN → FLUID LOCK) ──────
+        // The cards: "solid" | "glass" (see-through, a light edge) |
+        // "tinted" (in the accent) | "outline" (only the line).
+        property string fluidCardStyle: "solid"
+        // How much of a card's fill shows (0.2 … 1).
+        property real fluidCardOpacity: 1.0
+        // Corners: "own" = each module its own, or one radius in px.
+        property string fluidCorners: "own"
+        // The module's glyph at each card's right edge.
+        property bool fluidWatermark: true
+        // Cards answer the pointer: a small lift, a lit edge, a new glyph.
+        property bool fluidHover: true
+        // The big frosted card behind it all — 0 lets the modules
+        // float on the wallpaper.
+        property real fluidPanel: 0.85
+        // How tall the card is (share of the screen) and its shape:
+        // "wide" 16:9 · "wider" 2:1 · "ultra" 21:9 · "screen" the
+        // screen's own.
+        property real fluidSize: 0.7
+        property string fluidShape: "wide"
+        // The centre stage's width (× its own) and the gap between cards.
+        property real fluidCentre: 1.0
+        property int fluidGap: 20
+        // The columns end level with the centre and one card takes the
+        // room left over; off = every card its own height, and the
+        // columns sit "top" | "centre" | "bottom".
+        property bool fluidFill: true
+        property string fluidAlign: "top"
+        // The centre: the photo ("large" | "medium" | "small" | "off"),
+        // the date ("weekday" | "full" | "short" | "off") and the AM/PM
+        // pill under a twelve-hour clock.
+        property string fluidAvatar: "large"
+        property string fluidDate: "weekday"
+        property bool fluidAmPm: true
+        // A module with nothing to show — no song, no notifications:
+        // "card" as ever, "slim" one low line, "hide" gone until there
+        // is something.
+        property string mediaIdle: "slim"
+        property string notifsIdle: "slim"
+        // The power buttons: a "row" of icons (words once the card is
+        // wide), or "words", two by two.
+        property string powerLayout: "row"
+        // The fetch card's colour dots.
+        property bool sessionPalette: true
         // The password's face — "pop": the shapes pop in on an
         // expressive overshoot and cool to ink; "settle": a deck
         // that settles each shape into a circle; "circles" skips

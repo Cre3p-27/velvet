@@ -34,9 +34,33 @@ Item {
     // The fluid lock's own centre scale — its tokens shrink with the screen.
     readonly property real cs: Math.min(1, surface.height / 1440)
 
-    // Its card: 0.7 of the screen tall at 16:9.
-    readonly property real fullH: Math.min(surface.height * 0.7, surface.width / 1.778)
-    readonly property real fullW: fullH * 1.778
+    // Its card: 0.7 of the screen tall at 16:9 — LOCK SCREEN → FLUID LOCK →
+    // LAYOUT → CARD SIZE and CARD SHAPE make it bigger, smaller, wider.
+    readonly property real aspect: {
+        switch (Config.lock.fluidShape) {
+        case "wider":
+            return 2;
+        case "ultra":
+            return 2.37;
+        case "screen":
+            return surface.height > 0 ? surface.width / surface.height : 1.778;
+        }
+        return 1.778;
+    }
+    readonly property real fullH: Math.min(surface.height * Math.max(0.5, Math.min(0.96, Config.lock.fluidSize)), surface.width * 0.97 / surface.aspect)
+    readonly property real fullW: fullH * surface.aspect
+
+    // A new size while the card stands (the settings preview, a changed
+    // dial) is taken at once — never in the middle of an entrance or exit.
+    readonly property bool moving: initAnim.running || initZoom.running || initDrop.running || initFade.running || initFlip.running || initVortex.running || initGlitch.running || initShutter.running
+    function refit(): void {
+        if (!surface.entrancePlayed || surface.moving || lockContent.scale !== 1)
+            return;
+        lockContent.w = surface.fullW;
+        lockContent.h = surface.fullH;
+    }
+    onFullWChanged: surface.refit()
+    onFullHChanged: surface.refit()
 
     // The small square the card grows from: the lock icon (extraLarge
     // × scale 4 = 112px) plus its padding.large × 4.
@@ -46,7 +70,11 @@ Item {
     // photo, masked by the glyph. Smaller than the fluid lock's original
     // so the card keeps air between the clock and the password pill.
     // A dial clock is tall already — the photo steps back a little.
-    readonly property real avatarSize: 240 * surface.cs * (surface.dialClock ? 0.72 : 1)
+    // LOCK SCREEN → FLUID LOCK → THE CENTRE → PHOTO: large, medium, small.
+    readonly property real avatarSize: 240 * surface.cs * (surface.dialClock ? 0.72 : 1) * (({
+                medium: 0.7,
+                small: 0.47
+            })[Config.lock.fluidAvatar] ?? 1)
 
     // The hour as the clock shows it. Qt only counts to twelve when the
     // SAME format carries the AM/PM marker — "hh" alone is 0–23, which
@@ -171,14 +199,46 @@ Item {
     // use it (the notification dock, the music, the forecast), else the last.
     // The last card used to stretch whatever it was — four power buttons in a
     // card as tall as the dock.
+    // A card that is resting (no song, no notifications, and a SLIM or
+    // HIDE idle look) never takes it — the next one does, and a column with
+    // none of the three keeps the old way (its last card). FILL THE COLUMNS
+    // off: nobody stretches, every card keeps its own height.
     function stretchIndex(zone: string): int {
+        if (!Config.lock.fluidFill)
+            return -1;
         const list = LockLayout.list(zone);
+        let any = false;
         for (const id of ["notifs", "media", "weather"]) {
             const i = list.indexOf(id);
-            if (i >= 0)
+            if (i < 0)
+                continue;
+            any = true;
+            if (!surface.restingMods[id])
                 return i;
         }
-        return list.length - 1;
+        return any ? -1 : list.length - 1;
+    }
+
+    // Which modules rest right now — told by their tiles (ModuleInTile).
+    property var restingMods: ({})
+    function setResting(id: string, on: bool): void {
+        if (!!surface.restingMods[id] === on)
+            return;
+        const next = Object.assign({}, surface.restingMods);
+        next[id] = on;
+        surface.restingMods = next;
+    }
+
+    // Where a side column sits when it is shorter than the tallest one: at
+    // its top, middle or bottom (LOCK SCREEN → FLUID LOCK → LAYOUT → COLUMNS
+    // SIT). A column that fills IS the tallest, so for it all three agree.
+    function columnY(h: real): real {
+        const top = (tileRow.height - tileRow.colH) / 2;
+        if (Config.lock.fluidAlign === "top")
+            return top;
+        if (Config.lock.fluidAlign === "bottom")
+            return top + tileRow.colH - h;
+        return (tileRow.height - h) / 2;
     }
     readonly property bool dotClock: Config.lock.clockFace === "dots" && !surface.dialClock
     // CLOCK SHAPE (or the ANALOG face): the clock moves into a dial.
@@ -662,7 +722,9 @@ Item {
 
             anchors.fill: parent
             radius: lockContent.radius
-            color: Colours.alpha(Colours.surface, 0.85)
+            // LOCK SCREEN → FLUID LOCK → CARDS → BIG CARD: 0 lets the
+            // modules float on the wallpaper.
+            color: Colours.alpha(Colours.surface, Math.max(0, Math.min(1, Config.lock.fluidPanel)))
             antialiasing: true
 
             layer.enabled: true
@@ -716,7 +778,10 @@ Item {
                 anchors.centerIn: parent
                 width: parent.width / surface.ui
                 height: parent.height / surface.ui
-                spacing: 40
+                // GAP: between the cards in a column, and twice that
+                // between the columns and the centre.
+                readonly property real gap: Math.max(4, Math.min(48, Config.lock.fluidGap))
+                spacing: tileRow.gap * 2
 
                 // The fluid lock's centerScale: when the columns would outgrow
                 // the card (small screens, full modules), the whole inside
@@ -747,10 +812,12 @@ Item {
                         }
                     }
 
-                    width: (tileRow.width - centerCol.width - 80) / 2
-                    height: tileRow.colH
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 20
+                    width: (tileRow.width - centerCol.width - tileRow.spacing * 2) / 2
+                    // a column with a card that stretches is as tall as the
+                    // row's tallest; one without keeps its own height
+                    height: surface.stretchIndex("left") >= 0 ? tileRow.colH : leftCol.implicitHeight
+                    y: surface.columnY(leftCol.height)
+                    spacing: tileRow.gap
 
                     Repeater {
                         model: LockLayout.list("left")
@@ -773,7 +840,8 @@ Item {
                 Column {
                     id: centerCol
 
-                    width: Math.min(600 * surface.cs, tileRow.width * 0.4)
+                    // CENTRE WIDTH (LOCK SCREEN → FLUID LOCK → LAYOUT)
+                    width: Math.min(600 * surface.cs, tileRow.width * 0.4) * Math.max(0.7, Math.min(1.3, Config.lock.fluidCentre))
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 20
 
@@ -870,7 +938,7 @@ Item {
 
                         Rectangle {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            visible: !Config.bar.clock.format24h && Config.lock.clockFace !== "analog"
+                            visible: !Config.bar.clock.format24h && Config.lock.clockFace !== "analog" && Config.lock.fluidAmPm
                             width: amPm.implicitWidth + 32
                             height: amPm.implicitHeight + 28
                             radius: 16
@@ -889,9 +957,14 @@ Item {
                         }
                     }
 
+                    // DATE (LOCK SCREEN → FLUID LOCK → THE CENTRE)
                     P5Text {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: Qt.formatDateTime(clock.date, "dddd • d MMM").toUpperCase()
+                        visible: Config.lock.fluidDate !== "off"
+                        text: Qt.formatDateTime(clock.date, ({
+                                full: "dddd, d MMMM yyyy",
+                                short: "ddd • dd.MM"
+                            })[Config.lock.fluidDate] ?? "dddd • d MMM").toUpperCase()
                         color: Colours.ink
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
@@ -979,6 +1052,7 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter
                         width: surface.avatarSize
                         height: surface.avatarSize
+                        visible: Config.lock.fluidAvatar !== "off"
 
                         opacity: surface.awake
 
@@ -1449,10 +1523,10 @@ Item {
                         }
                     }
 
-                    width: (tileRow.width - centerCol.width - 80) / 2
-                    height: tileRow.colH
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 20
+                    width: (tileRow.width - centerCol.width - tileRow.spacing * 2) / 2
+                    height: surface.stretchIndex("right") >= 0 ? tileRow.colH : rightCol.implicitHeight
+                    y: surface.columnY(rightCol.height)
+                    spacing: tileRow.gap
 
                     Repeater {
                         model: LockLayout.list("right")
@@ -2651,9 +2725,39 @@ Item {
     }
 
     // One card module in its column — the fluid lock's cards fill the column
-    // and the content settles in as one, no stagger.
+    // and the content settles in as one, no stagger. A module with nothing
+    // to show (no song, no notifications) rests in its idle look: SLIM is
+    // its own low card, HIDE takes the tile out until there is something.
+    // With RESPOND TO THE POINTER the card lifts a little under the mouse.
     component ModuleInTile: Item {
         id: tileRoot
+
+        readonly property string idle: tileRoot.modId === "media" ? Config.lock.mediaIdle : (tileRoot.modId === "notifs" ? Config.lock.notifsIdle : "card")
+        readonly property bool resting: hostChip.quiet && tileRoot.idle !== "card"
+
+        visible: !(hostChip.quiet && tileRoot.idle === "hide")
+        onRestingChanged: tileRoot.tell()
+        Component.onCompleted: tileRoot.tell()
+
+        function tell(): void {
+            if (tileRoot.face)
+                tileRoot.face.setResting(tileRoot.modId, tileRoot.resting);
+        }
+
+        scale: lift.hovered ? 1.015 : 1
+
+        Behavior on scale {
+            NumberAnimation {
+                duration: 260
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        HoverHandler {
+            id: lift
+
+            enabled: Config.lock.fluidHover && Config.lock.tileCards
+        }
 
         required property string modId
         required property string zone

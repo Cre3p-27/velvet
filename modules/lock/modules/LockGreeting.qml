@@ -73,6 +73,8 @@ Item {
 
         P5Text {
             anchors.verticalCenter: parent.verticalCenter
+            // never past the card's edge: a long name ends in "…"
+            width: Math.min(implicitWidth, Math.max(40, root.width - (root.compact ? 32 : 76)))
             text: root.compact ? `Hi, ${root.who || "there"}` : (root.who ? `${root.part}, ${root.who}` : root.part)
             color: Colours.alpha(Colours.ink, 0.88)
             font.pixelSize: root.compact ? Appearance.font.size.tiny : 16

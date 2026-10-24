@@ -45,6 +45,11 @@ Item {
     readonly property string artist: root.player?.trackArtist ?? ""
     readonly property string artUrl: root.player?.trackArtUrl ?? ""
     readonly property bool has: root.player !== null && root.title.length > 0
+    // Nothing plays: the fluid lock lets the card rest (LOCK SCREEN → FLUID
+    // LOCK → MODULE DETAILS → IDLE MUSIC) — SLIM is one low
+    // line, HIDE takes the tile away (FluidFace), CARD is the full card.
+    readonly property bool quiet: !root.has
+    readonly property bool slim: !root.compact && root.quiet && Config.lock.mediaIdle !== "card"
 
     // Where the track is, polled while it plays (MPRIS does not push it).
     property real pos: 0
@@ -58,7 +63,7 @@ Item {
         return h > 0 ? `${h}:${String(m % 60).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
     }
 
-    implicitHeight: root.compact ? 30 : 152
+    implicitHeight: root.compact ? 30 : (root.slim ? 76 : 152)
     implicitWidth: root.compact ? compactRow.width : 340
     opacity: root.compact && !root.has ? 0.55 : 1
 
@@ -255,6 +260,7 @@ Item {
             P5Text {
                 width: parent.width
                 // A browser tab has no artist — name the player instead.
+                visible: !root.slim
                 text: root.has ? (root.artist || root.player?.identity || "Unknown artist") : "Play something — it shows up here"
                 color: Colours.alpha(Colours.inkDim, 0.9)
                 font.pixelSize: 13

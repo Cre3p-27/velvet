@@ -383,6 +383,24 @@ Singleton {
         command: ["true"]
     }
 
+    // From a terminal (or Velly):  qs -c velvet ipc call binds list
+    //                               qs -c velvet ipc call binds reset record
+    IpcHandler {
+        target: "binds"
+
+        // every global key: id = combo (the label), one per line
+        function list(): string {
+            return root.defs.map(d => `${d.id} = ${root.display(d.id)}  (${d.label})`).join("\n");
+        }
+        // back to its default key (conflicts are refused, as in the key map)
+        function reset(id: string): string {
+            if (!root.defById(id))
+                return `no key called ${id}`;
+            root.reset(id);
+            return `${id} → ${root.defById(id).def.join(" + ")}`;
+        }
+    }
+
     // ------------------------------------------------------------- storage
     FileView {
         id: storeFile

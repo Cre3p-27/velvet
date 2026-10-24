@@ -18,7 +18,13 @@ Item {
     property bool compact: false
     property bool carded: true
 
-    implicitHeight: root.compact ? 28 : 240
+    // Nothing new: the fluid lock lets the dock rest (LOCK SCREEN → FLUID
+    // LOCK → MODULE DETAILS → NO NOTIFICATIONS) — SLIM is
+    // one low line, HIDE takes the tile away (FluidFace), CARD the full dock.
+    readonly property bool quiet: Notifs.history.length === 0
+    readonly property bool slim: !root.compact && root.quiet && Config.lock.notifsIdle !== "card"
+
+    implicitHeight: root.compact ? 28 : (root.slim ? 64 : 240)
     implicitWidth: root.compact ? compactRow.width : 340
 
     // Groups by app, newest first — the fluid lock's dock keeps one row per app
@@ -67,7 +73,7 @@ Item {
         glyphKind: 0
         radius: 12
         // The fluid lock's dock label: "3 notifications" / "Notifications".
-        title: Notifs.total > 0 ? `${Notifs.total} ${Notifs.total === 1 ? "notification" : "notifications"}` : "Notifications"
+        title: root.slim ? "" : (Notifs.total > 0 ? `${Notifs.total} ${Notifs.total === 1 ? "notification" : "notifications"}` : "Notifications")
         carded: root.carded
         visible: !root.compact
     }
@@ -100,12 +106,54 @@ Item {
     }
 
     // ── the card: the dock itself
+    // ── resting: one low line
+    Row {
+        anchors.left: parent.left
+        anchors.leftMargin: 16
+        anchors.verticalCenter: parent.verticalCenter
+        visible: root.slim
+        spacing: 12
+
+        ShapeBadge {
+            anchors.verticalCenter: parent.verticalCenter
+            size: 32
+            kind: 3
+            hoverKind: -1
+            col: Colours.alpha(Colours.accent, 0.14)
+            icon: "done_all"
+            iconCol: Colours.accent
+            iconSize: 15
+        }
+
+        Column {
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 1
+
+            P5Text {
+                width: Math.min(implicitWidth, root.width - 76)
+                text: "All caught up"
+                color: Colours.alpha(Colours.ink, 0.85)
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+
+            P5Text {
+                width: Math.min(implicitWidth, root.width - 76)
+                text: "Nothing new while you were away"
+                color: Colours.alpha(Colours.inkDim, 0.7)
+                font.pixelSize: 11
+                elide: Text.ElideRight
+            }
+        }
+    }
+
     Item {
         anchors.fill: parent
         anchors.margins: 16
         anchors.topMargin: 40
         clip: true
-        visible: !root.compact
+        visible: !root.compact && !root.slim
 
         // Privacy mode — the fluid lock's hideNotifs: content stays behind the
         // lock, only the promise shows.
@@ -230,11 +278,24 @@ Item {
 
         // The fluid lock's group card: tinted for critical ones, quiet for the
         // rest.
+        // The row answers the pointer: it is a button (it unfolds).
         Rectangle {
             anchors.fill: parent
             radius: 16
-            color: row.isCrit ? Colours.alpha(Colours.accentAlt, 0.24) : Colours.alpha(Colours.surfaceHigh, 0.6)
+            color: {
+                if (row.isCrit)
+                    return Colours.alpha(Colours.accentAlt, rowArea.containsMouse ? 0.32 : 0.24);
+                return rowArea.containsMouse ? Colours.alpha(Colours.mix(Colours.surfaceHigh, Colours.ink, 0.1), 0.8) : Colours.alpha(Colours.surfaceHigh, 0.6);
+            }
+            border.width: 1
+            border.color: Colours.alpha(Colours.accent, rowArea.containsMouse ? 0.3 : 0)
             antialiasing: true
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: Appearance.anim.fast
+                }
+            }
         }
 
         Row {
@@ -292,7 +353,8 @@ Item {
                 spacing: 2
 
                 P5Text {
-                    width: parent.width - 12
+                    // clear of the count chip on the right
+                    width: parent.width - (row.items.length > 1 ? 56 : 12)
                     text: row.app
                     color: Colours.alpha(Colours.inkDim, 0.9)
                     font.pixelSize: 12
@@ -300,7 +362,8 @@ Item {
                 }
 
                 P5Text {
-                    width: parent.width - 12
+                    // clear of the time on the right ("now", "12m", "3h")
+                    width: parent.width - 40
                     visible: row.height > 54
                     text: {
                         const it = row.items[0];
@@ -399,7 +462,11 @@ Item {
         }
 
         MouseArea {
+            id: rowArea
+
             anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
             onClicked: {
                 Sfx.cursor();
                 row.expanded = !row.expanded;

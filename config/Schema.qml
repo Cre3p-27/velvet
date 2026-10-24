@@ -5656,6 +5656,43 @@ Singleton {
                     items: []
                 },
                 {
+                    kind: "page",
+                    name: "QUICK STYLES",
+                    help: "Four ready-made dresses for the FLUID lock in one press — each sets the cards, the big card, the layout and the centre together. Fine-tune anything afterwards in CARDS, LAYOUT and THE CENTRE.",
+                    sub: "CLASSIC · GLASS · MINIMAL · FLOATING — IN ONE PRESS",
+                    icon: "auto_awesome",
+                    items: [
+                        {
+                            kind: "action",
+                            name: "CLASSIC",
+                            help: "The FLUID lock as it was made: solid cards, each with its own corners and glyph, on the big frosted card.",
+                            sub: "SOLID CARDS ON THE BIG FROSTED CARD — AS IT WAS MADE",
+                            fn: "fluidClassic"
+                        },
+                        {
+                            kind: "action",
+                            name: "GLASS",
+                            help: "See-through glass cards with one soft corner, a thin big card, the wallpaper shining through.",
+                            sub: "SEE-THROUGH CARDS · THE WALLPAPER SHINES THROUGH",
+                            fn: "fluidGlass"
+                        },
+                        {
+                            kind: "action",
+                            name: "MINIMAL",
+                            help: "Only outlines, no big card, a small photo, and music and notifications gone while there is nothing to show.",
+                            sub: "OUTLINES ONLY · NOTHING THAT IS NOT NEEDED",
+                            fn: "fluidMinimal"
+                        },
+                        {
+                            kind: "action",
+                            name: "FLOATING",
+                            help: "Tinted cards floating on the wallpaper in a card as big as the screen, round corners and air between them.",
+                            sub: "TINTED CARDS FLOATING ON THE WALLPAPER, SCREEN-SIZED",
+                            fn: "fluidFloating"
+                        }
+                    ]
+                },
+                {
                     kind: "choice",
                     key: "lock.animation",
                     name: "ENTRANCE",
@@ -5748,11 +5785,300 @@ Singleton {
                     ]
                 },
                 {
-                    kind: "toggle",
-                    key: "lock.tileCards",
-                    name: "TILE CARDS",
-                    help: "Draws cards around the modules in the side columns. Off shows the modules bare.",
-                    sub: "CARDS AROUND THE TILE MODULES · OFF IS BARE"
+                    kind: "page",
+                    name: "CARDS",
+                    help: "How every card in the side columns looks: solid, glass, tinted or only an outline, how much of the fill shows, one corner radius for all, the glyph at their edge, whether they answer the pointer — and the big card behind it all.",
+                    sub: "STYLE · STRENGTH · CORNERS · GLYPH · HOVER · THE BIG CARD",
+                    icon: "style",
+                    items: [
+                        {
+                            kind: "toggle",
+                            key: "lock.tileCards",
+                            name: "TILE CARDS",
+                            help: "Draws cards around the modules in the side columns. Off shows the modules bare.",
+                            sub: "CARDS AROUND THE TILE MODULES · OFF IS BARE"
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.fluidCardStyle",
+                            when: { key: "lock.tileCards", is: true },
+                            name: "CARD STYLE",
+                            help: "SOLID is the opaque card the FLUID lock was made with. GLASS lets the lock show through and catches a little light along the top. TINTED leans into your accent colour. OUTLINE is barely more than its line.",
+                            sub: "SOLID · GLASS (SEE-THROUGH) · TINTED (YOUR ACCENT) · OUTLINE (ONLY THE LINE)",
+                            options: [
+                                {
+                                    value: "solid",
+                                    label: "SOLID"
+                                },
+                                {
+                                    value: "glass",
+                                    label: "GLASS"
+                                },
+                                {
+                                    value: "tinted",
+                                    label: "TINTED"
+                                },
+                                {
+                                    value: "outline",
+                                    label: "OUTLINE"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "slider",
+                            key: "lock.fluidCardOpacity",
+                            when: { key: "lock.tileCards", is: true },
+                            name: "CARD STRENGTH",
+                            help: "How much of each card's fill shows. Lower lets the lock behind shine through — whatever the style.",
+                            sub: "HOW MUCH OF THE FILL SHOWS · LOWER IS MORE SEE-THROUGH",
+                            min: 0.2,
+                            max: 1.0,
+                            step: 0.05,
+                            fmt: "percent"
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.fluidCorners",
+                            when: { key: "lock.tileCards", is: true },
+                            name: "CORNERS",
+                            help: "EACH ITS OWN keeps every module's own corner (weather round, notifications tight). A number gives every card the same corner radius.",
+                            sub: "EACH MODULE ITS OWN · OR ONE RADIUS FOR EVERY CARD",
+                            options: [
+                                {
+                                    value: "own",
+                                    label: "EACH ITS OWN"
+                                },
+                                {
+                                    value: "0",
+                                    label: "SQUARE"
+                                },
+                                {
+                                    value: "8",
+                                    label: "8 PX"
+                                },
+                                {
+                                    value: "16",
+                                    label: "16 PX"
+                                },
+                                {
+                                    value: "24",
+                                    label: "24 PX"
+                                },
+                                {
+                                    value: "32",
+                                    label: "32 PX"
+                                },
+                                {
+                                    value: "48",
+                                    label: "ROUND"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidWatermark",
+                            when: { key: "lock.tileCards", is: true },
+                            name: "GLYPH WATERMARK",
+                            help: "Each card wears its module's shape at its right edge, quietly, in your accent colour.",
+                            sub: "THE MODULE'S SHAPE AT EACH CARD'S EDGE"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidHover",
+                            when: { key: "lock.tileCards", is: true },
+                            name: "RESPOND TO THE POINTER",
+                            help: "Under the mouse a card lifts a little, its edge lights up in the accent and its glyph turns into a new shape.",
+                            sub: "A SMALL LIFT, A LIT EDGE AND A NEW GLYPH UNDER THE MOUSE"
+                        },
+                        {
+                            kind: "slider",
+                            key: "lock.fluidPanel",
+                            name: "BIG CARD",
+                            help: "The frosted card everything sits on. At 0% it is gone and the modules float on the wallpaper.",
+                            sub: "THE CARD BEHIND IT ALL · 0% LETS THE MODULES FLOAT",
+                            min: 0.0,
+                            max: 1.0,
+                            step: 0.05,
+                            fmt: "percent"
+                        }
+                    ]
+                },
+                {
+                    kind: "page",
+                    name: "LAYOUT",
+                    help: "How big the FLUID lock's card is and how its inside is laid out: its size and shape, how wide the centre is, the gap between the cards, and whether the side columns stretch to the centre's height.",
+                    sub: "SIZE · SHAPE · CENTRE WIDTH · GAP · FILL",
+                    icon: "view_quilt",
+                    items: [
+                        {
+                            kind: "slider",
+                            key: "lock.fluidSize",
+                            name: "CARD SIZE",
+                            help: "How tall the card is, as a share of the screen. A bigger card gives the side columns more room.",
+                            sub: "HOW TALL THE CARD IS · BIGGER GIVES THE COLUMNS MORE ROOM",
+                            min: 0.55,
+                            max: 0.95,
+                            step: 0.01,
+                            fmt: "percent"
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.fluidShape",
+                            name: "CARD SHAPE",
+                            help: "WIDE is 16:9. WIDER and ULTRA stretch the card sideways for wide screens (the columns get wider, the centre stays). SCREEN takes your screen's own shape.",
+                            sub: "WIDE 16:9 · WIDER 2:1 · ULTRA 21:9 · SCREEN (ITS OWN SHAPE)",
+                            options: [
+                                {
+                                    value: "wide",
+                                    label: "WIDE · 16:9"
+                                },
+                                {
+                                    value: "wider",
+                                    label: "WIDER · 2:1"
+                                },
+                                {
+                                    value: "ultra",
+                                    label: "ULTRA · 21:9"
+                                },
+                                {
+                                    value: "screen",
+                                    label: "SCREEN"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "slider",
+                            key: "lock.fluidCentre",
+                            name: "CENTRE WIDTH",
+                            help: "How wide the centre with the clock and the password is. Narrower gives the side columns more room.",
+                            sub: "THE CLOCK'S STAGE · NARROWER GIVES THE COLUMNS MORE ROOM",
+                            min: 0.7,
+                            max: 1.3,
+                            step: 0.05,
+                            fmt: "float2",
+                            unit: "×"
+                        },
+                        {
+                            kind: "slider",
+                            key: "lock.fluidGap",
+                            name: "GAP",
+                            help: "The space between the cards in a column — and twice that between the columns and the centre.",
+                            sub: "SPACE BETWEEN THE CARDS · TWICE THAT TO THE CENTRE",
+                            min: 6,
+                            max: 40,
+                            step: 1,
+                            fmt: "int",
+                            unit: " PX"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidFill",
+                            name: "FILL THE COLUMNS",
+                            help: "On: the side columns end level with the centre and one card (notifications, music or weather) takes the room left over. Off: every card keeps its own height.",
+                            sub: "ONE CARD TAKES THE ROOM LEFT OVER · OFF: EVERY CARD ITS OWN HEIGHT"
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.fluidAlign",
+                            name: "COLUMNS SIT",
+                            help: "With FILL THE COLUMNS off (or when nothing in a column can stretch): where a shorter column sits — at the top, in the middle or at the bottom.",
+                            sub: "WHERE A SHORTER COLUMN SITS",
+                            options: [
+                                {
+                                    value: "top",
+                                    label: "TOP"
+                                },
+                                {
+                                    value: "centre",
+                                    label: "MIDDLE"
+                                },
+                                {
+                                    value: "bottom",
+                                    label: "BOTTOM"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    kind: "page",
+                    name: "THE CENTRE",
+                    help: "What the FLUID lock's centre shows besides the clock and the password: your photo and how big, the date and how it is written, the AM/PM pill and the line with caps lock and the keyboard layout.",
+                    sub: "PHOTO · DATE · AM/PM · STATE LINE",
+                    icon: "person",
+                    items: [
+                        {
+                            kind: "choice",
+                            key: "lock.fluidAvatar",
+                            name: "PHOTO",
+                            help: "Your ~/.face photo (or the person icon) between the clock and the password — large, medium, small or not at all.",
+                            sub: "LARGE · MEDIUM · SMALL · OFF",
+                            options: [
+                                {
+                                    value: "large",
+                                    label: "LARGE"
+                                },
+                                {
+                                    value: "medium",
+                                    label: "MEDIUM"
+                                },
+                                {
+                                    value: "small",
+                                    label: "SMALL"
+                                },
+                                {
+                                    value: "off",
+                                    label: "OFF"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.fluidDate",
+                            name: "DATE",
+                            help: "The date under the clock: SATURDAY • 24 OCT, written out in full, short, or not at all.",
+                            sub: "SATURDAY • 24 OCT · IN FULL · SHORT · OFF",
+                            options: [
+                                {
+                                    value: "weekday",
+                                    label: "SATURDAY • 24 OCT"
+                                },
+                                {
+                                    value: "full",
+                                    label: "SATURDAY, 24 OCTOBER 2026"
+                                },
+                                {
+                                    value: "short",
+                                    label: "SAT • 24.10"
+                                },
+                                {
+                                    value: "off",
+                                    label: "OFF"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidAmPm",
+                            name: "AM / PM PILL",
+                            help: "Under a twelve-hour clock: the pill with AM or PM. (A 24-hour clock never shows it.)",
+                            sub: "THE PILL UNDER A TWELVE-HOUR CLOCK"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.stateHints",
+                            name: "STATE LINE",
+                            help: "The line under the password that warns about caps lock and num lock and names the keyboard layout.",
+                            sub: "CAPS LOCK · NUM LOCK · KEYBOARD LAYOUT UNDER THE PASSWORD"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.avatarFace",
+                            name: "YOUR FACE",
+                            help: "Shows your ~/.face photo in the lock's avatar.",
+                            sub: "YOUR ~/.FACE IN THE PHOTO CIRCLE"
+                        }
+                    ]
                 },
                 {
                     kind: "page",
@@ -5843,10 +6169,76 @@ Singleton {
                 {
                     kind: "page",
                     name: "MODULE DETAILS",
-                    help: "Finer switches for the modules in the FLUID lock's side columns: the media cover, the weather forecast, the notifications, your face and the disk cell.",
+                    help: "Finer switches for the modules in the FLUID lock's side columns: what music and notifications do when there is nothing to show, the media cover, the weather forecast, the notifications, the power buttons, the fetch card, your face and the disk cell.",
                     sub: "THE FINER SWITCHES OF THE SIDE MODULES",
                     icon: "tune",
                     items: [
+                        {
+                            kind: "choice",
+                            key: "lock.mediaIdle",
+                            name: "IDLE MUSIC",
+                            help: "When no song is playing: the full CARD, a SLIM low line (it grows back into the card the moment music starts), or HIDE it until something plays.",
+                            sub: "THE FULL CARD · A SLIM LINE · HIDDEN UNTIL MUSIC PLAYS",
+                            options: [
+                                {
+                                    value: "card",
+                                    label: "CARD"
+                                },
+                                {
+                                    value: "slim",
+                                    label: "SLIM"
+                                },
+                                {
+                                    value: "hide",
+                                    label: "HIDE"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.notifsIdle",
+                            name: "NO NOTIFICATIONS",
+                            help: "With nothing new: the full dock saying all caught up, a SLIM low line, or HIDE it until a notification arrives.",
+                            sub: "THE FULL DOCK · A SLIM LINE · HIDDEN UNTIL ONE ARRIVES",
+                            options: [
+                                {
+                                    value: "card",
+                                    label: "CARD"
+                                },
+                                {
+                                    value: "slim",
+                                    label: "SLIM"
+                                },
+                                {
+                                    value: "hide",
+                                    label: "HIDE"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.powerLayout",
+                            name: "POWER BUTTONS",
+                            help: "A ROW of four round icons (they get words once the card is wide enough), or WORDS: four labelled buttons, two by two.",
+                            sub: "A ROW OF ICONS · OR FOUR LABELLED BUTTONS TWO BY TWO",
+                            options: [
+                                {
+                                    value: "row",
+                                    label: "ROW"
+                                },
+                                {
+                                    value: "words",
+                                    label: "WORDS"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.sessionPalette",
+                            name: "FETCH COLOUR DOTS",
+                            help: "The row of your theme's colours under the fetch card's lines.",
+                            sub: "YOUR THEME'S COLOURS UNDER THE FETCH LINES"
+                        },
                         {
                             kind: "toggle",
                             key: "lock.mediaArtwork",

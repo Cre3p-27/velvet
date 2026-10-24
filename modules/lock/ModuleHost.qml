@@ -23,6 +23,11 @@ Item {
     property bool fillWidth: false    // true = fill the zone (the fluid lock's cards do)
     property bool fillHeight: false   // true = fill the tile's height (the last module of a column)
 
+    // The module has nothing to show right now (no song, no notifications)
+    // — the fluid lock then lets it rest (LOCK SCREEN → FLUID LOCK →
+    // MODULE DETAILS → IDLE MUSIC, NO NOTIFICATIONS).
+    readonly property bool quiet: ((root.framed ? slotLoader.item : innerLoader.item)?.quiet) ?? false
+
     // The chip's own look, when framed. The wallpaper's widget layer
     // recolours these per theme (GLASS / INK); the lock keeps the defaults.
     property color chipFill: Colours.alpha(Colours.surface, 0.55)

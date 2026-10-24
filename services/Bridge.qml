@@ -447,6 +447,12 @@ Singleton {
             });
             Toast.show("SOFT LOCK · BACK TO ITS LAYOUT'S OWN ARRANGEMENT", "info", 2400);
             break;
+        case "fluidClassic":
+        case "fluidGlass":
+        case "fluidMinimal":
+        case "fluidFloating":
+            root.fluidStyle(item.fn);
+            break;
         case "forgetAllLooks":
             Looks.forgetAll();
             Toast.show("EVERY LOOK FORGOTTEN", "warn", 3000);
@@ -529,6 +535,74 @@ setsid -f "$4" >/dev/null 2>&1`, "velvet", Config.path, Config.wallpaper.directo
     // one the pointer is on: the focused screen first, the first screen as the
     // floor. Velly is then told the module is wanted — the island picks that up
     // whether it was already up or is only waking now.
+    // LOCK SCREEN → FLUID LOCK → QUICK STYLES: one press dresses the cards,
+    // the big card, the layout and the centre together. CLASSIC is the lock
+    // as it was made; the module order and what each module shows stay yours.
+    function fluidStyle(which: string): void {
+        const classic = {
+            "lock.tileCards": true,
+            "lock.fluidCardStyle": "solid",
+            "lock.fluidCardOpacity": 1,
+            "lock.fluidCorners": "own",
+            "lock.fluidWatermark": true,
+            "lock.fluidHover": true,
+            "lock.fluidPanel": 0.85,
+            "lock.fluidSize": 0.7,
+            "lock.fluidShape": "wide",
+            "lock.fluidCentre": 1,
+            "lock.fluidGap": 20,
+            "lock.fluidFill": true,
+            "lock.fluidAlign": "top",
+            "lock.fluidAvatar": "large",
+            "lock.fluidDate": "weekday",
+            "lock.mediaIdle": "slim",
+            "lock.notifsIdle": "slim"
+        };
+        const dress = ({
+                fluidClassic: {},
+                fluidGlass: {
+                    "lock.fluidCardStyle": "glass",
+                    "lock.fluidCardOpacity": 0.85,
+                    "lock.fluidCorners": "24",
+                    "lock.fluidWatermark": false,
+                    "lock.fluidPanel": 0.3,
+                    "lock.fluidGap": 16,
+                    "lock.fluidAvatar": "medium"
+                },
+                fluidMinimal: {
+                    "lock.fluidCardStyle": "outline",
+                    "lock.fluidCorners": "16",
+                    "lock.fluidWatermark": false,
+                    "lock.fluidPanel": 0,
+                    "lock.fluidGap": 14,
+                    "lock.fluidFill": false,
+                    "lock.fluidAvatar": "small",
+                    "lock.fluidDate": "short",
+                    "lock.mediaIdle": "hide",
+                    "lock.notifsIdle": "hide"
+                },
+                fluidFloating: {
+                    "lock.fluidCardStyle": "tinted",
+                    "lock.fluidCardOpacity": 0.9,
+                    "lock.fluidCorners": "32",
+                    "lock.fluidPanel": 0,
+                    "lock.fluidSize": 0.86,
+                    "lock.fluidShape": "screen",
+                    "lock.fluidCentre": 0.9,
+                    "lock.fluidGap": 24,
+                    "lock.fluidAvatar": "medium"
+                }
+            })[which] ?? {};
+        Config.setMany(Object.assign({}, classic, dress));
+        const names = {
+            fluidClassic: "CLASSIC",
+            fluidGlass: "GLASS",
+            fluidMinimal: "MINIMAL",
+            fluidFloating: "FLOATING"
+        };
+        Toast.ok(`FLUID LOCK · ${names[which] ?? "CLASSIC"}`);
+    }
+
     function showIsland(): void {
         const screen = Hypr.focusedScreen ?? Quickshell.screens[0];
         Panels.islandScreen = screen?.name ?? "";

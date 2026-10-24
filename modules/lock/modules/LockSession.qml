@@ -16,7 +16,8 @@ Item {
     property bool compact: false
     property bool carded: true
 
-    implicitHeight: root.compact ? 24 : 206
+    // as tall as its lines (and the colour dots, when they show)
+    implicitHeight: root.compact ? 24 : Math.ceil(fetchCol.implicitHeight + 32)
     implicitWidth: root.compact ? row.width : 340
 
     ModuleCard {
@@ -56,6 +57,8 @@ Item {
 
     // ── the card: the fetch, the fluid lock's order
     Column {
+        id: fetchCol
+
         anchors.fill: parent
         anchors.margins: 16
         spacing: 10
@@ -125,6 +128,8 @@ Item {
 
             width: parent.width
             spacing: swatchRow.gap
+            // LOCK SCREEN → FLUID LOCK → MODULE DETAILS → FETCH COLOUR DOTS
+            visible: Config.lock.sessionPalette
 
             Repeater {
                 model: [Colours.accent, Colours.accentAlt, Colours.ink, Colours.inkDim, Colours.surfaceHigh, Colours.warning, Colours.danger, Colours.paper]
