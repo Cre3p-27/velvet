@@ -206,6 +206,13 @@ ShellRoot {
     }
     Osd {}
     Toasts {}
+    // 3 · 2 · 1 before a screen recording (Super+Enter)
+    Parked {
+        open: Panels.recordLeft > 0
+        keep: 8
+
+        RecordCountdown {}
+    }
     Parked {
         id: flash
 

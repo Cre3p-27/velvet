@@ -1,8 +1,11 @@
 #!/bin/bash
 #  VELVET · Super+Enter — start or stop the screen recording.
 #
-#  The first press shows a short "recording starts" note and starts recording
-#  once it has gone, so no note is ever in the video. It records the focused
+#  The first press asks the shell for a countdown — 3 · 2 · 1 in the middle of
+#  the screen (SHELL → SCREEN RECORDING, `ipc call record begin`) — and starts
+#  recording once it has gone, so no countdown is ever in the video. Without a
+#  running shell, or with the countdown OFF, a short "recording starts" note
+#  does the same job. It records the focused
 #  monitor WITH THE SOUND YOU HEAR: the monitor of the default output, not the
 #  microphone (wf-recorder's own --audio takes the default INPUT — that is how
 #  the old recordings came out with room noise and none of the music). The
@@ -55,6 +58,14 @@ say_saved() {
         esac
     ) >/dev/null 2>&1 &
     return 0
+}
+
+# The shell's side of a recording (services/Panels.qml, target "record"):
+# begin → the countdown's seconds, cancel, started, stopped. Fails quietly
+# when no shell runs.
+shell_says() {
+    command -v qs >/dev/null 2>&1 || return 1
+    timeout 2 qs -c velvet ipc call record "$1" 2>/dev/null
 }
 
 REC=""
@@ -139,6 +150,7 @@ stop_rec() {
         done
     fi
     rm -f "$PIDFILE" "$OUTFILE"
+    shell_says stopped >/dev/null
     if [ -n "$saved" ] && [ -s "$saved" ]; then
         label_colours "$saved"
         say_saved "$saved"
@@ -157,7 +169,8 @@ if [ -f "$PIDFILE" ]; then
             if kill -0 "${pid#wait:}" 2>/dev/null; then
                 kill "${pid#wait:}" 2>/dev/null
                 rm -f "$PIDFILE" "$OUTFILE"
-                say_brief "RECORDING CANCELLED" 1200
+                # the shell stops its countdown and says so; no shell: the note
+                shell_says cancel >/dev/null || say_brief "RECORDING CANCELLED" 1200
                 exit 0
             fi
             rm -f "$PIDFILE" "$OUTFILE"
@@ -181,14 +194,23 @@ mkdir -p "$OUTDIR" "$(dirname "$LOG")"
 SRC=$(sound_source)
 MON=$(focused_output)
 
-# the short wait: the note goes, then the recording starts — a press now cancels
+# the wait: the shell's countdown (or the short note) goes, then the recording
+# starts — a press now cancels
 echo "wait:$$" > "$PIDFILE"
-if [ -n "$SRC" ]; then
-    say_brief "RECORDING STARTS · ${MON:-screen} · WITH SOUND · SUPER+ENTER STOPS" "$PREROLL_MS"
+COUNT=$(shell_says begin | tr -dc '0-9')
+if [ -n "$COUNT" ] && [ "$COUNT" -gt 0 ]; then
+    # no sound to record: said during the countdown, gone before the start
+    [ -n "$SRC" ] || say_brief "NO SOUND IN THIS RECORDING · no output device found" "$((COUNT * 1000 - 600))"
+    # the last number fades in 0.16 s; the recorder starts after it is gone
+    sleep "$COUNT.35"
 else
-    say_brief "RECORDING STARTS · ${MON:-screen} · NO SOUND (no output device found)" "$PREROLL_MS"
+    if [ -n "$SRC" ]; then
+        say_brief "RECORDING STARTS · ${MON:-screen} · WITH SOUND · SUPER+ENTER STOPS" "$PREROLL_MS"
+    else
+        say_brief "RECORDING STARTS · ${MON:-screen} · NO SOUND (no output device found)" "$PREROLL_MS"
+    fi
+    sleep "$(printf '%d.%03d' $(((PREROLL_MS + 500) / 1000)) $(((PREROLL_MS + 500) % 1000)))"
 fi
-sleep "$(printf '%d.%03d' $(((PREROLL_MS + 500) / 1000)) $(((PREROLL_MS + 500) % 1000)))"
 
 # start the recorder: $1 = gpu | cpu. Leaves its pid in $pid; the log grows from $mark.
 start() {
@@ -262,3 +284,4 @@ if ! kill -0 "$pid" 2>/dev/null; then
     say "COULDN'T START THE RECORDER · SEE $LOG" "critical"
     exit 1
 fi
+shell_says started >/dev/null

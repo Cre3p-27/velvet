@@ -179,10 +179,32 @@ Item {
         }
     }
 
+    // ──────────────────────────────────────────────── on its way: placeholders
+    Column {
+        anchors.fill: parent
+        anchors.margins: 24
+        spacing: 14
+        visible: root.on && !Weather.ready && Weather.fetching
+
+        P5Text {
+            display: true
+            text: "LOOKING OUTSIDE…"
+            color: Colours.alpha(Colours.ink, 0.6)
+            font.pixelSize: Appearance.font.size.small
+            tracking: 1.6
+        }
+
+        Skeleton {
+            width: parent.width
+            count: 3
+            rowHeight: 52
+        }
+    }
+
     // ─────────────────────────────────────────────────────── off / no data yet
     Item {
         anchors.fill: parent
-        visible: !root.on || !Weather.ready
+        visible: !root.on || (!Weather.ready && !Weather.fetching)
 
         Icon {
             anchors.horizontalCenter: parent.horizontalCenter

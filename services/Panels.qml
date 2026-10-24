@@ -78,6 +78,71 @@ Singleton {
     property string arrangeScreen: ""
     property real deskMenuX: 0
     property real deskMenuY: 0
+    // the desktop widget a right-click was on (its id in the live desk);
+    // "" = the bare desktop's menu
+    property string deskMenuWidget: ""
+
+    // ───────────────────────────────────────────────────── screen recording
+    //  Super+Enter (hypr/scripts/velvet-record.sh) asks the shell first: a
+    //  countdown, 3 · 2 · 1 in the middle of the screen (modules/osd/
+    //  RecordCountdown.qml), gone before the recorder starts — so it never ends
+    //  up in the video. A second press during it cancels. SHELL → SCREEN
+    //  RECORDING sets the seconds (0 = the short note as before).
+    property int recordLeft: 0
+    property int recordFrom: 0
+    property bool recording: false
+
+    Timer {
+        id: recordTick
+
+        interval: 1000
+        repeat: true
+        onTriggered: {
+            root.recordLeft = Math.max(0, root.recordLeft - 1);
+            if (root.recordLeft <= 0)
+                recordTick.stop();
+            else if (Config.record.sound)
+                Sfx.cursor();
+        }
+    }
+
+    function recordBegin(): int {
+        const n = Math.max(0, Math.min(10, Math.round(Config.record.countdown)));
+        if (n <= 0)
+            return 0;
+        // an open launcher or menu would be in the first frames: they go
+        root.closeAll();
+        root.recordFrom = n;
+        root.recordLeft = n;
+        recordTick.restart();
+        if (Config.record.sound)
+            Sfx.cursor();
+        return n;
+    }
+
+    function recordCancel(): void {
+        recordTick.stop();
+        root.recordLeft = 0;
+    }
+
+    //   qs -c velvet ipc call record begin   (the script's question: seconds to wait)
+    IpcHandler {
+        target: "record"
+
+        function begin(): string {
+            return String(root.recordBegin());
+        }
+        function cancel(): void {
+            root.recordCancel();
+            Toast.show("RECORDING CANCELLED", "info", 1600);
+        }
+        function started(): void {
+            root.recording = true;
+        }
+        function stopped(): void {
+            root.recording = false;
+        }
+    }
 
     // Settings remembers where you were, so Super+Tab twice returns you there.
     property int settingsTab: 0
@@ -268,10 +333,24 @@ Singleton {
 
     function openDeskMenu(screenName: string, x: real, y: real): void {
         root.closeAll();
+        root.deskMenuWidget = "";
         root.deskMenuX = x;
         root.deskMenuY = y;
         root.deskMenuScreen = screenName;
     }
+
+    // A right-click on a desktop widget: its own menu, at the pointer
+    // (modules/wallpaper/WidgetMenuCard.qml).
+    function openWidgetMenu(screenName: string, x: real, y: real, id: string): void {
+        root.closeAll();
+        root.deskMenuWidget = id;
+        root.deskMenuX = x;
+        root.deskMenuY = y;
+        root.deskMenuScreen = screenName;
+    }
+
+    // DESKTOP opened for one widget: the tab picks it (DesktopTab.qml)
+    property string pendingDeskItem: ""
 
     function toggleSettings(): void {
         // The window is open on another desktop: Super+Tab brings it here

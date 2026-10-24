@@ -28,7 +28,8 @@ Item {
     // rather than the box itself — the corners of a cookie are not the cookie.
     property bool round: false
     property bool scrollable: false
-    // Right-click opens the widget in DESKTOP (WidgetActions.edit).
+    // Right-click opens the widget's own menu on the desktop (Wallpaper.qml's
+    // slot → WidgetMenuCard); in a preview it opens DESKTOP (WidgetActions.edit).
     property bool editable: true
     // A long press lifts the desk to be arranged by hand (ARRANGE).
     property bool arrangeable: true
@@ -205,8 +206,17 @@ Item {
         onClicked: mouse => {
             if (mouse.button === Qt.RightButton) {
                 root.secondary();
-                if (root.editable)
+                if (root.editable) {
+                    // on the desktop: the widget's own menu, right here;
+                    // anywhere else (a preview) the DESKTOP tab
+                    for (let p = root.parent; p; p = p.parent) {
+                        if (p.__velvetWidgetSlot === true) {
+                            p.openMenu(area, mouse.x, mouse.y);
+                            return;
+                        }
+                    }
                     WidgetActions.edit();
+                }
             } else if (root.clickable) {
                 root.activated();
             }

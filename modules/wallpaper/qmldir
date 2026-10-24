@@ -11,3 +11,4 @@ DesktopMenu 1.0 DesktopMenu.qml
 DesktopMenuCard 1.0 DesktopMenuCard.qml
 ArrangeDesk 1.0 ArrangeDesk.qml
 DeskArrange 1.0 DeskArrange.qml
+WidgetMenuCard 1.0 WidgetMenuCard.qml

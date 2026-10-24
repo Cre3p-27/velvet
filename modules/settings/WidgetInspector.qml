@@ -763,7 +763,7 @@ Flickable {
         // ══════════════════════════════════════════════════════════ POINTER
         InsSection {
             title: "POINTER"
-            note: (root.opts.pointer ?? "live") === "still" ? "A PICTURE · CLICKS GO THROUGH TO THE DESKTOP" : "LIGHTS UP UNDER THE POINTER · CLICK TO USE · RIGHT-CLICK TO EDIT"
+            note: (root.opts.pointer ?? "live") === "still" ? "A PICTURE · CLICKS GO THROUGH TO THE DESKTOP" : "LIGHTS UP UNDER THE POINTER · CLICK TO USE · RIGHT-CLICK FOR ITS MENU"
         }
 
         InsChoice {

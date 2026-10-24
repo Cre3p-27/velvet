@@ -376,6 +376,11 @@ JsonAdapter {
         // The TASKS module in the island's swipe cycle, between the
         // map and the weather — configure it in WORKFLOW.
         property bool islandTasks: true
+        // The other modules of the swipe cycle (the map always stays):
+        // MODULES → DYNAMIC ISLAND → MODULES IN THE ISLAND.
+        property bool islandMusic: true
+        property bool islandWeather: true
+        property bool islandSystem: true
         // SWIPE LIKE A PHONE: the pill's face sticks to the hand, so a swipe
         // to the left brings the next module in from the right. Off: drag
         // towards the module you want, like a cursor along the tabs.
@@ -827,6 +832,13 @@ JsonAdapter {
         property bool livewalls: true     // live wallpapers for new favourites
         property bool tidy: true          // her memory tidied
         property bool updates: true       // the updates counted (never installed)
+    }
+
+    // ========================================================= RECORDING
+    // Super+Enter (hypr/scripts/velvet-record.sh). SHELL → SCREEN RECORDING.
+    property JsonObject record: JsonObject {
+        property int countdown: 3         // 3 · 2 · 1 on screen before it starts; 0 = a short note instead
+        property bool sound: true         // a soft tick on every number
     }
 
     // ========================================================= BOOK STUDIO

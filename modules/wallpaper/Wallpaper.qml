@@ -641,6 +641,16 @@ PanelWindow {
                 required property int index
                 readonly property var modelData: widgetLayer.list[slot.index] ?? ({})
 
+                // a right-click on the widget (Surface.qml) finds its slot by
+                // this and opens the widget's own menu at the pointer
+                readonly property bool __velvetWidgetSlot: true
+
+                function openMenu(from: Item, mx: real, my: real): void {
+                    // (the window is no Item: map onto the full-screen click area)
+                    const p = from.mapToItem(menuArea, mx, my);
+                    Panels.openWidgetMenu(root.modelData?.name ?? "", p.x, p.y, slot.modelData.id ?? "");
+                }
+
                 readonly property real fx: slot.modelData.x ?? 0
                 readonly property real fy: slot.modelData.y ?? 0
                 readonly property real fw: slot.modelData.w ?? 0.24
@@ -924,7 +934,7 @@ PanelWindow {
                                 color: Colours.alpha(Colours.accent, 0.8)
                             }
                             P5Text {
-                                text: "HOLD TO ARRANGE · RIGHT-CLICK TO EDIT"
+                                text: "HOLD TO ARRANGE · RIGHT-CLICK FOR SIZE, LOOK AND MORE"
                                 color: Colours.alpha(Colours.inkDim, 0.85)
                                 font.pixelSize: Appearance.font.size.tiny
                                 font.weight: Font.DemiBold

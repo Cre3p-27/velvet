@@ -1,7 +1,9 @@
 //  VELVET  ·  modules/wallpaper/DesktopMenu.qml
-//  The overlay behind a right-click on the bare desktop: a scrim that closes
-//  on any click, and the menu card floated at the pointer. Wallpaper.qml opens
-//  it through Panels.openDeskMenu(); it holds the keyboard only while it is up.
+//  The overlay behind a right-click on the desktop: a scrim that closes on any
+//  click, and the menu card floated at the pointer — the desktop's own
+//  (DesktopMenuCard) on bare desk, the widget's (WidgetMenuCard) on a widget.
+//  Wallpaper.qml opens it through Panels.openDeskMenu() / openWidgetMenu(); it
+//  holds the keyboard only while it is up.
 import qs.config
 import qs.services
 import Quickshell
@@ -14,6 +16,8 @@ PanelWindow {
     property bool rendered: false
     property bool entered: false
     property var shown: null
+    // the widget this menu is about, kept while it fades out ("" = the desk)
+    property string widgetId: ""
 
     readonly property string want: Panels.deskMenuScreen
 
@@ -39,6 +43,7 @@ PanelWindow {
             for (let i = 0; i < list.length; i++)
                 if (list[i].name === root.want)
                     root.shown = list[i];
+            root.widgetId = Panels.deskMenuWidget;
             exitTimer.stop();
             root.rendered = true;
             enterTimer.restart();
@@ -79,21 +84,39 @@ PanelWindow {
             onPressed: Panels.closeAll()
         }
 
-        DesktopMenuCard {
+        Item {
             id: card
 
             readonly property real wantX: Panels.deskMenuX
             readonly property real wantY: Panels.deskMenuY
+            readonly property Item face: root.widgetId !== "" ? widgetCard : deskCard
 
-            entered: root.entered
-            atX: root.width > 0 ? Panels.deskMenuX / root.width : 0.5
-            atY: root.height > 0 ? Panels.deskMenuY / root.height : 0.5
+            width: card.face.width
+            height: card.face.height
             x: Math.max(12, Math.min(root.width - width - 12, wantX))
             y: Math.max(12, Math.min(root.height - height - 12, wantY))
             opacity: root.entered ? 1 : 0
             scale: root.entered ? 1 : 0.94
             transformOrigin: Item.TopLeft
-            onDone: Panels.closeAll()
+
+            DesktopMenuCard {
+                id: deskCard
+
+                visible: root.widgetId === ""
+                entered: root.entered && root.widgetId === ""
+                atX: root.width > 0 ? Panels.deskMenuX / root.width : 0.5
+                atY: root.height > 0 ? Panels.deskMenuY / root.height : 0.5
+                onDone: Panels.closeAll()
+            }
+
+            WidgetMenuCard {
+                id: widgetCard
+
+                visible: root.widgetId !== ""
+                widgetId: root.widgetId
+                entered: root.entered && root.widgetId !== ""
+                onDone: Panels.closeAll()
+            }
 
             Behavior on y {
                 NumberAnimation {

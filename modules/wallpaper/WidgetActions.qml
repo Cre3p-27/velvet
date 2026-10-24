@@ -111,4 +111,10 @@ Singleton {
         Sfx.open();
         Panels.openSettingsTabNamed("DESKTOP");
     }
+
+    // DESKTOP with this one widget already picked (its inspector open)
+    function editOne(id: string): void {
+        Panels.pendingDeskItem = id;
+        root.edit();
+    }
 }

@@ -55,12 +55,13 @@ Singleton {
     property real _lastIdle: 0   // jiffies overflow int32 after ~2 weeks up
     property real _lastTotal: 0
 
-    // How often the bar refreshes these. Cheap enough at 2s.
+    // How often the bar refreshes these. Cheap enough at 2s — and 10 s while a
+    // fullscreen game covers everything that shows them.
     property int interval: 2000
 
     Timer {
         running: true
-        interval: root.interval
+        interval: Hypr.allCovered ? Math.max(10000, root.interval) : root.interval
         repeat: true
         triggeredOnStart: true
 
@@ -69,7 +70,9 @@ Singleton {
             memFile.reload();
             thermalFile.reload();
             uptimeFile.reload();
-            osFile.reload();
+            // the system's name does not change while it runs
+            if (root.osPrettyName === "")
+                osFile.reload();
             if (root.hostname === "")
                 hostFile.reload();
             root.cpuHistory = root.push(root.cpuHistory, root.cpuPercent);

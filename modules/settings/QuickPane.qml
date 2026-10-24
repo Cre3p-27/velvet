@@ -390,6 +390,9 @@ FocusScope {
     }
 
     Component.onCompleted: {
+        // the network list is fresh when you look at it (searched again when
+        // the last search is older than 30 s — placeholder rows meanwhile)
+        Net.scanIfStale();
         // A deep link (BLUETOOTH row in AUDIO) may ask to start here.
         if (Panels.pendingQuickSection === "bluetooth") {
             root.col = 1;
@@ -1009,8 +1012,8 @@ FocusScope {
                 QuickAction {
                     id: actRec
 
-                    label: "RECORD"
-                    icon: "fiber_manual_record"
+                    label: Panels.recording ? "STOP REC" : "RECORD"
+                    icon: Panels.recording ? "stop_circle" : "fiber_manual_record"
                     fn: () => {
                         Panels.closeAll();
                         // Binds owns the (correctly resolved) path; Hyprland owns the process.
@@ -1682,11 +1685,19 @@ FocusScope {
                     }
                 }
 
+                // still searching: placeholders where the devices will be
+                // (one under a list that is already there: "more may come")
+                Skeleton {
+                    width: parent.width
+                    count: Bluetooth.devices.length === 0 ? 4 : 1
+                    visible: Bluetooth.scanning
+                }
+
                 // empty state
                 Item {
                     width: parent.width
                     height: 150
-                    visible: Bluetooth.devices.length === 0
+                    visible: Bluetooth.devices.length === 0 && !Bluetooth.scanning
 
                     Icon {
                         anchors.horizontalCenter: parent.horizontalCenter
@@ -1850,8 +1861,8 @@ FocusScope {
                 Slash {
                     anchors.fill: parent
                     shear: Appearance.skew
-                    color: Colours.alpha(Colours.ink, refreshArea.containsMouse ? 0.14 : 0.06)
-                    borderColor: Colours.alpha(Colours.ink, 0.3)
+                    color: Net.scanning ? Colours.accent : Colours.alpha(Colours.ink, refreshArea.containsMouse ? 0.14 : 0.06)
+                    borderColor: Net.scanning ? "transparent" : Colours.alpha(Colours.ink, 0.3)
                     borderWidth: 1
 
                     Behavior on color {
@@ -1866,17 +1877,31 @@ FocusScope {
                     spacing: 7
 
                     Icon {
+                        id: rescanGlyph
+
                         anchors.verticalCenter: parent.verticalCenter
                         name: "refresh"
-                        color: Colours.accent
+                        color: Net.scanning ? Colours.on(Colours.accent) : Colours.accent
                         font.pixelSize: Appearance.font.size.normal
+
+                        RotationAnimation on rotation {
+                            running: Net.scanning
+                            loops: Animation.Infinite
+                            from: 0
+                            to: 360
+                            duration: 900
+                            onRunningChanged: {
+                                if (!running)
+                                    rescanGlyph.rotation = 0;
+                            }
+                        }
                     }
 
                     P5Text {
                         anchors.verticalCenter: parent.verticalCenter
                         display: true
-                        text: "RESCAN"
-                        color: Colours.ink
+                        text: Net.scanning ? "SEARCHING…" : "RESCAN"
+                        color: Net.scanning ? Colours.on(Colours.accent) : Colours.ink
                         font.pixelSize: Appearance.font.size.tiny
                         tracking: 1.2
                     }
@@ -2066,11 +2091,18 @@ FocusScope {
                     }
                 }
 
+                // still searching: placeholders where the networks will be
+                Skeleton {
+                    width: parent.width
+                    count: Net.networks.length === 0 ? 4 : 1
+                    visible: Net.scanning && Net.wifiEnabled
+                }
+
                 // empty state
                 Item {
                     width: parent.width
                     height: 130
-                    visible: Net.networks.length === 0
+                    visible: Net.networks.length === 0 && !(Net.scanning && Net.wifiEnabled)
 
                     Icon {
                         anchors.horizontalCenter: parent.horizontalCenter

@@ -227,11 +227,41 @@ Singleton {
                     sub: "THE ISLAND ITSELF  ·  ITS MODULES  ·  ITS GESTURES"
                 },
                 {
-                    kind: "toggle",
-                    key: "map.islandTasks",
-                    name: "TASKS MODULE",
-                    help: "Adds the task checklist to the island's swipe cycle, between the map and the weather. The tasks themselves are managed in WORKFLOW.",
-                    sub: "A CHECKLIST BETWEEN MAP AND WEATHER"
+                    kind: "page",
+                    name: "MODULES IN THE ISLAND",
+                    help: "Which modules the island holds: switch off the ones you never use and the swipe gets shorter. The desktop map always stays — it is where the island starts. Velly has her own switch under MODULES → VELLY.",
+                    sub: "MUSIC · TASKS · WEATHER · SYSTEM — THE MAP ALWAYS STAYS",
+                    icon: "view_carousel",
+                    items: [
+                        {
+                            kind: "toggle",
+                            key: "map.islandMusic",
+                            name: "NOW PLAYING",
+                            help: "The music module: the song, its cover, play/pause and the progress. It is the first one in the swipe, left of the map.",
+                            sub: "THE SONG, ITS COVER, THE BUTTONS"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "map.islandTasks",
+                            name: "TASKS MODULE",
+                            help: "Adds the task checklist to the island's swipe cycle, between the map and the weather. The tasks themselves are managed in WORKFLOW.",
+                            sub: "A CHECKLIST BETWEEN MAP AND WEATHER"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "map.islandWeather",
+                            name: "WEATHER",
+                            help: "Now, today's high and low, the humidity and the next hours (SHELL → WEATHER sets the place).",
+                            sub: "NOW · HIGH AND LOW · THE NEXT HOURS"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "map.islandSystem",
+                            name: "SYSTEM",
+                            help: "CPU, memory, temperature, storage and uptime at a glance.",
+                            sub: "CPU · MEMORY · TEMPERATURE · STORAGE"
+                        }
+                    ]
                 },
                 {
                     kind: "toggle",
@@ -4615,6 +4645,35 @@ Singleton {
 
     // ================================================================== SHELL
     readonly property var shell: [
+        {
+            kind: "page",
+            name: "SCREEN RECORDING",
+            help: "Super+Enter records the screen you are on, with the sound you hear, into ~/Videos; Super+Enter again stops it and offers to play the file. Before it starts, a countdown in the middle of the screen gives you time to get ready — it is gone before the recording begins, so it is never in the video.",
+            sub: "SUPER+ENTER  ·  3 · 2 · 1  ·  ~/VIDEOS",
+            icon: "fiber_manual_record",
+            items: [
+                {
+                    kind: "choice",
+                    key: "record.countdown",
+                    name: "COUNTDOWN",
+                    help: "How long the countdown in the middle of the screen runs before the recording starts. Press Super+Enter during it to cancel. OFF starts after a one-second note, as before.",
+                    sub: "OFF · 3 · 5 · 10 SECONDS",
+                    options: [
+                        { value: 0, label: "OFF" },
+                        { value: 3, label: "3 SECONDS" },
+                        { value: 5, label: "5 SECONDS" },
+                        { value: 10, label: "10 SECONDS" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "record.sound",
+                    name: "TICK EVERY SECOND",
+                    help: "A soft tick on every number of the countdown (the shell's own sounds, SHELL → SOUND). The last tick is over before the recording starts.",
+                    sub: "A SOFT TICK ON 3, 2 AND 1"
+                }
+            ]
+        },
         {
             kind: "page",
             name: "THE DESKTOP",

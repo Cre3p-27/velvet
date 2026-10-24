@@ -12,6 +12,8 @@ Singleton {
     id: root
 
     property bool ready: false
+    // a fetch is on its way (the island shows placeholders meanwhile)
+    readonly property bool fetching: fetch.running
     property real temperature: 0
     property real feelsLike: 0
     property int humidity: 0

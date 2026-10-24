@@ -60,6 +60,26 @@ FocusScope {
     Component.onCompleted: {
         Scenes.editKey = "";
         root.settle();
+        root.pickPending();
+    }
+
+    // Opened for one widget (its right-click menu → ALL ITS OPTIONS): pick it.
+    function pickPending(): void {
+        const id = Panels.pendingDeskItem;
+        if (id === "")
+            return;
+        Panels.pendingDeskItem = "";
+        const i = root.items.findIndex(it => it && it.id === id);
+        if (i >= 0)
+            root.selected = i;
+    }
+
+    Connections {
+        target: Panels
+
+        function onPendingDeskItemChanged(): void {
+            root.pickPending();
+        }
     }
 
     // ─────────────────────────────────────────────────────────── drag state

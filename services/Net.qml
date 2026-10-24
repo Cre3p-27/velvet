@@ -26,6 +26,10 @@ Singleton {
     // moment you click (the list, the label, the bar): NetworkManager confirms
     // in the background and only a refusal turns it back. No spinners.
     property string joining: ""
+    // A search for networks is under way (RESCAN, Wi-Fi switched on, a list
+    // opened after a while): the lists show placeholder rows meanwhile.
+    property bool scanning: false
+    property double lastScan: 0
 
     readonly property string icon: {
         if (type === "ethernet")
@@ -87,14 +91,36 @@ Singleton {
             runCmd(`nmcli radio wifi off`);
         Toast.show(wasOn ? "WI-FI OFF" : "WI-FI ON", "info", 2000);
         refreshLater.restart();
-        // Turning it on makes the adapter rescan by itself; a slow refresh
-        // after that picks the new list up.
+        // Turning it on makes the adapter rescan by itself; slower refreshes
+        // after that pick the new list up.
         refreshLater2.restart();
+        if (!wasOn) {
+            root.scanning = true;
+            root.lastScan = Date.now();
+            scanDone.restart();
+        } else {
+            root.scanning = false;
+        }
     }
 
+    // A real scan: results come in over a few seconds, so the list is read
+    // three times (the old single read after 0.9 s mostly got the old list).
     function refreshNetworks(): void {
+        if (!root.wifiEnabled)
+            return;
+        root.scanning = true;
+        root.lastScan = Date.now();
         runCmd(`nmcli device wifi rescan`);
+        refreshLater.interval = 1200;
         refreshLater.restart();
+        refreshLater2.restart();
+        scanDone.restart();
+    }
+
+    // A list was opened: search again if the last search is older than 30 s.
+    function scanIfStale(): void {
+        if (root.wifiEnabled && !root.scanning && Date.now() - root.lastScan > 30000)
+            root.refreshNetworks();
     }
 
     function connectWifi(ssid: string, password: string): void {
@@ -200,10 +226,20 @@ Singleton {
 
     Timer {
         id: refreshLater2
-        interval: 2600
+        interval: 3200
         onTriggered: {
             poll.running = false;
             poll.running = true;
+        }
+    }
+
+    Timer {
+        id: scanDone
+        interval: 6000
+        onTriggered: {
+            poll.running = false;
+            poll.running = true;
+            root.scanning = false;
         }
     }
 
@@ -219,13 +255,17 @@ Singleton {
         }
     }
 
+    // Every 5 s: the device, the joined network's signal, the radio and the
+    // list — ALL with --rescan no. A plain `nmcli device wifi` makes the card
+    // scan whenever its list is older than 30 s (nmcli(1)): the Wi-Fi went off
+    // the air for a scan every half minute, for a signal bar.
     Process {
         id: poll
 
         command: ["bash", "-c", `
             nmcli -t -f TYPE,STATE,CONNECTION device status 2>/dev/null | grep -m1 ':connected:' || echo 'none:disconnected:'
             echo '---'
-            nmcli -t -f IN-USE,SSID,SIGNAL device wifi 2>/dev/null | grep -m1 '^\\*' || echo ''
+            nmcli -t -f IN-USE,SSID,SIGNAL device wifi list --rescan no 2>/dev/null | grep -m1 '^\\*' || echo ''
             echo '---'
             nmcli -t -f WIFI radio 2>/dev/null || echo 'enabled'
             echo '---'

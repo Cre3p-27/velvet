@@ -183,29 +183,45 @@ PanelWindow {
     //  them at once and the assistant had nowhere to stand. One table now:
     //  everything else asks it.
     //
-    //    0  NOW PLAYING     1  DESKTOP MAP
-    //    2  TASKS (opt)     3/2  WEATHER     4/3  SYSTEM     5/4  VELLY (opt)
+    //    NOW PLAYING · DESKTOP MAP · TASKS · WEATHER · SYSTEM · VELLY
     //
-    readonly property int deskIdx: 1
-    readonly property int tasksIdx: Config.map.islandTasks ? 2 : -1
-    readonly property int weatherIdx: Config.map.islandTasks ? 3 : 2
-    readonly property int systemIdx: Config.map.islandTasks ? 4 : 3
-    readonly property int vellyIdx: Config.velly.enabled ? (Config.map.islandTasks ? 5 : 4) : -1
+    //  Each but the map can be switched off (MODULES → DYNAMIC ISLAND →
+    //  MODULES IN THE ISLAND; Velly by her own switch); the ones that are on
+    //  close ranks, in this order. An index of -1 means "not in the island".
+    readonly property var order: {
+        const o = [];
+        if (Config.map.islandMusic)
+            o.push("music");
+        o.push("desk");
+        if (Config.map.islandTasks)
+            o.push("tasks");
+        if (Config.map.islandWeather)
+            o.push("weather");
+        if (Config.map.islandSystem)
+            o.push("system");
+        if (Config.velly.enabled)
+            o.push("velly");
+        return o;
+    }
+    readonly property int musicIdx: root.order.indexOf("music")
+    readonly property int deskIdx: root.order.indexOf("desk")
+    readonly property int tasksIdx: root.order.indexOf("tasks")
+    readonly property int weatherIdx: root.order.indexOf("weather")
+    readonly property int systemIdx: root.order.indexOf("system")
+    readonly property int vellyIdx: root.order.indexOf("velly")
 
     readonly property var meta: {
-        const out = [
-            { w: 380, h: 396, glyph: "music_note" },
-            { w: root.mapW, h: root.mapH, glyph: "apps" }
-        ];
-        if (Config.map.islandTasks)
-            out.push({ w: 380, h: 372, glyph: "checklist" });
-        out.push({ w: 430, h: 356, glyph: "cloud" });
-        out.push({ w: 400, h: 336, glyph: "memory" });
-        // The assistant gets the tallest capsule of the lot: orb, answer,
-        // tool chips and an input row all live inside it.
-        if (Config.velly.enabled)
-            out.push({ w: 462, h: 560, glyph: "auto_awesome" });
-        return out;
+        const size = {
+            music: { w: 380, h: 396, glyph: "music_note" },
+            desk: { w: root.mapW, h: root.mapH, glyph: "apps" },
+            tasks: { w: 380, h: 372, glyph: "checklist" },
+            weather: { w: 430, h: 356, glyph: "cloud" },
+            system: { w: 400, h: 336, glyph: "memory" },
+            // The assistant gets the tallest capsule of the lot: orb, answer,
+            // tool chips and an input row all live inside it.
+            velly: { w: 462, h: 560, glyph: "auto_awesome" }
+        };
+        return root.order.map(n => size[n]);
     }
 
     // ── the DESKTOP module's size: the canvas keeps the monitor's shape and
@@ -227,8 +243,8 @@ PanelWindow {
 
     // The island starts on the map, in the middle of the swipe cycle:
     // music lies left of it, tasks/weather/system right.
-    property int moduleIdx: 1
-    property int previewIdx: 1
+    property int moduleIdx: root.order.indexOf("desk")
+    property int previewIdx: root.order.indexOf("desk")
 
     // Turning the TASKS module off (or on) reshapes the cycle — clamp the
     // cursor into the new array instead of leaving it in a gap.
@@ -243,7 +259,7 @@ PanelWindow {
     // What the pill says, live from the services. Short enough to read in
     // one glance; the label elides the rest.
     function pillText(i: int): string {
-        if (i === 0) {
+        if (i === root.musicIdx) {
             if (!(root.bridge?.has ?? false))
                 return "NOTHING PLAYING";
             const t = root.bridge.title;
@@ -274,7 +290,7 @@ PanelWindow {
     function pillGlyph(i: int): string {
         if (i === root.deskIdx)
             return "apps";
-        if (i === 0)
+        if (i === root.musicIdx)
             return "music_note";
         if (i === root.tasksIdx)
             return "checklist";
@@ -722,7 +738,7 @@ PanelWindow {
     }
 
     function sourceFor(i: int): string {
-        if (i === 0)
+        if (i === root.musicIdx)
             return Qt.resolvedUrl("IslandMusic.qml");
         if (i === root.deskIdx)
             return Qt.resolvedUrl("IslandMap.qml");
@@ -1593,7 +1609,7 @@ PanelWindow {
                         // that keeps the microphone open is visible from every
                         // module, not only from her own.
                         readonly property bool awake: Velly.active && cell.index === root.vellyIdx
-                        readonly property bool playing: cell.index === 0 && (root.bridge?.playing ?? false)
+                        readonly property bool playing: cell.index === root.musicIdx && (root.bridge?.playing ?? false)
 
                         y: root.railPad + cell.index * root.cellH
                         width: root.railW
@@ -2008,7 +2024,7 @@ PanelWindow {
 
                                 Icon {
                                     anchors.centerIn: parent
-                                    name: dot.index === 0 && (root.bridge?.playing ?? false) ? "graphic_eq" : root.pillGlyph(dot.index)
+                                    name: dot.index === root.musicIdx && (root.bridge?.playing ?? false) ? "graphic_eq" : root.pillGlyph(dot.index)
                                     color: dot.awake ? Colours.accentHot : (dot.lit ? Colours.accent : Colours.alpha(Colours.ink, tabHover.hovered ? 0.95 : 0.6))
                                     font.pixelSize: 15
                                     opacity: dot.tabbed ? 1 : 0
@@ -2267,7 +2283,7 @@ PanelWindow {
                         }
 
                         onLoaded: {
-                            if (slot.index === 0)
+                            if (slot.index === root.musicIdx)
                                 slot.item.bridge = Qt.binding(() => root.bridge);
                             // Velly's orb breathes only while you can see it
                             if (slot.index === root.vellyIdx)

@@ -67,7 +67,7 @@ Plate {
             }
         });
         Sfx.select();
-        Toast.ok(`${m.name} ADDED  ·  MOVE OR RESIZE IT IN DESKTOP`);
+        Toast.ok(`${m.name} ADDED  ·  RIGHT-CLICK IT FOR SIZE, LOOK AND MORE`);
         root.done();
     }
 

@@ -140,12 +140,22 @@ icon, not a broken bar.
 | `Super + Escape` | Power menu |
 | `Super + M` | The mini desktop |
 | `Super + L` | Lock the screen |
-| `Super + Enter` | Record the screen · stop |
+| `Super + Enter` | Record the screen (after a 3 · 2 · 1 on screen) · stop |
 | `Super + Shift + S` | Open the desktop you arranged |
 | `Super + Shift + F` | Focus mode on · off |
 | `Super + W` | Wallpaper wheel |
 | `Super + Shift + L` | Lyrics |
 | `Super + Shift + K` | Every shortcut, on one screen |
+
+**Recording.** `Super + Enter` counts 3 · 2 · 1 in the middle of the screen you
+are on, and the countdown is gone before the recording starts — it is never in
+the video. Press again during it to cancel. SHELL → SCREEN RECORDING sets 3, 5
+or 10 seconds (or off). The file lands in ~/Videos, with the sound you hear.
+
+**Wi-Fi.** The network lists show placeholder rows while they search, and the
+shell no longer makes the card scan every half minute in the background just to
+draw the signal bar (a scan takes the Wi-Fi off the air for a moment — ping
+spikes in a game).
 
 `Super+Tab` opens on one screen and stays there. It lands on a front page:
 nothing but the categories, lined up down the **right** edge with the big word
@@ -586,8 +596,12 @@ the panel behind the clock. Critical ones get a torn edge instead of a clean one
    monitor, the network QUICK SETTINGS, the weather asks the sky again; the
    clock and calendar roll over to the date and the week number; the media
    art plays and pauses, the card grows previous · next and a seek bar, and
-   the wheel over it is the volume. Right-click any widget to edit it in
-   DESKTOP. Right-click a free spot of the desktop and the desktop menu opens
+   the wheel over it is the volume. **Right-click any widget** and its own
+   menu opens right there: bigger or smaller, how solid, its look (SHAPES,
+   SOFT, GLASS, INK or none) — all live on the widget while the menu stays
+   up — then move it, make it a still picture, duplicate it, open every
+   option it has in DESKTOP (picked already), or take it off (a second click
+   confirms). Right-click a free spot of the desktop and the desktop menu opens
    there: edit the desktop, drop a widget right under the pointer, change the
    wallpaper, save its look, and jump to any desktop or the infinite canvas
    (WALLPAPER CHANGER → DESKTOP RIGHT-CLICK MENU turns it off, and bare desktop
@@ -671,7 +685,10 @@ AMBIENT — only the clock, the lyric and the music stay until you move or type.
 ## The Dynamic Island, and where things stand
 
 Touch the top edge and the island rises: swipe it for music, the desktop map,
-tasks, weather, the system and Velly; pull it down to open one.
+tasks, weather, the system and Velly; pull it down to open one. MODULES →
+DYNAMIC ISLAND → **MODULES IN THE ISLAND** switches the ones you never use off
+(music, tasks, weather, system — the map always stays), and the swipe gets
+shorter.
 
 **It moves with your hand.** The pill's face sticks to your hand like a page on
 a phone: drag it left and the next module slides in from the right (MODULES →
