@@ -204,7 +204,8 @@ Singleton {
                 continue;
             }
             const bad = root.badOf(s);
-            parts.push(`${s.name} · ${s.current.w}×${s.current.h} @ ${Math.round(s.current.rr)} HZ · SCALE ${s.current.scale}${bad.length ? ` · ${bad.map(m => root.hz(m)).join(", ")} FAILED HERE` : ` — BEST ${s.best.w}×${s.best.h} @ ${Math.round(s.best.rr)} HZ`}`);
+            const port = (s.better ?? "") !== "" ? ` · ON THE MAINBOARD (${(s.gpu?.name ?? "").toUpperCase()}) — USE THE ${s.better.toUpperCase()} · DISPLAYPORT` : "";
+            parts.push(`${s.name} · ${s.current.w}×${s.current.h} @ ${Math.round(s.current.rr)} HZ · SCALE ${s.current.scale}${bad.length ? ` · ${bad.map(m => root.hz(m)).join(", ")} FAILED HERE` : ` — BEST ${s.best.w}×${s.best.h} @ ${Math.round(s.best.rr)} HZ`}${port}`);
         }
         return parts.join("   ·   ");
     }
@@ -294,6 +295,7 @@ Singleton {
                 } catch (e) {
                     return;
                 }
+                root.checkPort();
                 const k = Object.assign({}, root.known);
                 for (let i = 0; i < root.screens.length; i++)
                     if (root.screens[i].edid !== false)
@@ -357,6 +359,33 @@ Singleton {
     }
 
     property string toastText: ""
+
+    // ── the wrong port: a screen on the processor's graphics while a real
+    // graphics card sits in the machine. Games still render on the card, but
+    // every frame takes a detour to reach the screen, and that port caps the
+    // refresh (the user's 4K 240 Hz screen ran at 120 Hz on the mainboard).
+    // Said once per session, and in SETTINGS → DISPLAY for as long as it lasts.
+    property bool toldPort: false
+    readonly property var wrongPort: root.screens.find(x => !x.disabled && (x.better ?? "") !== "") ?? null
+
+    function checkPort(): void {
+        const s = root.wrongPort;
+        if (!s || root.toldPort)
+            return;
+        root.toldPort = true;
+        portLater.restart();
+    }
+
+    Timer {
+        id: portLater
+
+        interval: 6000
+        onTriggered: {
+            const s = root.wrongPort;
+            if (s)
+                Toast.show(`YOUR SCREEN HANGS ON THE MAINBOARD (${(s.gpu?.name ?? "THE PROCESSOR'S GRAPHICS").toUpperCase()}) — GAMES RUN ON THE ${s.better.toUpperCase()}, BUT EVERY FRAME TAKES A DETOUR AND THIS PORT CAPS THE REFRESH · PLUG IT INTO THE CARD — DISPLAYPORT`, "warn", 14000);
+        }
+    }
 
     Timer {
         id: toastLater

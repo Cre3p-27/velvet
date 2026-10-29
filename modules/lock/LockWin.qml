@@ -998,6 +998,9 @@ Item {
                         radius: 5
                         color: Colours.accent
                         opacity: root.kit.length > 0 ? 1 : 0.0
+                        // faded out it must not take a click either: an empty
+                        // password counted as a failed attempt
+                        visible: opacity > 0.01
 
                         Behavior on opacity { NumberAnimation { duration: 120 } }
 

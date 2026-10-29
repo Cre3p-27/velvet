@@ -3666,6 +3666,28 @@ Singleton {
                     sub: "FREESYNC / G-SYNC"
                 },
                 {
+                    kind: "choice",
+                    key: "hypr.vrrWhen",
+                    when: { key: "hypr.vrr", is: true },
+                    name: "VRR WHEN",
+                    help: "ALWAYS lets the screen follow every frame, the desktop too. FULLSCREEN only while a window fills the screen — on an OLED the desktop then never flickers when its frame rate drops. GAMES only for fullscreen games and video.",
+                    sub: "ALWAYS · FULLSCREEN (BEST FOR OLED) · GAMES AND VIDEO",
+                    options: [
+                        {
+                            value: "always",
+                            label: "ALWAYS"
+                        },
+                        {
+                            value: "fullscreen",
+                            label: "FULLSCREEN"
+                        },
+                        {
+                            value: "games",
+                            label: "GAMES AND VIDEO"
+                        }
+                    ]
+                },
+                {
                     kind: "toggle",
                     key: "hypr.animations",
                     name: "ANIMATIONS",
@@ -5997,6 +6019,68 @@ Singleton {
                                     label: "BOTTOM"
                                 }
                             ]
+                        }
+                    ]
+                },
+                {
+                    kind: "page",
+                    name: "MOTION & LIGHT",
+                    help: "What moves on the FLUID lock: the card leans towards the pointer while the side columns float in front of it, a soft light follows the pointer, the module cards arrive one after another, the clock's digits roll in, and slow colour drifts behind the card. The wallpaper itself stays still.",
+                    sub: "DEPTH · POINTER LIGHT · CARDS ONE BY ONE · CLOCK DIGITS · AURORA",
+                    icon: "animation",
+                    items: [
+                        {
+                            kind: "slider",
+                            key: "lock.fluidDepth",
+                            name: "DEPTH",
+                            help: "How far the card leans towards the pointer and how far the side columns float in front of it. 0% keeps everything still.",
+                            sub: "THE CARD LEANS TOWARDS THE POINTER · 0% IS STILL",
+                            min: 0,
+                            max: 1,
+                            step: 0.05,
+                            fmt: "percent"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidGlow",
+                            name: "POINTER LIGHT",
+                            help: "A soft light in your accent colour follows the pointer across the card.",
+                            sub: "A SOFT LIGHT UNDER THE POINTER"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidStagger",
+                            name: "CARDS ONE BY ONE",
+                            help: "When the lock appears, the module cards rise into place one after another, left and right taking turns. Off: they come in with the rest of the card.",
+                            sub: "THE MODULE CARDS RISE IN ONE AFTER ANOTHER"
+                        },
+                        {
+                            kind: "choice",
+                            key: "lock.fluidDigits",
+                            name: "CLOCK DIGITS",
+                            help: "How a new hour or minute arrives: ROLL slides it up into place as the old one leaves, FADE crosses over, SNAP simply changes.",
+                            sub: "ROLL · FADE · SNAP",
+                            options: [
+                                {
+                                    value: "roll",
+                                    label: "ROLL"
+                                },
+                                {
+                                    value: "fade",
+                                    label: "FADE"
+                                },
+                                {
+                                    value: "none",
+                                    label: "SNAP"
+                                }
+                            ]
+                        },
+                        {
+                            kind: "toggle",
+                            key: "lock.fluidAurora",
+                            name: "AURORA",
+                            help: "Three soft lights in your colours drift slowly behind the card and shift a little against the pointer, so the card stands in front of them.",
+                            sub: "SLOW COLOUR DRIFTING BEHIND THE CARD"
                         }
                     ]
                 },

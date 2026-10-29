@@ -1231,6 +1231,13 @@ LOCK SCREEN → FLUID LOCK:
   four labelled buttons; the fetch card's colour dots; the cover, the
   forecast, the notification count and more.
 
+- **MOTION & LIGHT**: the card leans towards the pointer while the side
+  columns float in front of it (DEPTH — 0 % keeps it still), a soft light in
+  your accent follows the pointer, the module cards rise in one after another,
+  the clock's digits ROLL (or FADE, or SNAP) into place, and an AURORA of your
+  colours drifts slowly behind the card. The wallpaper itself never moves, so
+  the unlock still hands over to the desktop pixel for pixel.
+
 Every change shows at once in the live preview next to the list. The lock
 editor (ARRANGE THE COLUMNS) has a CARD STYLE button too.
 
@@ -1544,6 +1551,25 @@ command or take it off.
 version; re-run `./install.sh` or copy the file over.
 
 ---
+
+### Gaming on the graphics card, at 4K 240 Hz
+
+Plug the screen into the **graphics card**, not the mainboard. On a Ryzen with
+its own graphics (the 9000 series has a Radeon 610M), the mainboard's HDMI and
+DisplayPort belong to the processor: games still render on the card, but every
+frame is copied over to the processor's graphics to reach the screen, and that
+port is the ceiling (a 4K 240 Hz screen there tops out at 120 Hz). Velvet says
+so once per session and under DISPLAY → RIGHT NOW.
+
+For 4K at 240 Hz on an AMD card use **DisplayPort** (DP 1.4 with DSC carries it).
+HDMI 2.1's fast link (FRL) only arrived in Linux 7.2 and is off by default
+there (`amdgpu.dcfeaturemask` bit 0x400); it is meant to be on by default from
+Linux 7.4. Do not set `amdgpu.dcfeaturemask=0xffffffff`: that switches on every
+experimental display bit, among them 0x20 / 0x40, which turn OFF support for
+DisplayPort link repeaters (LTTPR). The default plus HDMI FRL is `0x402`.
+
+DISPLAY → VRR WHEN: ALWAYS, FULLSCREEN (best for an OLED — the desktop never
+flickers when its frame rate drops) or GAMES AND VIDEO.
 
 ## Troubleshooting
 

@@ -51,6 +51,16 @@ Singleton {
     // bar's side, where the bar's reserved zone already holds that band.
     // (Without this they ran right up to the frame and its round corners
     // cut into theirs.)
+    // misc:vrr — 0 off, 1 always, 2 fullscreen only, 3 fullscreen games / video
+    function vrrValue(): int {
+        if (!Config.hypr.vrr)
+            return 0;
+        return ({
+                fullscreen: 2,
+                games: 3
+            })[Config.hypr.vrrWhen] ?? 1;
+    }
+
     function gapSide(side: string): int {
         return Math.round(Config.hypr.gapsOut + Appearance.frameRoom(side));
     }
@@ -84,7 +94,7 @@ Singleton {
             ["decoration:shadow:range", `${h.shadowRange}`],
             ["decoration:shadow:render_power", `${Math.round(h.shadowRenderPower)}`],
             ["animations:enabled", b(h.animations)],
-            ["misc:vrr", b(h.vrr)],
+            ["misc:vrr", `${root.vrrValue()}`],
             // a lock that dies can be replaced by the next one (velvet-session
             // restarts the shell, the shell locks again) — never a dead end
             ["misc:allow_session_lock_restore", "1"],
@@ -138,7 +148,7 @@ Singleton {
             "shadow = { enabled = " + b(h.shadow) + ", range = " + h.shadowRange + ", render_power = " + Math.round(h.shadowRenderPower) + " },\n" +
             "},\n" +
             "animations = { enabled = " + b(h.animations) + " },\n" +
-            "misc = { vrr = " + b(h.vrr) + ", allow_session_lock_restore = true },\n" +
+            "misc = { vrr = " + root.vrrValue() + ", allow_session_lock_restore = true },\n" +
             "input = { follow_mouse = " + b(h.followMouse) + " },\n" +
             "})";
         return out;
@@ -236,7 +246,7 @@ animations {
 }
 
 misc {
-    vrr = ${Config.hypr.vrr ? "1" : "0"}
+    vrr = ${root.vrrValue()}
     allow_session_lock_restore = 1
 }
 
@@ -294,7 +304,7 @@ hl.config({
         enabled = ${Config.hypr.animations ? "true" : "false"},
     },
     misc = {
-        vrr = ${Config.hypr.vrr ? "1" : "0"},
+        vrr = ${root.vrrValue()},
         allow_session_lock_restore = true,
     },
     input = {

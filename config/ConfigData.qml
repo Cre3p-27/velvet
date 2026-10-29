@@ -258,6 +258,10 @@ JsonAdapter {
         property int shadowRange: 18
         property real shadowRenderPower: 3.0
         property bool vrr: true
+        // When the screen may follow the frame rate: "always", "fullscreen"
+        // (only a fullscreen window — on an OLED the desktop then never
+        // flickers) or "games" (fullscreen games and video only).
+        property string vrrWhen: "always"
         property bool resizeOnBorder: true
         property string layout: "dwindle"
         property bool animations: true
@@ -687,6 +691,15 @@ JsonAdapter {
         property string powerLayout: "row"
         // The fetch card's colour dots.
         property bool sessionPalette: true
+        // MOTION & LIGHT: how far the card leans towards the pointer and the
+        // columns float in front of it (0 = still), a soft light under the
+        // pointer, the module cards arriving one after another, the clock's
+        // digits ("roll" | "fade" | "none") and slow colour behind the card.
+        property real fluidDepth: 0.5
+        property bool fluidGlow: true
+        property bool fluidStagger: true
+        property string fluidDigits: "roll"
+        property bool fluidAurora: true
         // The password's face — "pop": the shapes pop in on an
         // expressive overshoot and cool to ink; "settle": a deck
         // that settles each shape into a circle; "circles" skips

@@ -556,7 +556,12 @@ setsid -f "$4" >/dev/null 2>&1`, "velvet", Config.path, Config.wallpaper.directo
             "lock.fluidAvatar": "large",
             "lock.fluidDate": "weekday",
             "lock.mediaIdle": "slim",
-            "lock.notifsIdle": "slim"
+            "lock.notifsIdle": "slim",
+            "lock.fluidDepth": 0.5,
+            "lock.fluidGlow": true,
+            "lock.fluidStagger": true,
+            "lock.fluidDigits": "roll",
+            "lock.fluidAurora": true
         };
         const dress = ({
                 fluidClassic: {},
@@ -579,7 +584,10 @@ setsid -f "$4" >/dev/null 2>&1`, "velvet", Config.path, Config.wallpaper.directo
                     "lock.fluidAvatar": "small",
                     "lock.fluidDate": "short",
                     "lock.mediaIdle": "hide",
-                    "lock.notifsIdle": "hide"
+                    "lock.notifsIdle": "hide",
+                    "lock.fluidDepth": 0.25,
+                    "lock.fluidAurora": false,
+                    "lock.fluidDigits": "fade"
                 },
                 fluidFloating: {
                     "lock.fluidCardStyle": "tinted",
@@ -590,7 +598,8 @@ setsid -f "$4" >/dev/null 2>&1`, "velvet", Config.path, Config.wallpaper.directo
                     "lock.fluidShape": "screen",
                     "lock.fluidCentre": 0.9,
                     "lock.fluidGap": 24,
-                    "lock.fluidAvatar": "medium"
+                    "lock.fluidAvatar": "medium",
+                    "lock.fluidDepth": 0.85
                 }
             })[which] ?? {};
         Config.setMany(Object.assign({}, classic, dress));

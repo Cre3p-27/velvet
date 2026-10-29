@@ -12,6 +12,7 @@ import Quickshell.Io
 import QtQuick
 import QtQuick.Effects
 import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects as GE
 import "glyphpaths.js" as GP
 
 Item {
@@ -61,6 +62,90 @@ Item {
     }
     onFullWChanged: surface.refit()
     onFullHChanged: surface.refit()
+
+    // ══════════════════════════════════════════════ MOTION & LIGHT
+    // LOCK SCREEN → FLUID LOCK → MOTION & LIGHT. The card leans a little
+    // towards the pointer and the side columns float a step in front of it
+    // (DEPTH), a soft light follows the pointer across the card (POINTER
+    // LIGHT), the module cards arrive one after another, the clock's digits
+    // roll, and slow colour drifts behind the card (AURORA). The wallpaper
+    // itself never moves: on unlock it hands over to the desktop pixel for
+    // pixel.
+    readonly property real depth: Math.max(0, Math.min(1, Config.lock.fluidDepth))
+    property real pointerX: -1
+    property real pointerY: -1
+    // a lock appearing under a resting pointer has not been pointed at yet
+    property bool pointerMoved: false
+    readonly property bool settled: surface.entrancePlayed && !surface.moving && !surface.ambient
+    readonly property bool leaning: surface.depth > 0 && surface.pointerMoved && surface.settled
+    readonly property bool lit: Config.lock.fluidGlow && surface.pointerMoved && surface.settled
+
+    HoverHandler {
+        id: pointerWatch
+
+        onPointChanged: {
+            const p = pointerWatch.point.position;
+            if (Math.abs(p.x - surface.pointerX) < 0.5 && Math.abs(p.y - surface.pointerY) < 0.5)
+                return;
+            if (surface.pointerX >= 0)
+                surface.pointerMoved = true;
+            surface.pointerX = p.x;
+            surface.pointerY = p.y;
+        }
+    }
+
+    // -1 … 1 across the screen, sprung so the card follows like a weight
+    Spring {
+        id: leanX
+
+        to: surface.leaning ? Math.max(-1, Math.min(1, surface.pointerX / Math.max(1, surface.width) * 2 - 1)) : 0
+        spring: 2.2
+        damping: 0.42
+        epsilon: 0.002
+    }
+    Spring {
+        id: leanY
+
+        to: surface.leaning ? Math.max(-1, Math.min(1, surface.pointerY / Math.max(1, surface.height) * 2 - 1)) : 0
+        spring: 2.2
+        damping: 0.42
+        epsilon: 0.002
+    }
+    // the light's own spot, in screen pixels — quicker than the lean
+    Spring {
+        id: lightX
+
+        to: surface.pointerX
+        spring: 5
+        damping: 0.5
+        epsilon: 0.5
+    }
+    Spring {
+        id: lightY
+
+        to: surface.pointerY
+        spring: 5
+        damping: 0.5
+        epsilon: 0.5
+    }
+
+    // CARDS ONE BY ONE: hidden the moment an entrance starts, then sent in
+    // as soon as the card's inside begins to show (every entrance style
+    // gets there at its own time).
+    signal cardsReset
+    signal cardsIn
+    property bool staggerArmed: false
+
+    Connections {
+        target: content
+
+        function onOpacityChanged(): void {
+            if (surface.staggerArmed && content.opacity > 0.05) {
+                surface.staggerArmed = false;
+                surface.cardsIn();
+            }
+        }
+    }
 
     // The small square the card grows from: the lock icon (extraLarge
     // × scale 4 = 112px) plus its padding.large × 4.
@@ -440,6 +525,10 @@ Item {
             return;
         surface.entrancePlayed = true;
         surface.prepareEntrance();
+        if (Config.lock.fluidStagger) {
+            surface.cardsReset();
+            surface.staggerArmed = true;
+        }
         switch (surface.style) {
         case "zoom":
             initZoom.restart();
@@ -554,6 +643,94 @@ Item {
             NumberAnimation {
                 duration: surface.ambient ? 1600 : 260
                 easing.type: Easing.InOutQuad
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════ AURORA
+    // Three soft lights in the shell's own colours drift behind the card on
+    // long, unhurried paths — and shift a little against the pointer, so the
+    // card seems to stand in front of them.
+    Item {
+        id: aurora
+
+        readonly property real blob: Math.min(surface.width, surface.height) * 0.95
+
+        anchors.fill: parent
+        opacity: (Config.lock.fluidAurora && !surface.ambient ? 1 : 0) * background.opacity
+        visible: aurora.opacity > 0.01
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 900
+                easing.type: Easing.InOutQuad
+            }
+        }
+
+        transform: Translate {
+            x: -leanX.value * 28 * surface.depth
+            y: -leanY.value * 18 * surface.depth
+        }
+
+        Repeater {
+            model: [
+                {
+                    tone: 0,
+                    fx: 0.18,
+                    fy: 0.22,
+                    ax: 0.22,
+                    ay: 0.16,
+                    period: 23000
+                },
+                {
+                    tone: 1,
+                    fx: 0.72,
+                    fy: 0.68,
+                    ax: 0.18,
+                    ay: 0.2,
+                    period: 31000
+                },
+                {
+                    tone: 2,
+                    fx: 0.55,
+                    fy: 0.15,
+                    ax: 0.24,
+                    ay: 0.14,
+                    period: 37000
+                }
+            ]
+
+            GE.RadialGradient {
+                id: blob
+
+                required property var modelData
+                // 0 → 1 → 0 along the path, its own pace
+                property real t: 0
+
+                width: aurora.blob
+                height: aurora.blob
+                x: surface.width * (blob.modelData.fx + blob.modelData.ax * Math.sin(blob.t * Math.PI * 2)) - width / 2
+                y: surface.height * (blob.modelData.fy + blob.modelData.ay * Math.cos(blob.t * Math.PI * 2 * 0.8)) - height / 2
+                horizontalRadius: width / 2
+                verticalRadius: height / 2
+                gradient: Gradient {
+                    GradientStop {
+                        position: 0
+                        color: [Colours.alpha(Colours.accent, 0.32), Colours.alpha(Colours.accentAlt, 0.28), Colours.alpha(Colours.mix(Colours.accent, Colours.accentAlt, 0.5), 0.22)][blob.modelData.tone]
+                    }
+                    GradientStop {
+                        position: 1
+                        color: "transparent"
+                    }
+                }
+
+                NumberAnimation on t {
+                    running: aurora.visible
+                    loops: Animation.Infinite
+                    from: 0
+                    to: 1
+                    duration: blob.modelData.period
+                }
             }
         }
     }
@@ -705,6 +882,19 @@ Item {
 
                 x: 0
                 y: 0
+            },
+            // DEPTH: the card leans towards the pointer
+            Rotation {
+                origin.x: lockContent.width / 2
+                origin.y: lockContent.height / 2
+                axis: Qt.vector3d(0, 1, 0)
+                angle: leanX.value * 3.2 * surface.depth
+            },
+            Rotation {
+                origin.x: lockContent.width / 2
+                origin.y: lockContent.height / 2
+                axis: Qt.vector3d(1, 0, 0)
+                angle: -leanY.value * 2.4 * surface.depth
             }
         ]
 
@@ -739,6 +929,56 @@ Item {
                 blurEnabled: true
                 blur: 0.65
                 blurMultiplier: 1
+            }
+        }
+
+        // POINTER LIGHT: a soft light under the pointer, inside the card's
+        // rounded shape.
+        Item {
+            id: lightClip
+
+            anchors.fill: parent
+            opacity: surface.lit ? 1 : 0
+            visible: lightClip.opacity > 0.01
+            layer.enabled: lightClip.visible
+            layer.effect: GE.OpacityMask {
+                maskSource: Rectangle {
+                    width: lightClip.width
+                    height: lightClip.height
+                    radius: lockContent.radius
+                }
+            }
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: 500
+                    easing.type: Easing.OutQuad
+                }
+            }
+
+            GE.RadialGradient {
+                readonly property real r: Math.max(lockContent.width, lockContent.height) * 0.42
+
+                width: r * 2
+                height: r * 2
+                x: lightX.value - (surface.width - lockContent.width) / 2 - r
+                y: lightY.value - (surface.height - lockContent.height) / 2 - r
+                horizontalRadius: r
+                verticalRadius: r
+                gradient: Gradient {
+                    GradientStop {
+                        position: 0
+                        color: Colours.alpha(Colours.accent, 0.26)
+                    }
+                    GradientStop {
+                        position: 0.35
+                        color: Colours.alpha(Colours.accent, 0.09)
+                    }
+                    GradientStop {
+                        position: 1
+                        color: "transparent"
+                    }
+                }
             }
         }
 
@@ -818,6 +1058,11 @@ Item {
                     height: surface.stretchIndex("left") >= 0 ? tileRow.colH : leftCol.implicitHeight
                     y: surface.columnY(leftCol.height)
                     spacing: tileRow.gap
+                    // DEPTH: the columns float a step in front of the card
+                    transform: Translate {
+                        x: leanX.value * 12 * surface.depth
+                        y: leanY.value * 7 * surface.depth
+                    }
 
                     Repeater {
                         model: LockLayout.list("left")
@@ -888,32 +1133,22 @@ Item {
                             visible: !surface.dialClock
                             spacing: centerCol.width * 0.02
 
-                            P5Text {
-                                id: hours
-
+                            RollText {
                                 visible: !surface.dotClock
                                 text: surface.hourText
                                 color: Colours.accent
-                                display: Config.lock.clockFace === "display"
-                                font.family: surface.clockFamily
-                                font.weight: Config.lock.clockFace === "display" ? Font.Black : Font.Light
-                                font.italic: false
-                                font.pixelSize: surface.clockPx * surface.clockFit
-                                tracking: -4
+                                px: surface.clockPx * surface.clockFit
+                                family: surface.clockFamily
+                                heavy: Config.lock.clockFace === "display"
                             }
 
-                            P5Text {
-                                id: minutes
-
+                            RollText {
                                 visible: !surface.dotClock
                                 text: Qt.formatDateTime(clock.date, "mm")
                                 color: Colours.accentAlt
-                                display: Config.lock.clockFace === "display"
-                                font.family: surface.clockFamily
-                                font.weight: Config.lock.clockFace === "display" ? Font.Black : Font.Light
-                                font.italic: false
-                                font.pixelSize: surface.clockPx * surface.clockFit * (Config.bar.clock.format24h ? 1 : 0.545)
-                                tracking: -4
+                                px: surface.clockPx * surface.clockFit * (Config.bar.clock.format24h ? 1 : 0.545)
+                                family: surface.clockFamily
+                                heavy: Config.lock.clockFace === "display"
                             }
 
                             // CLOCK FACE → DOTS: the same two colours,
@@ -1527,6 +1762,10 @@ Item {
                     height: surface.stretchIndex("right") >= 0 ? tileRow.colH : rightCol.implicitHeight
                     y: surface.columnY(rightCol.height)
                     spacing: tileRow.gap
+                    transform: Translate {
+                        x: leanX.value * 12 * surface.depth
+                        y: leanY.value * 7 * surface.depth
+                    }
 
                     Repeater {
                         model: LockLayout.list("right")
@@ -2725,7 +2964,8 @@ Item {
     }
 
     // One card module in its column — the fluid lock's cards fill the column
-    // and the content settles in as one, no stagger. A module with nothing
+    // and arrive one after another (MOTION & LIGHT → CARDS ONE BY ONE), or
+    // with the rest of the inside when that is off. A module with nothing
     // to show (no song, no notifications) rests in its idle look: SLIM is
     // its own low card, HIDE takes the tile out until there is something.
     // With RESPOND TO THE POINTER the card lifts a little under the mouse.
@@ -2745,6 +2985,57 @@ Item {
         }
 
         scale: lift.hovered ? 1.015 : 1
+
+        // CARDS ONE BY ONE: left and right take turns, top to bottom
+        property real rise: 1
+        readonly property int order: tileRoot.zone === "left" ? tileRoot.index * 2 : tileRoot.index * 2 + 1
+
+        opacity: tileRoot.rise
+        transform: Translate {
+            y: (1 - tileRoot.rise) * 30
+        }
+
+        Connections {
+            target: tileRoot.face
+            ignoreUnknownSignals: true
+
+            function onCardsReset(): void {
+                riseIn.stop();
+                tileRoot.rise = 0;
+                riseGuard.restart();
+            }
+
+            function onCardsIn(): void {
+                riseIn.restart();
+            }
+        }
+
+        SequentialAnimation {
+            id: riseIn
+
+            PauseAnimation {
+                duration: 80 + tileRoot.order * 75
+            }
+            NumberAnimation {
+                target: tileRoot
+                property: "rise"
+                to: 1
+                duration: 640
+                easing.type: Easing.OutBack
+                easing.overshoot: 1.1
+            }
+        }
+
+        // never left hidden: an entrance cut short still brings the card in
+        Timer {
+            id: riseGuard
+
+            interval: 3000
+            onTriggered: {
+                if (tileRoot.rise < 1 && !riseIn.running)
+                    riseIn.restart();
+            }
+        }
 
         Behavior on scale {
             NumberAnimation {

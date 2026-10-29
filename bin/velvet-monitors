@@ -9,6 +9,13 @@
 #  which it can only show blurred). Its size is in the same block — the EDID
 #  header often says 0 x 0 cm, which is why Hyprland reports 0 mm.
 #
+#  Each screen also says which graphics card drives it ("gpu"), and — when it
+#  hangs on a processor's integrated graphics while a real graphics card sits
+#  in the machine — which card it should be on ("better"). Plugged into the
+#  mainboard, a game still renders on the card, but every frame is copied
+#  across to the processor's graphics to reach the screen, and that port's
+#  ceiling is the screen's ceiling (the user's 4K 240 Hz screen got 120 Hz).
+#
 #    velvet-monitors            JSON for every screen
 #    velvet-monitors --watch    one JSON line whenever a screen mode does not take
 #    velvet-monitors --selftest the picking rules on made-up screens
@@ -76,6 +83,71 @@ def mode_str(w: int, h: int, rr: float) -> str:
     return f"{w}x{h}@{rr:.2f}"
 
 
+def read(path: str) -> str:
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def card_info(card: str) -> dict:
+    """{'card', 'name', 'driver', 'vram', 'integrated'} for /sys/class/drm/<card>."""
+    dev = f"/sys/class/drm/{card}/device"
+    driver = os.path.basename(os.path.realpath(dev + "/driver")) if os.path.exists(dev + "/driver") else ""
+    vram = int(read(dev + "/mem_info_vram_total") or 0) // 1048576
+    slot = os.path.basename(os.path.realpath(dev))
+    name = ""
+    try:
+        line = subprocess.run(["lspci", "-mm", "-s", slot], capture_output=True, text=True, timeout=3).stdout
+        parts = line.split('"')
+        name = parts[5] if len(parts) > 5 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return {"card": card, "name": short_name(name), "driver": driver, "vram": vram,
+            "integrated": is_integrated(driver, vram, name)}
+
+
+def short_name(name: str) -> str:
+    """'Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]' → 'Radeon RX 9070 series'."""
+    inner = name[name.find("[") + 1:name.rfind("]")] if "[" in name and "]" in name else name
+    if "/" in inner:
+        inner = inner.split("/")[0] + " series"
+    return inner.strip()
+
+
+def is_integrated(driver: str, vram_mb: int, name: str) -> bool:
+    """A processor's own graphics: AMD's APUs carve out a little memory (the
+    Ryzen 9000's Radeon 610M: 512 MB; a card has gigabytes), Intel's i915 has
+    none of its own; Arc cards (xe) and NVIDIA are cards."""
+    if driver == "amdgpu":
+        return 0 < vram_mb < 3072
+    if driver == "i915":
+        return True
+    if driver == "xe":
+        return "Arc" not in name
+    return False
+
+
+def gpus() -> list:
+    out = []
+    for path in sorted(glob.glob("/sys/class/drm/card[0-9]*")):
+        card = os.path.basename(path)
+        if "-" in card:
+            continue
+        out.append(card_info(card))
+    return out
+
+
+def gpu_of(output: str, cards: list) -> dict:
+    for path in glob.glob(f"/sys/class/drm/card*-{output}"):
+        card = os.path.basename(path).split("-", 1)[0]
+        for c in cards:
+            if c["card"] == card:
+                return c
+    return {}
+
+
 def best_mode(modes: list, native) -> tuple:
     """The screen's own resolution at its fastest refresh. Without a native
     resolution: the first one the screen lists (the kernel puts its
@@ -121,6 +193,8 @@ def screens() -> list:
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return []
     out = []
+    cards = gpus()
+    discrete = [c for c in cards if not c["integrated"] and c["driver"]]
     for m in mons:
         name = str(m.get("name") or "")
         if not name:
@@ -147,7 +221,11 @@ def screens() -> list:
         best = best_mode(modes, edid.get("native"))
         if best is None:
             continue
+        gpu = gpu_of(name, cards)
         out.append({
+            "gpu": gpu,
+            # the card this screen should hang on, when it is on the processor's graphics
+            "better": discrete[0]["name"] if gpu.get("integrated") and discrete else "",
             "name": name,
             "description": str(m.get("description") or ""),
             "disabled": bool(m.get("disabled")),
@@ -182,6 +260,14 @@ def selftest() -> int:
         got = best_scale(w, h, mm)
         if got != want:
             problems.append(f"scale {w}x{h} {mm}: {got} (want {want})")
+    for driver, vram, name, want in (("amdgpu", 512, "Granite Ridge [Radeon 610M]", True),
+                                     ("amdgpu", 16304, "Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]", False),
+                                     ("i915", 0, "Raptor Lake-S GT1 [UHD Graphics 770]", True),
+                                     ("xe", 0, "DG2 [Arc A770]", False), ("nvidia", 0, "AD104 [GeForce RTX 4070]", False)):
+        if is_integrated(driver, vram, name) != want:
+            problems.append(f"integrated? {driver} {vram} {name}: want {want}")
+    if short_name("Navi 48 [Radeon RX 9070/9070 XT/9070 GRE]") != "Radeon RX 9070 series":
+        problems.append("short name of a card with variants")
     selftest_watch(problems)
     if problems:
         print("velvet-monitors selftest: FAILED")
