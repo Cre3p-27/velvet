@@ -426,6 +426,7 @@ FocusScope {
                         Wallpapers.apply(card.modelData);
                         Sfx.select();
                         applyFlash.restart();
+                        Panels.parkSettings();
                     } else {
                         view.currentIndex = card.index;
                     }
@@ -562,6 +563,7 @@ FocusScope {
                 Sfx.select();
                 applyFlash.restart();
                 root.flash("WALLPAPER APPLIED");
+                Panels.parkSettings();
             }
             event.accepted = true;
             return;

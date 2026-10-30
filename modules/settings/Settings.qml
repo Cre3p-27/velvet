@@ -1126,14 +1126,6 @@ FloatingWindow {
             root.present();
         }
 
-        // a tab asked for by name (the DESKTOP tray's WIDGET STUDIO button)
-        function onSettingsTabAsked(i: int): void {
-            root.setZone(1);
-            root.openTab(i);
-            root.home = false;
-            root.refocus();
-        }
-
         // the window's × while a full-window tab is up: out of that tab
         function onSettingsCloseAsked(): void {
             if (!root.closePane())

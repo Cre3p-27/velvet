@@ -325,15 +325,30 @@ Singleton {
         root.settings = false;
     }
 
-    // A whole tab, by its name (e.g. "WIDGET STUDIO"): the window opens there.
-    signal settingsTabAsked(int index)
+    // A look or a wallpaper put on from the settings: the window steps out
+    // of the way to desktop 10 — not closed: SUPER+TAB brings it back just
+    // where you left it — so you see what you chose right away.
+    readonly property int parkDesktop: 10
 
-    function openSettingsTab(name: string): void {
-        const i = Schema.tabs.findIndex(t => t.name === name);
-        if (i < 0)
-            return;
-        root.showSettings();
-        root.settingsTabAsked(i);
+    function parkSettings(): void {
+        parkSoon.restart();
+    }
+
+    Timer {
+        id: parkSoon
+
+        interval: 420
+        onTriggered: {
+            if (!root.settings || Hypr.activeWsId === root.parkDesktop)
+                return;
+            const tops = Hyprland.toplevels?.values ?? [];
+            const t = tops.find(x => (x?.title ?? "") === "Velvet Settings");
+            if (!t)
+                return;
+            const a = "0x" + String(t.address ?? t.lastIpcObject?.address ?? "").replace(/^0x/, "");
+            Hypr.sendToWorkspace(a, root.parkDesktop);
+            Toast.show(`THE SETTINGS WAIT ON DESKTOP ${root.parkDesktop} · SUPER+TAB BRINGS THEM BACK`, "info", 3200);
+        }
     }
 
     // The settings window's own close button (×). While a full-window tab is

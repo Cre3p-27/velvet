@@ -187,6 +187,7 @@ FocusScope {
         if (Presets.apply(id)) {
             Sfx.select();
             Toast.ok(look.original === true ? "BACK TO VELVET — THE ORIGINAL" : `LOOK · ${Presets.nameOf(look)} IS ON — BACK TO YOUR OWN LOOK SITS ON TOP OF THIS PAGE`);
+            Panels.parkSettings();
         }
     }
 

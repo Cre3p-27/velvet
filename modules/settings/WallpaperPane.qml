@@ -103,6 +103,7 @@ FocusScope {
     function useWallpaper(path: string): void {
         Wallpapers.apply(path);
         Sfx.select();
+        Panels.parkSettings();
     }
 
     Flickable {

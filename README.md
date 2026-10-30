@@ -485,6 +485,10 @@ keep its own vibe. From a terminal: `qs -c velvet ipc call looks apply clean` (`
 chose last; `win95 winxp win7 win10 win11` name one). The pixel typeface is made by `assets/make-font.py`
 (the installer runs it if missing). Every look shares one quiet set of sounds.
 
+Putting on a look or a wallpaper from the settings moves the settings window
+out of the way to **desktop 10** — it stays open there, and **SUPER+TAB** brings
+it back just where you left it — so you see what you chose straight away.
+
 **The LOOKS store** — every look as a small live picture on one shelf: search by just typing, shelves
 ALL · SAVED · YOURS · VIBES · CLASSIC · VINDOWS (Ctrl+1 … 6), sorted as designed, by when you last wore
 them, or A–Z. The **bookmark** on every card (or Ctrl+D) **saves** a look for later; **YOUR SHELF** at the

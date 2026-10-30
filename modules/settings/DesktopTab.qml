@@ -1519,7 +1519,7 @@ FocusScope {
                     label: "OPEN THE WIDGET STUDIO — MAKE A NEW ONE"
                     glyph: "widgets"
                     accent: true
-                    onClicked: Panels.openSettingsTab("WIDGET STUDIO")
+                    onClicked: Panels.openSettingsTabNamed("WIDGET STUDIO")
                 }
 
                 P5Text {
