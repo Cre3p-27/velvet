@@ -482,8 +482,8 @@ poster with outlined labels, one quiet sheet, or a Vindows window (`appearance.s
 SETTINGS LAYOUT) — and wipes the screen briefly in its own way when you put it on. Each is only settings —
 tune any of them one by one in VISUALS → VIBE, save the result as a look of your own, or let a wallpaper
 keep its own vibe. From a terminal: `qs -c velvet ipc call looks apply clean` (`windows` is the edition you
-chose last; `win95 winxp win7 win10 win11` name one). The sound packs and the pixel typeface are made by
-`assets/make-sfx-packs.py` and `assets/make-font.py` (the installer runs them if missing).
+chose last; `win95 winxp win7 win10 win11` name one). The pixel typeface is made by `assets/make-font.py`
+(the installer runs it if missing). Every look shares one quiet set of sounds.
 
 **The LOOKS store** — every look as a small live picture on one shelf: search by just typing, shelves
 ALL · SAVED · YOURS · VIBES · CLASSIC · VINDOWS (Ctrl+1 … 6), sorted as designed, by when you last wore
@@ -782,7 +782,7 @@ wired profile (Velvet LAN), so it changes without an administrator password.
 
 **FIDGET FEEL** (SHELL → SOUNDS): switches snap over with a stretch, sliders
 tick past their notches, presses have a small mechanical click.
-`tools/fidget_sfx.py` makes those sounds. The **FIDGET** look (LOOKS) goes all
+The sounds are Kenney's Interface Sounds (CC0), made quiet and warm by `tools/clean_sfx.py`. The **FIDGET** look (LOOKS) goes all
 in on it: clean white and candy colours, squeezable pills, springy motion, a
 dock of pop-it bubbles.
 
@@ -1459,10 +1459,12 @@ colour · info`. A `page` nests another list inside itself, to any depth.
 
 ## Sounds
 
-The ten UI sounds are synthesised, not sampled — `assets/make-sfx.py` writes
-them with nothing but the Python standard library. Edit the functions in that
-file and re-run it to change how the menu feels. Turn them off entirely in
-**SHELL → SOUND**.
+One quiet set for every look: [Kenney's Interface Sounds](https://kenney.nl)
+(CC0, see `assets/sfx/LICENSE-kenney.txt`). `tools/clean_sfx.py` picks the
+warmest, shortest sound of each kind from the pack, filters it (no rumble, no
+sharp top), brings it down to a soft level and fades it out; the sounds you
+hear most — the cursor and the fidget tick — are the quietest. Volume and the
+fidget sounds: **SHELL → SOUND**.
 
 ---
 

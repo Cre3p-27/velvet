@@ -257,28 +257,15 @@ else
     warn "No terminal emulator found  ${D}— the clock, vitals and the rest need one${N}"
 fi
 
-# Sounds: regenerate only if they're missing, so local edits survive.
+# Sounds: they ship with the shell (assets/sfx — Kenney's Interface Sounds, CC0).
 if [ -f "$SRC/assets/sfx/cursor.wav" ]; then
     ok "UI sounds present"
-elif command -v python3 >/dev/null 2>&1; then
-    if python3 "$SRC/assets/make-sfx.py" >/dev/null 2>&1; then
-        ok "Generated UI sounds"
-    else
-        warn "Could not generate the UI sounds  ${D}— the shell runs silently${N}"
-    fi
 else
-    warn "No python3 and no sound files  ${D}— the shell runs silently${N}"
+    warn "The UI sounds are missing  ${D}— the shell runs silently${N}"
 fi
 
-# The vibes' sound packs and pixel typeface — also made here, only if missing.
+# The pixel typeface — made here, only if missing.
 if command -v python3 >/dev/null 2>&1; then
-    if [ -f "$SRC/assets/sfx/arcade/cursor.wav" ] && [ -f "$SRC/assets/sfx/windows/cursor.wav" ] && [ -f "$SRC/assets/sfx/clean/cursor.wav" ]; then
-        ok "Vibe sound packs present"
-    elif python3 "$SRC/assets/make-sfx-packs.py" >/dev/null 2>&1; then
-        ok "Generated the vibe sound packs"
-    else
-        warn "Could not generate the vibe sound packs  ${D}— those vibes use the house sounds${N}"
-    fi
     if [ -f "$SRC/assets/fonts/VelvetPixel.ttf" ]; then
         ok "Pixel typeface present"
     elif python3 "$SRC/assets/make-font.py" >/dev/null 2>&1; then

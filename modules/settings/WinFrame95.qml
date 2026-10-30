@@ -165,7 +165,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: if (cap.index === 2)
-                            Panels.closeSettings()
+                            Panels.askCloseSettings()
                     }
                 }
             }

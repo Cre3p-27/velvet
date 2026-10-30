@@ -236,7 +236,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: if (cap.close)
-                            Panels.closeSettings()
+                            Panels.askCloseSettings()
                     }
                 }
             }

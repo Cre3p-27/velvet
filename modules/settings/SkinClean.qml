@@ -290,7 +290,7 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: Panels.closeSettings()
+                onClicked: Panels.askCloseSettings()
             }
         }
     }

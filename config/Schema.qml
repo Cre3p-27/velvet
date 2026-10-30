@@ -2318,25 +2318,6 @@ Singleton {
             help: "CRT lines laid over the settings. 0 is off.",
             sub: "OLD-MONITOR LINES",
             min: 0, max: 1, step: 0.05, fmt: "percent"
-        },
-        {
-            kind: "choice",
-            key: "sfx.pack",
-            name: "SOUNDS",
-            help: "The sound set of every click and whoosh. VELVET is the house; the others come with the matching look.",
-            sub: "THE CLICKS",
-            options: [
-                { value: "velvet", label: "VELVET" },
-                { value: "arcade", label: "ARCADE" },
-                { value: "cyber", label: "CYBER" },
-                { value: "terminal", label: "TERMINAL" },
-                { value: "paper", label: "PAPER" },
-                { value: "glass", label: "GLASS" },
-                { value: "rpg", label: "RPG" },
-                { value: "brutal", label: "BRUTAL" },
-                { value: "clean", label: "CLEAN" },
-                { value: "windows", label: "VINDOWS" }
-            ]
         }
     ]
 
@@ -2978,7 +2959,7 @@ Singleton {
             [{ kind: "info", name: "COLOUR", sub: "ACCENT · GROUND · TINT · TRANSPARENCY", help: "The palette of the shell." }],
             root.pickRows(["appearance.accentSource", "appearance.accentColour", "appearance.accentSaturation", "appearance.ground", "appearance.groundColour", "appearance.surfaceTint", "appearance.surfaceLift", "appearance.transparency"]),
             [{ kind: "info", name: "TYPE & MOTION", sub: "TYPE · CASE · SIZE · MOTION · BACKDROP · SOUND", help: "How the look speaks and moves." }],
-            root.pickRows(["appearance.typeStyle", "appearance.caps", "appearance.fontScale", "appearance.motion", "appearance.animationScale", "appearance.backdrop", "appearance.scanlines", "sfx.pack"])
+            root.pickRows(["appearance.typeStyle", "appearance.caps", "appearance.fontScale", "appearance.motion", "appearance.animationScale", "appearance.backdrop", "appearance.scanlines"])
         );
         return out;
     }
@@ -5699,7 +5680,7 @@ Singleton {
         {
             kind: "page",
             name: "SOUND",
-            help: "The shell's own interface sounds — clicks, whooshes, confirmations.",
+            help: "The shell's own interface sounds — clicks, whooshes, confirmations. One quiet set for every look (Kenney's Interface Sounds, CC0).",
             sub: "MENU FEEDBACK",
             items: [
                 {
@@ -5725,15 +5706,15 @@ Singleton {
                     key: "sfx.fidget",
                     name: "FIDGET FEEL",
                     aka: "FIDGET TOY · HAPTIK · SPASS · KLICKEN · TACTILE",
-                    help: "The shell answers your hand like a toy: switches snap over with a stretch and a bounce, sliders tick past their notches (louder as they fill, firmer at the ends), every press has a small mechanical click under it, and the WLAN | LAN lever clunks into place — or shakes its head when there is no cable. Off: the plain clicks and the calm motion.",
-                    sub: "SNAPS · TICKS · CLUNKS · BOUNCES"
+                    help: "The shell answers your hand like a toy: switches snap over with a stretch and a bounce, sliders tick past their notches (louder as they fill, firmer at the ends), and every press has a small soft click under it. Off: the plain clicks and the calm motion.",
+                    sub: "SNAPS · TICKS · BOUNCES"
                 },
                 {
                     kind: "slider",
                     key: "sfx.fidgetVolume",
                     name: "FIDGET LOUDNESS",
-                    help: "How loud the fidget sounds (ticks, the lever, the bounces) are next to the other clicks.",
-                    sub: "THE TICKS AND CLUNKS",
+                    help: "How loud the fidget sounds (ticks, pops, bounces) are next to the other clicks.",
+                    sub: "THE TICKS AND POPS",
                     when: { key: "sfx.fidget", is: true },
                     min: 0.1,
                     max: 1.5,

@@ -1,6 +1,11 @@
 //  VELVET  ·  services/Sfx.qml
 //  The menu clicks. A round-robin pool of players so rapid navigation
 //  overlaps instead of cutting itself off.
+//
+//  One quiet set for every look: Kenney's "Interface Sounds" (CC0), the
+//  warmest and shortest of each kind, filtered and brought down to a soft
+//  level by tools/clean_sfx.py. The sounds you hear most (the cursor, the
+//  fidget tick) are the quietest.
 pragma Singleton
 
 import qs.config
@@ -31,15 +36,14 @@ Singleton {
             whoosh: "whoosh.wav",
             quest: "quest.wav",
             charge: "charge.wav",
-            // the fidget sounds — one set for every pack (tools/fidget_sfx.py)
+            // the fidget sounds (FIDGET FEEL)
             tick: "tick.wav",
-            lever: "lever.wav",
             nope: "nope.wav",
             pop: "pop.wav",
             boing: "boing.wav",
             snap: "snap.wav"
         })
-    readonly property var shared: ["tick", "lever", "nope", "pop", "boing", "snap"]
+    readonly property var shared: ["tick", "nope", "pop", "boing", "snap"]
 
     function play(name: string, gain: real): int {
         if (!Config.sfx.enabled || root.player === "" || Focus.mutesShell)
@@ -48,8 +52,7 @@ Singleton {
         const fidget = root.shared.indexOf(name) >= 0;
         if (fidget && !Config.sfx.fidget)
             return -1;
-        const pack = !fidget && ["arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"].indexOf(Config.sfx.pack) >= 0 ? `${root.dir}/${Config.sfx.pack}` : root.dir;
-        const file = `${pack}/${root.files[name] ?? root.files.cursor}`;
+        const file = `${root.dir}/${root.files[name] ?? root.files.cursor}`;
         const vol = Config.sfx.volume * (gain > 0 ? gain : 1) * (fidget ? Config.sfx.fidgetVolume : 1);
 
         let cmd;

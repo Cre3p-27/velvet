@@ -192,6 +192,8 @@ FloatingWindow {
         }
         if (root.leavePage())
             return true;
+        if (root.closePane())
+            return true;
         if (!root.home) {
             root.goHome();
             return true;
@@ -210,6 +212,49 @@ FloatingWindow {
     } : null
     readonly property string pane: root.home ? "" : ((root.openPaneRow?.item?.pane ?? "") || (root.tab?.pane ?? ""))
     readonly property bool isPane: root.pane !== ""
+
+    // Closing a full-window tab (LOOKS, PER WALLPAPER, DESKTOP …: Esc, BACK
+    // or the window's ×) goes back to where you were before it — another
+    // tab, the front page, another room — instead of folding every tab away
+    // or shutting the window. `spot` follows you everywhere but in such a
+    // tab; `paneFrom` is the spot you had when one took over.
+    property var spot: null
+    property var paneFrom: null
+    readonly property var here: ({
+            zone: root.zone,
+            tab: root.tabIndex,
+            home: root.home
+        })
+
+    onHereChanged: {
+        if (!root.isPane || root.zone !== 1)
+            root.spot = root.here;
+    }
+    onIsPaneChanged: {
+        Panels.settingsHasPane = root.isPane && root.zone === 1 && !root.openPaneRow;
+        if (root.isPane && root.paneFrom === null)
+            root.paneFrom = root.spot;
+        else if (!root.isPane)
+            root.paneFrom = null;
+    }
+
+    function closePane(): bool {
+        // a page that is an editor (ARRANGE MODULES) steps out like any page
+        if (!root.isPane || root.zone !== 1 || root.openPaneRow)
+            return false;
+        const from = root.paneFrom;
+        root.paneFrom = null;
+        if (from && from.zone !== 1) {
+            root.goHome();
+            root.setZone(from.zone);
+        } else if (from && !from.home && from.tab !== root.tabIndex && !(Schema.tabs[from.tab]?.pane)) {
+            root.openTab(from.tab);
+            Sfx.back();
+        } else {
+            root.goHome();
+        }
+        return true;
+    }
 
     function pathOf(trail: var, name: string): string {
         return trail.concat([name]).join(" › ");
@@ -1081,6 +1126,12 @@ FloatingWindow {
             root.present();
         }
 
+        // the window's × while a full-window tab is up: out of that tab
+        function onSettingsCloseAsked(): void {
+            if (!root.closePane())
+                Panels.closeSettings();
+        }
+
         // a deep link while the window is already open
         function onSettingsAsked(): void {
             root.present();
@@ -1479,7 +1530,7 @@ FloatingWindow {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Panels.closeSettings()
+                        onClicked: Panels.askCloseSettings()
                     }
                 }
 

@@ -60,7 +60,7 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Panels.closeSettings()
+                        onClicked: Panels.askCloseSettings()
                     }
                     P5Text {
                         anchors.centerIn: parent

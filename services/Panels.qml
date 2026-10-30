@@ -325,6 +325,21 @@ Singleton {
         root.settings = false;
     }
 
+    // The settings window's own close button (×). While a full-window tab is
+    // up (LOOKS, PER WALLPAPER, DESKTOP …) it closes that tab and takes you
+    // back to where you were — the window itself stays (Settings answers
+    // settingsCloseAsked). Anywhere else it closes the window.
+    property bool settingsHasPane: false
+    signal settingsCloseAsked
+
+    function askCloseSettings(): void {
+        if (root.settings && root.settingsHasPane) {
+            root.settingsCloseAsked();
+            return;
+        }
+        root.settings = false;
+    }
+
     // Everything, the settings window too (the "close" shortcut).
     function closeEverything(): void {
         root.closeAll();
