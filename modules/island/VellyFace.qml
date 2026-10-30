@@ -1,19 +1,19 @@
 //  VELVET  ·  modules/island/VellyFace.qml
-//  Velly's face (VELLY → FACE → DOTS): a round dot-matrix display, like a
-//  little device sitting in the capsule. The dots are drawn by one shader
-//  (assets/shaders/dotface.frag); this file decides what the face does.
+//  Velly herself (VELLY → FACE → VELVET): a little ball of velvet — dark
+//  where it faces you, glowing at its rim, a fuzz round its edge — drawn by
+//  one shader (assets/shaders/velvet.frag); this file decides what she does.
 //
-//    READY      she blinks now and then, looks where your pointer is (or
-//               about the room when it is away), cheeks warm; the halo of
-//               dot rays round the display breathes in a slow wave.
-//    LISTENING  eyes wide open, the halo rides your voice (bin/velvet-ears).
-//    THINKING   she looks up and aside, a comet of dots runs round the rim.
-//    SPEAKING   a mouth of dot bars moves with the audio she is playing, the
-//               halo rides it too; she smiles a little.
-//    DONE       a happy squint (^ ^) when an answer has landed.
-//    ERROR      crossed-out eyes, the halo goes quiet.
-//    WAKING     a ripple runs out from the middle of the display.
-//    ASLEEP     eyes shut, the display dim.
+//    READY      she bobs, blinks now and then, looks where your pointer is
+//               (or about the room when it is away); her fuzz breathes.
+//    LISTENING  eyes wide open, her fuzz stands up with your voice.
+//    THINKING   she looks up and aside and kneads herself; a sheen runs round.
+//    SPEAKING   a mouth opens with the audio she is playing, the fuzz rides
+//               it too; she smiles a little.
+//    DONE       a happy squint (^ ^) and a hop when an answer has landed.
+//    ERROR      crossed-out eyes, the fuzz lies down.
+//    WAKING     she squashes, springs up, a ring runs out of her.
+//    ASLEEP     eyes shut.
+//  Click her: she squishes.
 import qs.config
 import qs.services
 import qs.components
@@ -39,7 +39,7 @@ Item {
 
     // ── what the face does, each on its own soft curve
     property real open: root.asleep ? 0.06 : (root.thinking ? 0.82 : 1)
-    property real smile: root.happy ? 1 : (root.speaking ? 0.3 : 0)
+    property real smile: root.happy ? 1 : 0
     property real cross: root.failed ? 1 : 0
     property real wide: root.hearing ? 1 : 0
     property real think: root.thinking ? 1 : 0
@@ -129,8 +129,50 @@ Item {
             root.happy = false;
         }
         // waking: one ripple out of the middle
-        if (was === "off" && root.phase !== "off")
+        if (was === "off" && root.phase !== "off") {
             ripple.restart();
+            hop.restart();
+        }
+        if (root.happy)
+            hop.restart();
+    }
+
+    // ── her body: a squash and a spring back (waking, a happy hop, a squeeze)
+    property real squash: 0
+
+    SequentialAnimation {
+        id: hop
+
+        NumberAnimation {
+            target: root
+            property: "squash"
+            to: -0.8
+            duration: 110
+            easing.type: Easing.OutQuad
+        }
+        NumberAnimation {
+            target: root
+            property: "squash"
+            to: 0.55
+            duration: 150
+            easing.type: Easing.OutQuad
+        }
+        NumberAnimation {
+            target: root
+            property: "squash"
+            to: 0
+            duration: 520
+            easing.type: Easing.OutElastic
+            easing.amplitude: 1.2
+            easing.period: 0.4
+        }
+    }
+
+    TapHandler {
+        onTapped: {
+            hop.restart();
+            Sfx.pop();
+        }
     }
 
     NumberAnimation {
@@ -267,15 +309,14 @@ Item {
 
         property real px: 2 / Math.max(1, width)
         property real time: 0
-        property real grid: [17, 21, 25].indexOf(Config.velly.faceDots) >= 0 ? Config.velly.faceDots : 21
-        // the display stays a dark little device in every look: white dots,
-        // the accent for the warm bits
-        property color ink: Qt.rgba(1, 0.98, 0.96, 0.96)
-        property color off: Qt.rgba(1, 1, 1, 0.075)
-        property color hot: Colours.accent
-        property color glass: Qt.rgba(0.035, 0.032, 0.04, 0.94)
+        property real squash: root.squash
+        // her colours: a deep velvet of the accent, its rim lit, white eyes
+        property color deep: Colours.mix(Colours.accent, "#05040a", 0.62)
+        property color sheen: Colours.mix(Colours.accent, "#ffffff", 0.38)
+        property color ink: Qt.rgba(1, 0.985, 0.97, 1)
+        property color blush: Colours.alpha(Colours.mix(Colours.accent, "#ff6f9a", 0.6), 0.9)
         property vector4d eye: Qt.vector4d(root.open * root.lid, root.smile, root.cross, root.wide)
-        property vector4d look: Qt.vector4d(gazeX.value, gazeY.value, root.cheeks, root.mouthOpen)
+        property vector4d look: Qt.vector4d(gazeX.value / 2.2, gazeY.value / 1.8, root.cheeks, root.mouthOpen)
         property vector4d mouthA: Qt.vector4d(root.bars[0], root.bars[1], root.bars[2], root.bars[3])
         property vector4d mouthB: Qt.vector4d(root.bars[4], root.bars[5], root.bars[6], root.bars[7])
         property vector4d haloA: Qt.vector4d(root.bands[0], root.bands[1], root.bands[2], root.bands[3])
@@ -284,6 +325,6 @@ Item {
         property vector4d haloD: Qt.vector4d(root.bands[12], root.bands[13], root.bands[14], root.bands[15])
         property vector4d mode: Qt.vector4d(root.think, Config.velly.faceHalo ? root.halo : 0, root.energy, root.wake)
 
-        fragmentShader: Qt.resolvedUrl("../../assets/shaders/dotface.frag.qsb")
+        fragmentShader: Qt.resolvedUrl("../../assets/shaders/velvet.frag.qsb")
     }
 }

@@ -153,7 +153,7 @@ Item {
     }
 
     // ───────────────────────────────────────────────────────────────── face
-    // VELLY → FACE → DOTS: the dot-matrix display (VellyFace.qml). She looks
+    // VELLY → FACE → VELVET: her velvet body (VellyFace.qml). She looks
     // at your pointer while it is over the island (Island.qml hands it over,
     // in scene coordinates).
     property var pointerScene: null

@@ -734,36 +734,22 @@ Singleton {
                     kind: "choice",
                     key: "velly.face",
                     name: "FACE",
-                    aka: "GESICHT · DOT MATRIX · PUNKTE · ORB",
-                    help: "How Velly looks in the island. DOTS: a round dot-matrix display with a face — she blinks, looks at your pointer, goes wide-eyed while she listens, looks up while she thinks (a comet of dots runs round the rim), talks with a mouth of dot bars, squints happily when an answer has landed, and a halo of dot rays rides the voice. ORB: the breathing rings and radial bars.",
-                    sub: "DOTS · ORB",
+                    aka: "GESICHT · LOOK · VELVET · SAMT · ORB",
+                    help: "How Velly looks in the island. VELVET: a little ball of velvet — deep in the middle, glowing at the rim. She bobs, blinks, looks at your pointer, goes wide-eyed while she listens (her fuzz stands up with your voice), kneads herself while she thinks, talks with a little mouth, squints happily and hops when an answer has landed. Click her and she squishes. ORB: the breathing rings and radial bars.",
+                    sub: "VELVET · ORB",
                     options: [
-                        { value: "dots", label: "DOTS" },
+                        { value: "velvet", label: "VELVET" },
                         { value: "orb", label: "ORB" }
-                    ]
-                },
-                {
-                    kind: "choice",
-                    key: "velly.faceDots",
-                    name: "DOTS",
-                    aka: "PUNKTE · GRAIN · RASTER",
-                    help: "How fine her display is: CHUNKY (17 dots across), CLASSIC (21) or FINE (25).",
-                    sub: "CHUNKY · CLASSIC · FINE",
-                    when: { key: "velly.face", is: "dots" },
-                    options: [
-                        { value: 17, label: "CHUNKY" },
-                        { value: 21, label: "CLASSIC" },
-                        { value: 25, label: "FINE" }
                     ]
                 },
                 {
                     kind: "toggle",
                     key: "velly.faceHalo",
-                    name: "HALO",
-                    aka: "STRAHLEN · RAYS",
-                    help: "The ring of dot rays round her display: it breathes in a slow wave, rides your voice while she listens and hers while she speaks.",
-                    sub: "DOT RAYS THAT RIDE THE VOICE",
-                    when: { key: "velly.face", is: "dots" }
+                    name: "FUZZ",
+                    aka: "FLAUM · HALO · STRAHLEN",
+                    help: "The fuzz round her edge: it breathes when she rests and stands up with the voice — yours while she listens, hers while she speaks.",
+                    sub: "HER FUZZ RIDES THE VOICE",
+                    when: { key: "velly.face", is: "velvet" }
                 },
                 {
                     kind: "choice",

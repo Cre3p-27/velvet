@@ -1019,13 +1019,11 @@ JsonAdapter {
         // Master switch — MODULES → VELLY. Off removes her module from
         // the island and the long press does nothing.
         property bool enabled: true
-        // Her face in the island: "dots" (a round dot-matrix display that
-        // blinks, looks at your pointer, smiles and speaks) or "orb" (the
-        // breathing rings and radial bars)
-        property string face: "dots"
-        // the display's grain: 17 (chunky), 21, 25 (fine) dots across
-        property int faceDots: 21
-        // the halo of dot rays round the display, riding the voice
+        // Her face in the island: "velvet" (a little ball of velvet that
+        // blinks, looks at your pointer, smiles, speaks and squishes) or
+        // "orb" (the breathing rings and radial bars)
+        property string face: "velvet"
+        // the fuzz round her edge that stands up with the voice
         property bool faceHalo: true
         // How long you hold the pill before she wakes, in ms.
         property int longPress: 620
