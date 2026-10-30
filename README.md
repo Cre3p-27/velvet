@@ -726,6 +726,18 @@ pop-it bubbles on FIDGET, glass on the glass looks, a solid pill elsewhere.
   frame's side as a drawer of the frame's own colour, top to bottom, its ends
   flowing into the frame.
 
+## Velly on your desktop
+
+**VELLY → ON THE DESKTOP** (on by default): she lives on the screen's floor,
+above your windows. Grab her and carry her anywhere — let go fast and she
+flies, bounces off the edges and squashes when she lands. Click her: a giggle
+(three quick clicks: a spin). Double-click: she jumps into the island and
+listens. Move the pointer over her: she blushes, purrs, hearts float up. She
+watches your pointer when it is near, hops about, bobs to music (in the
+rainbow), jumps when a notification comes and dozes off after a few quiet
+minutes. Her colour follows her mood — cyan listening, violet thinking, pink
+when she is happy, red on an error. HER SIZE sets how big she is.
+
 ## Code widgets — write your own, or let an AI write them
 
 **SUPER+TAB → SETTINGS → WIDGET STUDIO** is the friendly way in: your widgets
@@ -1486,9 +1498,14 @@ colour · info`. A `page` nests another list inside itself, to any depth.
 ## Sounds
 
 Made here, by `tools/make_sounds.py`, in one key (E major) so one sound after
-another always fits. **SHELL → SOUND → SOUNDS**: **SOFT** (little wooden taps,
-felt more than heard) or **GLASS** (small crystal bells) — changing it plays a
-little of the new set. Every sound is loaded once and plays straight from
+another always fits — and shaped the way you like in **SHELL → SOUND**:
+**SOUNDS** picks what plays them (SOFT wooden taps · GLASS bells · POP bubbles ·
+PLUCK a kalimba · KEYS a good keyboard · DIGITAL blips), **PITCH**,
+**BRIGHTNESS** and **LENGTH** reshape them (the set is made anew in a fraction
+of a second and plays a little — LISTEN plays it again), **CLICKS · SWITCHES ·
+OPEN · CLOSE · DONE** each have their own loudness (all the way left: silent),
+and **YOUR OWN SOUNDS** opens `~/.config/velvet/sounds`: a WAV named like a
+sound (select.wav, toggle.wav …) replaces that one. Every sound is loaded once and plays straight from
 memory, so it starts with the click. Quiet on purpose: nothing sounds when the
 pointer only passes over things (HOVER SOUNDS turns that on), the cursor's tap
 is rate-limited, and the sounds you hear most are the softest. Velly has her

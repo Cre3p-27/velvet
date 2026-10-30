@@ -761,6 +761,23 @@ Singleton {
                     when: { key: "velly.face", is: "velvet" }
                 },
                 {
+                    kind: "toggle",
+                    key: "velly.buddy",
+                    name: "ON THE DESKTOP",
+                    aka: "DESKTOP PET · BUDDY · HAUSTIER · BEGLEITER",
+                    help: "Velly lives on your desktop too, on the screen's floor above your windows. Grab her and carry her anywhere — let go fast and she flies, bounces off the edges and squashes on landing. Click: a giggle (three quick clicks: a spin). Double-click: she jumps into the island and listens. Move the pointer over her and she blushes and purrs. She watches your pointer when it is near, hops about, bobs to music, jumps when a notification comes, and dozes off after a few quiet minutes. While you talk to her she is in the island.",
+                    sub: "GRAB · THROW · PET · SHE LIVES ON YOUR SCREEN"
+                },
+                {
+                    kind: "slider",
+                    key: "velly.buddySize",
+                    name: "HER SIZE",
+                    help: "How big Velly is on the desktop.",
+                    sub: "ON THE DESKTOP",
+                    when: { key: "velly.buddy", is: true },
+                    min: 80, max: 220, step: 4, fmt: "int", unit: "px"
+                },
+                {
                     kind: "choice",
                     key: "velly.speakWhen",
                     name: "SHE SPEAKS",
@@ -5700,13 +5717,96 @@ Singleton {
                     kind: "choice",
                     key: "sfx.set",
                     name: "SOUNDS",
-                    aka: "KLANG · SOUND SET · TÖNE",
-                    help: "Which sounds the shell makes. SOFT: little wooden taps — felt more than heard. GLASS: small crystal bells with a quiet ring. Both are in one key, so one sound after another always fits. Changing it plays a little of the new set.",
-                    sub: "SOFT · GLASS",
+                    aka: "KLANG · SOUND SET · TÖNE · SYSTEM SOUND",
+                    help: "What plays the shell's sounds — all in one key, so one sound after another always fits. SOFT: little wooden taps. GLASS: small crystal bells. POP: round bubbles. PLUCK: a plucked string, like a kalimba. KEYS: the thock of a good keyboard. DIGITAL: clean little blips. Changing it plays a little of the new set.",
+                    sub: "SOFT · GLASS · POP · PLUCK · KEYS · DIGITAL",
                     options: [
                         { value: "soft", label: "SOFT" },
-                        { value: "glass", label: "GLASS" }
+                        { value: "glass", label: "GLASS" },
+                        { value: "pop", label: "POP" },
+                        { value: "pluck", label: "PLUCK" },
+                        { value: "keys", label: "KEYS" },
+                        { value: "digital", label: "DIGITAL" }
                     ]
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.pitch",
+                    name: "PITCH",
+                    aka: "TONHÖHE · HÖHER · TIEFER",
+                    help: "Every sound higher or lower, in semitones — it stays in tune with itself. The set is made anew as you let go, and plays a little.",
+                    sub: "LOWER · HIGHER",
+                    min: -12, max: 12, step: 1, fmt: "int", unit: " st"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.bright",
+                    name: "BRIGHTNESS",
+                    aka: "HELLIGKEIT · WÄRME · WARM · HELL",
+                    help: "Warm and soft at the left, crisp and bright at the right.",
+                    sub: "WARM · BRIGHT",
+                    min: 0, max: 1, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.length",
+                    name: "LENGTH",
+                    aka: "LÄNGE · NACHKLANG · KURZ · LANG",
+                    help: "How long every sound rings: short and dry at the left, long and ringing at the right.",
+                    sub: "SHORT · LONG",
+                    min: 0.5, max: 2, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "action",
+                    fn: "soundListen",
+                    name: "LISTEN",
+                    aka: "ANHÖREN · PROBE · TEST",
+                    help: "Plays a little of the sounds as they are set now.",
+                    sub: "A LITTLE OF THE SOUNDS AS THEY ARE"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.vClicks",
+                    name: "CLICKS",
+                    aka: "KLICKS LAUTSTÄRKE",
+                    help: "How loud the clicks are: moving through a menu, choosing, going back. All the way left: silent.",
+                    sub: "MOVE · CHOOSE · BACK",
+                    min: 0, max: 1.5, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.vSwitches",
+                    name: "SWITCHES",
+                    aka: "SCHALTER LAUTSTÄRKE",
+                    help: "How loud switches and toggles are. All the way left: silent.",
+                    sub: "ON · OFF",
+                    min: 0, max: 1.5, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.vWindows",
+                    name: "OPEN · CLOSE",
+                    aka: "FENSTER ÖFFNEN SCHLIESSEN LAUTSTÄRKE",
+                    help: "How loud opening and closing is: menus, the island, the launcher, starting an app. All the way left: silent.",
+                    sub: "MENUS · ISLAND · APPS",
+                    min: 0, max: 1.5, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.vSuccess",
+                    name: "DONE",
+                    aka: "FERTIG ERFOLG LAUTSTÄRKE",
+                    help: "How loud the little fanfare is when a task is done, and Velly's long-press charge. All the way left: silent.",
+                    sub: "TASKS DONE · VELLY'S CHARGE",
+                    min: 0, max: 1.5, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "action",
+                    fn: "soundFolder",
+                    name: "YOUR OWN SOUNDS",
+                    aka: "EIGENE SOUNDS · EIGENE TÖNE · WAV",
+                    help: "Opens ~/.config/velvet/sounds. Put a WAV there named like a sound — select.wav, toggle.wav, open.wav … (the README in the folder lists them all) — and it replaces that one sound. Delete it to have the shell's own back.",
+                    sub: "A WAV OF YOUR OWN FOR ANY SOUND"
                 },
                 {
                     kind: "toggle",
@@ -5723,6 +5823,15 @@ Singleton {
                     aka: "VELLY SOUNDS · ZWITSCHERN",
                     help: "Velly's own little sounds: a chirp when she wakes, a blip when she starts and stops listening, a happy two-note when an answer is done, a giggle when you click her, a purr when you pet her.",
                     sub: "WAKE · LISTEN · DONE · GIGGLE · PURR"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.vVelly",
+                    name: "VELLY'S LOUDNESS",
+                    help: "How loud Velly's chirps are.",
+                    sub: "HER CHIRPS",
+                    when: { key: "sfx.velly", is: true },
+                    min: 0, max: 1.5, step: 0.05, fmt: "percent"
                 },
                 {
                     kind: "toggle",

@@ -956,8 +956,18 @@ JsonAdapter {
         // sounds alone follow `enabled` (and FOCUS MODE) like every click.
         property bool fidget: true
         property real fidgetVolume: 0.8
-        // SOUNDS: soft (little wooden taps) or glass (small crystal bells)
+        // SOUNDS: soft · glass · pop · pluck · keys · digital (tools/make_sounds.py)
         property string set: "soft"
+        // the dials that shape any of them: semitones, warm … bright, short … long
+        property real pitch: 0
+        property real bright: 0.5
+        property real length: 1
+        // how loud each kind of sound is (0 = silent)
+        property real vClicks: 1
+        property real vSwitches: 1
+        property real vWindows: 1
+        property real vSuccess: 1
+        property real vVelly: 1
         // a tap when the pointer only passes over things (off: only what you press sounds)
         property bool hover: false
         // Velly's chirps: waking, listening, done, a giggle when you click her
@@ -1031,6 +1041,9 @@ JsonAdapter {
         property string face: "velvet"
         // the fuzz round her edge that stands up with the voice
         property bool faceHalo: true
+        // ON THE DESKTOP: she lives on the screen's floor (VellyBuddy.qml)
+        property bool buddy: true
+        property int buddySize: 120
         // How long you hold the pill before she wakes, in ms.
         property int longPress: 620
         // Speak her answers out loud (bin/velvet-voice).

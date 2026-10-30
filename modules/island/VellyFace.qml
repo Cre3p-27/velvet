@@ -31,7 +31,11 @@ Item {
     property var pointer: null
 
     readonly property string phase: Velly.phase
-    readonly property bool asleep: root.phase === "off"
+    // on the desktop (VellyBuddy) she is awake without a session — and
+    // only dozes off when nobody has been near her for a while
+    property bool alwaysAwake: false
+    property bool dozing: false
+    readonly property bool asleep: root.alwaysAwake ? root.dozing : root.phase === "off"
     readonly property bool hearing: root.phase === "listening" || root.phase === "hearing"
     readonly property bool thinking: root.phase === "thinking"
     readonly property bool speaking: root.phase === "speaking"
@@ -119,6 +123,36 @@ Item {
         }
     }
 
+    // ── her mood, in colour: cyan while she listens, violet while she
+    // thinks, hot while she talks, pink when she is happy or loved, red on
+    // an error, night blue asleep — and the rainbow while she dances
+    property real hueRun: 0
+    readonly property color moodTarget: {
+        if (root.failed)
+            return "#ff3b3b";
+        if (root.asleep)
+            return "#3b4a9f";
+        if (root.hearing)
+            return "#33ccff";
+        if (root.thinking)
+            return "#9a6bff";
+        if (root.speaking)
+            return Colours.accentHot;
+        if (root.happy || root.love > 0.5)
+            return "#ff5fa2";
+        return Colours.accent;
+    }
+    property color moodColour: root.moodTarget
+    readonly property color danceColour: Qt.hsva(root.hueRun % 1, 0.75, 1, 1)
+    readonly property color shown: root.dance > 0.12 ? Colours.mix(root.moodColour, root.danceColour, Math.min(1, root.dance * 2.2)) : root.moodColour
+
+    Behavior on moodColour {
+        ColorAnimation {
+            duration: 600
+            easing.type: Easing.OutCubic
+        }
+    }
+
     // ── happy: a squint when an answer has landed
     property bool happy: false
 
@@ -196,18 +230,25 @@ Item {
     property int taps: 0
     property real spin: 0
 
-    TapHandler {
-        onTapped: {
-            hop.restart();
-            Sfx.chirp("giggle");
-            root.taps++;
-            tapWindow.restart();
-            if (root.taps >= 3) {
-                root.taps = 0;
-                spinAnim.restart();
-                root.love = 1;
-            }
+    function poke(): void {
+        hop.restart();
+        Sfx.chirp("giggle");
+        root.taps++;
+        tapWindow.restart();
+        if (root.taps >= 3) {
+            root.taps = 0;
+            spinAnim.restart();
+            root.love = 1;
         }
+    }
+
+    // a landing: a squash and a spring back
+    function bounce(): void {
+        hop.restart();
+    }
+
+    TapHandler {
+        onTapped: root.poke()
     }
 
     Timer {
@@ -398,6 +439,7 @@ Item {
 
     // music playing while she rests: she bobs along
     readonly property bool resting: root.phase === "ready" || root.phase === "off"
+    readonly property bool idle: root.phase === "ready" || (root.alwaysAwake && root.phase === "off" && !root.dozing)
     property real dance: 0
 
     FrameAnimation {
@@ -411,8 +453,10 @@ Item {
             const playing = Lyrics.bridge?.playing ?? false;
             const beat = root.resting && playing ? Math.max(0, (Spectrum.level ?? 0) - 0.25) : 0;
             root.dance += (beat * 1.1 - root.dance) * Math.min(1, frameTime * 14);
+            if (root.dance > 0.12)
+                root.hueRun += frameTime * 0.25;
             // a yawn after a while with nothing going on
-            if (root.phase === "ready" && !root.pointer && !playing) {
+            if (root.idle && !root.pointer && !playing) {
                 root.idleFor += frameTime;
                 if (root.idleFor > 28 && !yawnAnim.running) {
                     root.idleFor = 0;
@@ -433,8 +477,8 @@ Item {
         property real time: 0
         property real squash: Math.max(-1, Math.min(1, root.squash - root.dance))
         // her colours: a deep velvet of the accent, its rim lit, white eyes
-        property color deep: Colours.mix(Colours.accent, "#05040a", 0.62)
-        property color sheen: Colours.mix(Colours.accent, "#ffffff", 0.38)
+        property color deep: Colours.mix(root.shown, "#05040a", 0.62)
+        property color sheen: Colours.mix(root.shown, "#ffffff", 0.38)
         property color ink: Qt.rgba(1, 0.985, 0.97, 1)
         property color blush: Colours.alpha(Colours.mix(Colours.accent, "#ff6f9a", 0.6), 0.9)
         property vector4d eye: Qt.vector4d(root.open * root.lid, root.smile, root.cross, root.wide)

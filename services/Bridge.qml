@@ -529,6 +529,13 @@ setsid -f "$4" >/dev/null 2>&1`, "velvet", Config.path, Config.wallpaper.directo
             Panels.pendingFacePicker = true;
             Panels.openSettingsZoneNamed("HOME");
             break;
+        case "soundListen":
+            Sfx.demo();
+            break;
+        case "soundFolder":
+            // your own WAVs: the folder, with a note of the names
+            Quickshell.execDetached(["bash", "-c", `mkdir -p "$1" && printf '%s\n' "Put a WAV here named like a sound to replace it:" "cursor select back toggle snap open close launch whoosh quest charge tick nope pop boing" "(e.g. select.wav). Back to the shell's own: delete the file." > "$1/README.txt"; xdg-open "$1"`, "sounds", Sfx.mine]);
+            break;
         case "vellySetup":
             // Setup needs somewhere to type, and the only text field this
             // shell owns that is also the assistant's own body is the island.

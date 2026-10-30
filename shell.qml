@@ -82,6 +82,13 @@ ShellRoot {
         NotifPopups {}
     }
 
+    // VELLY → ON THE DESKTOP: she lives on the screen's floor
+    LazyLoader {
+        active: Config.velly.enabled && Config.velly.buddy
+
+        VellyBuddy {}
+    }
+
     // STAGE desktops: the cards of the windows in the wings, per screen
     // (each strip shows itself only on a stage desktop with cards)
     Variants {
