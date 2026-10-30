@@ -1476,6 +1476,8 @@ ARG_DOCS = {
     "books.make": {"kind": ("what kind of book", ["", "coloring", "puzzle", "picture"]),
                    "idea": "for a picture book: the story idea in one sentence; else empty"},
     "books.open": {"id": "the book's number from books.status; empty opens the shelf folder"},
+    "widget.make": {"name": "a short name for the widget (letters, digits, dashes)",
+                    "code": "the whole JavaScript file, exactly as widget.api describes it"},
     "books.uploaded": {"id": "the book's number from books.status"},
     "bt.disconnect": {"name": "part of the device's name"},
     "win.fullscreen": {"match": "window class or part of its title; empty = the active window", "on": "true fullscreen, false normal"},
@@ -4499,6 +4501,37 @@ def t_books_make(kind="", idea=""):
             "note": "picture books take an hour or more" if made["kind"] == "picture" else "about a minute"}
 
 
+WIDGET_DIR = os.path.join(os.path.expanduser("~"), ".config", "velvet", "widgets")
+
+
+@tool("widget.api", "", "read",
+      "How a desktop CODE WIDGET is written (the file, render(ctx, f), what f holds). Read it before widget.make.")
+def t_widget_api():
+    code, out, err = run(["qs", "-c", "velvet", "ipc", "call", "codewidgets", "api"], timeout=10)
+    return {"ok": code == 0, "api": out if code == 0 else "", "error": err[-140:] if code else ""}
+
+
+@tool("widget.make", '{"name": "pulse-ring", "code": "// name: …"}', "write",
+      "Write a desktop CODE WIDGET (JavaScript, see widget.api) and put it on the user's desktop. "
+      "Saving the same name again replaces it.")
+def t_widget_make(name="", code=""):
+    import re as _re
+    slug = _re.sub(r"[^a-z0-9]+", "-", str(name or "").lower()).strip("-")[:32] or "widget"
+    text = str(code or "")
+    fence = _re.search(r"```[a-zA-Z]*\n([\s\S]*?)```", text)
+    if fence:
+        text = fence.group(1)
+    if "function render" not in text:
+        return {"ok": False, "error": "the code needs a function render(ctx, f) — read widget.api"}
+    os.makedirs(WIDGET_DIR, exist_ok=True)
+    path = os.path.join(WIDGET_DIR, slug + ".js")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    code_, out, err = run(["qs", "-c", "velvet", "ipc", "call", "codewidgets", "place", slug], timeout=10)
+    return {"ok": True, "file": path, "placed": code_ == 0, "note": "it is on the desktop and updates whenever the file changes; "
+            "any mistake shows on the widget itself"}
+
+
 @tool("books.open", '{"id": "001"}', "write",
       "Open a book's review page (every page, every KDP field with a copy button), or with no id the shelf folder.")
 def t_books_open(id=""):
@@ -5861,6 +5894,8 @@ EXAMPLES — the shape of a turn, not a script to copy word for word.
       {t("bt.devices")} / {t("bt.connect")} / {t("bt.disconnect")}; windows →
       {t("win.fullscreen")} / {t("win.place")}. Several steps in a row are fine — check
       each result before the next.
+    · Desktop widgets she codes herself ("mach mir ein Widget, das …") → {t("widget.api")} first,
+      then {t("widget.make")} with the whole file; keep it small, fast and in the shell's colours.
     · Books for Amazon KDP (her book studio) → {t("books.status")}, {t("books.make")},
       {t("books.open")}, {t("books.uploaded")}; the night shift → {t("night.status")},
       {t("night.start")}; "mach den Bildschirm aus", "ich geh schlafen" → {t("screen.off")}.

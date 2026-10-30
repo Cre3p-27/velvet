@@ -331,6 +331,7 @@ ShellRoot {
     readonly property var startedServices: [
         Config.loaded,
         Stage.loaded,
+        CodeWidgets.names,
         Colours.accent,
         Notifs.unread,
         HyprConf.ready,

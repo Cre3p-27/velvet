@@ -1476,6 +1476,86 @@ FocusScope {
                     }
                 }
 
+                // CODE WIDGETS (services/CodeWidgets.qml): yours, and the ways
+                // to make one — write it, have any AI write it, or ask Velly
+                P5Text {
+                    text: "YOUR CODE WIDGETS"
+                    color: Colours.alpha(Colours.accent, 0.9)
+                    font.pixelSize: Appearance.font.size.tiny
+                    tracking: 3
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 7
+
+                    Repeater {
+                        model: CodeWidgets.names
+
+                        TrayChip {
+                            required property var modelData
+
+                            label: modelData.toUpperCase()
+                            sub: "YOUR CODE  ·  ~/.config/velvet/widgets"
+                            glyph: "code"
+                            iconName: ""
+                            payload: ({
+                                    kind: "widget",
+                                    widget: `code:${modelData}`,
+                                    name: modelData.toUpperCase(),
+                                    w: 0.24,
+                                    h: 0.3,
+                                    opts: {
+                                        frame: "glass",
+                                        opacity: -1
+                                    }
+                                })
+                        }
+                    }
+                }
+
+                Flow {
+                    width: parent.width
+                    spacing: 6
+
+                    MiniButton {
+                        width: (parent.width - 18) / 4
+                        label: "NEW"
+                        glyph: "add"
+                        onClicked: CodeWidgets.newWidget()
+                    }
+
+                    MiniButton {
+                        width: (parent.width - 18) / 4
+                        label: "FOR MY AI"
+                        glyph: "content_copy"
+                        onClicked: CodeWidgets.copyForAi("")
+                    }
+
+                    MiniButton {
+                        width: (parent.width - 18) / 4
+                        label: "PASTE CODE"
+                        glyph: "content_paste"
+                        onClicked: CodeWidgets.pasteCode()
+                    }
+
+                    MiniButton {
+                        width: (parent.width - 18) / 4
+                        label: "ASK VELLY"
+                        glyph: "auto_awesome"
+                        visible: Config.velly.enabled
+                        onClicked: Velly.ask("Ich möchte ein neues Code-Widget für meinen Desktop. Frag mich kurz, was es zeigen soll, dann bau es mit widget.api und widget.make.", "text")
+                    }
+                }
+
+                P5Text {
+                    width: parent.width
+                    text: "NEW opens a starter in your editor · FOR MY AI copies the instructions for any AI chat, PASTE CODE brings its answer back · ASK VELLY: she writes it · every widget lands on your desktop and updates when its file is saved"
+                    color: Colours.alpha(Colours.inkDim, 0.75)
+                    font.pixelSize: Appearance.font.size.tiny
+                    wrapMode: Text.WordWrap
+                }
+
                 P5Text {
                     text: "MORE MODULES"
                     color: Colours.alpha(Colours.inkDim, 0.7)

@@ -143,6 +143,9 @@ Item {
 
             anchors.centerIn: parent
             sourceComponent: {
+                // a code widget draws itself, whatever look the others wear
+                if (root.wid.startsWith("code:"))
+                    return k_code;
                 if (root.softened)
                     return ["clock", "weather", "media", "calendar", "greeting"].indexOf(root.wid) >= 0 ? k_soft : k_shaped;
                 if (root.shaped)
@@ -174,6 +177,16 @@ Item {
                     return null;
                 }
             }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════ a code widget
+    //  One you (or an AI) wrote: ~/.config/velvet/widgets/<name>.js
+    Component {
+        id: k_code
+
+        CodeWidget {
+            name: root.wid.slice(5)
         }
     }
 

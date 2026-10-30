@@ -726,6 +726,25 @@ pop-it bubbles on FIDGET, glass on the glass looks, a solid pill elsewhere.
   frame's side as a drawer of the frame's own colour, top to bottom, its ends
   flowing into the frame.
 
+## Code widgets — write your own, or let an AI write them
+
+A desktop widget can be a few lines of JavaScript: one file in
+`~/.config/velvet/widgets/<name>.js` with a `render(ctx, f)` that draws a frame
+on a canvas (`f` holds the size, the time, the shell's colours, the music's
+spectrum and loudness, what is playing, CPU, RAM, battery, the pointer). Save
+the file and the widget on your desktop changes at once; a mistake shows on
+the widget itself. **SUPER+TAB → DESKTOP → YOUR CODE WIDGETS**:
+
+- **NEW** — a starter opens in your editor and sits on the desktop already.
+- **FOR MY AI** — copies the instructions (the whole API and the starter) for
+  any AI chat; add your idea there. **PASTE CODE** brings its answer back as
+  a new widget, straight onto the desktop.
+- **ASK VELLY** — she asks what it should show, writes it herself
+  (`widget.api`, `widget.make`) and puts it on your desktop.
+
+`qs -c velvet ipc call codewidgets api` prints the API; `list` and
+`place <name>` do the rest.
+
 ## The scratchpad (SUPER+O)
 
 An endless sheet to keep things on, in the Dynamic Island. **SUPER+O** opens it
