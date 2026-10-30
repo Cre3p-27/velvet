@@ -19,7 +19,7 @@ Item {
     implicitWidth: root.compact ? compactRow.width : clockRow.width + 64
     implicitHeight: root.compact ? 26 : clockRow.height + 78
 
-    SystemClock {
+    ShellClock {
         id: clock
         precision: root.compact ? SystemClock.Minutes : SystemClock.Seconds
     }

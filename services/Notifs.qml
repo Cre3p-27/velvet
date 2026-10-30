@@ -24,6 +24,23 @@ Singleton {
     property var popups: []
     property var history: []
 
+    // NOTIFICATIONS → IN THE FRAME: how big the frame's tab for the popups is
+    // on each screen right now ({ "<screen>": { w, h } }), as the popups'
+    // window grows it — the frame (ScreenFrame) draws it.
+    property var frameTabs: ({})
+
+    function setFrameTab(screen: string, w: real, h: real): void {
+        const was = root.frameTabs[screen];
+        if (was && Math.abs(was.w - w) < 0.25 && Math.abs(was.h - h) < 0.25)
+            return;
+        const next = Object.assign({}, root.frameTabs);
+        next[screen] = {
+            w: w,
+            h: h
+        };
+        root.frameTabs = next;
+    }
+
     readonly property int unread: root.history.filter(n => !n.seen).length
     readonly property int total: root.history.length
 

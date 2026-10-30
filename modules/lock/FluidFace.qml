@@ -338,20 +338,11 @@ Item {
     // letters you actually typed.
     property bool showPassword: false
 
-    // The profile picture: probe ~/.face once, so a missing picture
-    // never produces a QML warning — the person icon simply stays.
-    property bool faceExists: false
-    readonly property string faceUrl: `file://${Quickshell.env("HOME") ?? ""}/.face`
-
-    FileView {
-        id: faceProbe
-
-        path: surface.faceUrl.replace("file://", "")
-        printErrors: false
-
-        onLoaded: surface.faceExists = true
-        onLoadFailed: surface.faceExists = false
-    }
+    // The profile picture (services/Avatar.qml): a missing picture never
+    // produces a QML warning — the person icon simply stays — and a new one
+    // shows at once.
+    readonly property bool faceExists: Avatar.exists && Avatar.url !== ""
+    readonly property string faceUrl: Avatar.url
 
     // The shape deck: every keystroke plants the next shape of a
     // shuffled pack, so the password never repeats a pattern. The deck
@@ -1094,7 +1085,7 @@ Item {
                     // secondary, its scale-7 headline (224px); in twelve-
                     // hour mode the minutes shrink and AM/PM rides a pill
                     // underneath.
-                    SystemClock {
+                    ShellClock {
                         id: clock
                         precision: SystemClock.Seconds
                     }

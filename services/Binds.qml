@@ -23,6 +23,7 @@ Singleton {
     readonly property string storePath: `${root.homeDir}/.config/velvet/binds.json`
     readonly property string recordScript: `${Qt.resolvedUrl("../hypr/scripts/velvet-record.sh")}`.replace(/^file:\/\//, "")
     readonly property string velvetBin: `${Qt.resolvedUrl("../bin/velvet")}`.replace(/^file:\/\//, "")
+    readonly property string floatScript: `${Qt.resolvedUrl("../scripts/float_toggle.py")}`.replace(/^file:\/\//, "")
 
     property var overrides: ({})   // id → { mods: ["SUPER","SHIFT"], key: "K" }
     property bool ready: false
@@ -41,7 +42,7 @@ Singleton {
         }
     }
 
-    // The twelve ANYWHERE binds. `ipc` is the command every dialect can
+    // The ANYWHERE binds. `ipc` is the command every dialect can
     // run; `globalName` is the quickshell:name the hyprlang dialect binds
     // through the global dispatcher (empty = a plain exec bind).
     readonly property var defs: [
@@ -58,6 +59,10 @@ Singleton {
         { id: "lyrics",        label: "Lyrics",                def: ["SUPER", "SHIFT", "L"],     ipc: "qs -c velvet ipc call lyrics toggle",       globalName: "lyrics" },
         { id: "keys",          label: "This list",             def: ["SUPER", "SHIFT", "K"],     ipc: "qs -c velvet ipc call keys toggle",         globalName: "keys" },
         { id: "velly",         label: "Velly · talk",          def: ["SUPER", "A"],              ipc: "qs -c velvet ipc call velly summon",        globalName: "" },
+        { id: "scratch",       label: "Scratchpad",            def: ["SUPER", "O"],              ipc: "qs -c velvet ipc call scratch toggle",      globalName: "" },
+        // Hyprland's own toggle floated a window at its tiled size (the whole
+        // screen on a desktop of one): this one gives it a floating size
+        { id: "floatToggle",   label: "Float · tile a window",  def: ["SUPER", "V"],              ipc: `python3 "${root.floatScript}"`,             globalName: "" },
         // straight to Hyprland (bin/velvet), so it works while the shell itself hangs
         { id: "screenSafe",    label: "Black screen? 60 Hz",   def: ["SUPER", "CTRL", "ALT", "R"], ipc: `"${root.velvetBin}" display safe`,       globalName: "" }
     ]
@@ -66,7 +71,11 @@ Singleton {
     // learn them at the next UPDATE & REPAIR, so until then the shell adds
     // them itself (and again after every config reload, which forgets them).
     // Only when nothing is bound to the combo yet — never over the user's own.
-    readonly property var lateDefs: ["velly", "screenSafe"]
+    readonly property var lateDefs: ["velly", "screenSafe", "scratch"]
+    // Keys the shell takes over from a plain Hyprland bind that did the same
+    // job less well (SUPER+V: Hyprland's own float toggle in hyprland.lua).
+    // The generated velvet.lua carries them too, so they survive a login.
+    readonly property var ownDefs: ["floatToggle"]
 
     function ensureLate(): void {
         let script = "";
@@ -82,6 +91,19 @@ Singleton {
                 : `hyprctl keyword bind "${root.hyprTokens(c)}, exec, ${d.ipc}"`;
             // bound already (by the user's files, by us, or to something else): leave it
             script += `hyprctl binds -j | python3 -c 'import json,sys; b=json.load(sys.stdin); sys.exit(0 if any(x.get("modmask")==${mask} and str(x.get("key","")).lower()=="${key.toLowerCase()}" for x in b) else 1)' || ${add}\n`;
+        }
+        for (let i = 0; i < root.ownDefs.length; i++) {
+            const d = root.defById(root.ownDefs[i]);
+            if (!d)
+                continue;
+            const c = root.comboFor(d.id);
+            const mask = root.comboMask(c);
+            const key = c[c.length - 1];
+            const take = root.lua
+                ? `hyprctl eval '${`hl.unbind("${root.luaTokens(c)}")`}'; hyprctl eval '${`hl.bind("${root.luaTokens(c)}", hl.dsp.exec_cmd("${root.luaStr(d.ipc)}"), { description = "velvet" })`}'`
+                : `hyprctl keyword unbind "${root.hyprTokens(c)}"; hyprctl keyword bind "${root.hyprTokens(c)}, exec, ${d.ipc}"`;
+            // ours already (the velvet description): leave it
+            script += `hyprctl binds -j | python3 -c 'import json,sys; b=json.load(sys.stdin); sys.exit(0 if any(x.get("modmask")==${mask} and str(x.get("key","")).lower()=="${key.toLowerCase()}" and x.get("description")=="velvet" for x in b) else 1)' || { ${take}; }\n`;
         }
         if (script === "")
             return;
@@ -174,7 +196,7 @@ Singleton {
         let out = "";
         for (let i = 0; i < root.defs.length; i++) {
             const d = root.defs[i];
-            const o = root.overrides[d.id];
+            const o = root.overrides[d.id] ?? (root.ownDefs.indexOf(d.id) >= 0 ? { mods: d.def.slice(0, -1), key: d.def[d.def.length - 1] } : null);
             if (!o)
                 continue;
             out += `unbind = ${root.hyprTokens(d.def)}\n`;
@@ -190,7 +212,7 @@ Singleton {
         let out = "";
         for (let i = 0; i < root.defs.length; i++) {
             const d = root.defs[i];
-            const o = root.overrides[d.id];
+            const o = root.overrides[d.id] ?? (root.ownDefs.indexOf(d.id) >= 0 ? { mods: d.def.slice(0, -1), key: d.def[d.def.length - 1] } : null);
             if (!o)
                 continue;
             out += `hl.unbind("${root.luaTokens(d.def)}")\n`;

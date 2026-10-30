@@ -402,7 +402,7 @@ FocusScope {
                     // the clock, the profile, the password pill. The clock
                     // ticks (it used to freeze at the moment the editor
                     // opened), and twelve-hour mode really counts to twelve.
-                    SystemClock {
+                    ShellClock {
                         id: editorClock
 
                         precision: SystemClock.Minutes

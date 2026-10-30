@@ -385,6 +385,9 @@ JsonAdapter {
         property bool islandMusic: true
         property bool islandWeather: true
         property bool islandSystem: true
+        // the SCRATCHPAD (SUPER+O): an endless sheet for notes, ink and
+        // pictures, as a module of the island (services/Scratch.qml)
+        property bool islandScratch: true
         // SWIPE LIKE A PHONE: the pill's face sticks to the hand, so a swipe
         // to the left brings the next module in from the right. Off: drag
         // towards the module you want, like a cursor along the tabs.
@@ -437,6 +440,10 @@ JsonAdapter {
         // How windows sit on each desktop: { "3": "tiling", "5": "floating" };
         // a desktop not listed is normal (services/WorkspaceModes.qml).
         property var workspaceModes: ({})
+        // How big a window comes up on a FLOATING desktop (and when SUPER+V
+        // floats one), as a share of the screen, in the middle (0 = leave
+        // it to Hyprland: the whole screen).
+        property int floatSize: 60
     }
 
     // ============================================================== LYRICS
@@ -528,6 +535,9 @@ JsonAdapter {
         property bool doNotDisturb: false
         property string position: "top-right"
         property real width: 400
+        // With a SCREEN FRAME on: the popups come out of the frame itself, in
+        // a tab of its colour that grows from the corner (or the edge's middle)
+        property bool inFrame: false
     }
 
     // ============================================================ OSD
@@ -845,6 +855,52 @@ JsonAdapter {
         property string vClockFont: ""
     }
 
+    // ============================================================ SCRATCHPAD
+    // The island's SCRATCHPAD module (modules/scratch/ScratchBoard.qml):
+    // its size in the island, its paper, and the pen it starts with.
+    property JsonObject scratch: JsonObject {
+        property int width: 760
+        property int height: 560
+        // "dots" | "grid" | "lines" | "plain"
+        property string paper: "dots"
+        // "island" (the island's own ground) | "paper" (light) | "ink" (dark)
+        property string tone: "island"
+        property real pen: 3
+        // how much a hand-drawn line is smoothed (0 = as drawn)
+        property real smooth: 0.5
+        // the tool names under the icons in the toolbar
+        property bool labels: false
+        // the toolbar at the "top" or the "bottom" of the pad
+        property string toolbar: "top"
+    }
+
+    // ============================================================ LAN
+    // The wired port (services/Net.qml): its address — "auto" (the router
+    // hands one out) or "manual" (address with /prefix, gateway, DNS) —
+    // kept on the shell's own wired profile, "Velvet LAN".
+    property JsonObject lan: JsonObject {
+        property string method: "auto"
+        property string address: ""
+        property string gateway: ""
+        property string dns: ""
+        property bool autoconnect: true
+    }
+
+    // ============================================================ TIME
+    // The time the shell shows (services/Time.qml): "system" (the computer's
+    // own), "zone" (the time in `zone`, e.g. "America/New_York") or "manual"
+    // (the computer's clock shifted by `manualOffset` minutes — a time set
+    // by hand). The computer's clock itself is never changed.
+    property JsonObject time: JsonObject {
+        property string mode: "system"
+        property string zone: ""
+        property int manualOffset: 0
+        // SET THE TIME's text row: read once, then emptied again
+        property string setTo: ""
+        // the bar's clock says where its time is from when it is not yours
+        property bool showTag: true
+    }
+
     // ============================================================ SFX
     property JsonObject sfx: JsonObject {
         property bool enabled: true
@@ -853,6 +909,12 @@ JsonAdapter {
         // The sound set: velvet (the house clicks) or one made for a
         // vibe — arcade · cyber · terminal · paper · glass · rpg · brutal.
         property string pack: "velvet"
+        // FIDGET FEEL: the shell answers your hand like a toy — levers that
+        // clunk, switches that snap, sliders that tick past their notches,
+        // buttons that squish. `fidget` is the motion and the sounds; the
+        // sounds alone follow `enabled` (and FOCUS MODE) like every click.
+        property bool fidget: true
+        property real fidgetVolume: 0.8
     }
 
     // ============================================================ HOME
@@ -863,6 +925,9 @@ JsonAdapter {
         // Wear the ~/.face photo in the profile card; off is the
         // glyph badge with your initial.
         property bool avatarFace: true
+        // Your picture in the wallpaper's colours, everywhere it is worn
+        // (services/Avatar.qml): "photo" (as it is) | "tint" | "duotone" | "poster"
+        property string faceStyle: "photo"
         // How Super+Tab opens: fullscreen | maximized (the bar stays) | window.
         property string winMode: "fullscreen"
         // A welcome page with the first steps opens with the shell.

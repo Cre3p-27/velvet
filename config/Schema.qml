@@ -260,6 +260,13 @@ Singleton {
                             name: "SYSTEM",
                             help: "CPU, memory, temperature, storage and uptime at a glance.",
                             sub: "CPU · MEMORY · TEMPERATURE · STORAGE"
+                        },
+                        {
+                            kind: "toggle",
+                            key: "map.islandScratch",
+                            name: "SCRATCHPAD",
+                            help: "An endless sheet to keep things on — write, draw, sticky notes, arrows, pasted pictures — on pages of its own, kept for good. SUPER+O opens it from anywhere. Its size, paper and pen are under MODULES → SCRATCHPAD.",
+                            sub: "WRITE · DRAW · NOTES · SUPER+O"
                         }
                     ]
                 },
@@ -395,6 +402,15 @@ Singleton {
                         { value: "black", label: "BLACK" },
                         { value: "accent", label: "ACCENT" }
                     ]
+                },
+                {
+                    kind: "toggle",
+                    key: "notifs.inFrame",
+                    name: "NOTIFICATIONS IN THE FRAME",
+                    aka: "BENACHRICHTIGUNGEN IM RAHMEN · NOTIFICATIONS IN THE FRAME · RAHMEN",
+                    help: "The popups come out of the SCREEN FRAME itself: a tab of the frame's own colour grows from the corner (or the middle of the edge) you chose under POSITION, its sides flowing into the frame in soft curves, and the cards sit in it in the frame's ink — frame, bar, island and notifications as one surface. Needs TASKBAR → SCREEN FRAME.",
+                    sub: "A TAB OF THE FRAME THAT THE CARDS SIT IN",
+                    when: { key: "bar.frame", is: true }
                 },
                 {
                     kind: "toggle",
@@ -1554,6 +1570,105 @@ Singleton {
         },
         {
             kind: "page",
+            name: "SCRATCHPAD",
+            aka: "NOTIZEN · NOTIZBLOCK · ZEICHNEN · MALEN · SKIZZE · WHITEBOARD · SCRATCH PAD",
+            help: "An endless sheet in the Dynamic Island to keep things on: write, draw, sticky notes, lines and arrows, boxes and circles, pasted pictures — on pages, kept for good. SUPER+O opens it from anywhere (change the key in the key menu), or pick its tab in the island at the edge of the screen. F1 in the pad shows every key.",
+            sub: "SUPER+O · ITS SIZE · ITS PAPER · ITS PEN",
+            icon: "edit_note",
+            items: [
+                {
+                    kind: "toggle",
+                    key: "map.islandScratch",
+                    name: "IN THE ISLAND",
+                    help: "The scratchpad as a module of the Dynamic Island (and SUPER+O). Off: no pad — what is on it stays saved.",
+                    sub: "A TAB OF THE ISLAND · SUPER+O"
+                },
+                {
+                    kind: "action",
+                    name: "OPEN IT",
+                    help: "Opens the pad in the island on this screen — what SUPER+O does.",
+                    sub: "WHAT SUPER+O DOES",
+                    fn: "scratchOpen"
+                },
+                {
+                    kind: "slider",
+                    key: "scratch.width",
+                    name: "WIDTH",
+                    help: "How wide the pad opens, in pixels — never wider than the screen leaves round it.",
+                    sub: "HOW WIDE THE PAD OPENS",
+                    min: 620, max: 1800, step: 10, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "slider",
+                    key: "scratch.height",
+                    name: "HEIGHT",
+                    help: "How tall the pad opens, in pixels — never taller than the screen leaves round it.",
+                    sub: "HOW TALL THE PAD OPENS",
+                    min: 340, max: 1300, step: 10, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "choice",
+                    key: "scratch.paper",
+                    name: "PAPER",
+                    help: "The pattern of the sheet: DOTS, a GRID, LINES like a notebook, or PLAIN. It moves and scales with the sheet.",
+                    sub: "DOTS · GRID · LINES · PLAIN",
+                    options: [
+                        { value: "dots", label: "DOTS" },
+                        { value: "grid", label: "GRID" },
+                        { value: "lines", label: "LINES" },
+                        { value: "plain", label: "PLAIN" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "scratch.tone",
+                    name: "SHEET",
+                    help: "The sheet's colour: the ISLAND's own ground (it follows the look), light PAPER, or dark INK. The first pen is always the colour that reads on it.",
+                    sub: "THE ISLAND'S · PAPER · INK",
+                    options: [
+                        { value: "island", label: "ISLAND" },
+                        { value: "paper", label: "PAPER" },
+                        { value: "ink", label: "INK" }
+                    ]
+                },
+                {
+                    kind: "slider",
+                    key: "scratch.pen",
+                    name: "PEN SIZE",
+                    help: "How thick the pen starts (the marker is four times that). [ and ] change it in the pad.",
+                    sub: "[ ] CHANGE IT IN THE PAD",
+                    min: 1, max: 24, step: 1, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "slider",
+                    key: "scratch.smooth",
+                    name: "SMOOTH THE LINES",
+                    help: "How much a hand-drawn line is evened out when you let go. 0 keeps it exactly as drawn.",
+                    sub: "0 = EXACTLY AS DRAWN",
+                    min: 0, max: 1, step: 0.05, fmt: "percent"
+                },
+                {
+                    kind: "choice",
+                    key: "scratch.toolbar",
+                    name: "TOOLBAR",
+                    help: "Where the tools sit: at the TOP of the pad or at the BOTTOM (the pages swap to the other side).",
+                    sub: "TOP · BOTTOM",
+                    options: [
+                        { value: "top", label: "TOP" },
+                        { value: "bottom", label: "BOTTOM" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "scratch.labels",
+                    name: "TOOL NAMES",
+                    help: "Writes each tool's name under its icon.",
+                    sub: "A WORD UNDER EVERY ICON"
+                }
+            ]
+        },
+        {
+            kind: "page",
             name: "NOTIFICATIONS",
             help: "The desktop notifications: the popups that rise in a corner and the history in the notification centre.",
             sub: "POPUPS AND THE CENTRE",
@@ -1594,6 +1709,15 @@ Singleton {
                         { value: "top-centre", label: "TOP MIDDLE" },
                         { value: "bottom-centre", label: "BOTTOM MIDDLE" }
                     ]
+                },
+                {
+                    kind: "toggle",
+                    key: "notifs.inFrame",
+                    name: "IN THE FRAME",
+                    aka: "BENACHRICHTIGUNGEN IM RAHMEN · NOTIFICATIONS IN THE FRAME · RAHMEN",
+                    help: "The popups come out of the SCREEN FRAME itself: a tab of the frame's own colour grows from the corner (or the middle of the edge) you chose under POSITION, its sides flowing into the frame in soft curves, and the cards sit in it in the frame's ink — frame, bar, island and notifications as one surface. Needs TASKBAR → SCREEN FRAME.",
+                    sub: "A TAB OF THE FRAME THAT THE CARDS SIT IN",
+                    when: { key: "bar.frame", is: true }
                 },
                 {
                     kind: "slider",
@@ -3109,6 +3233,113 @@ Singleton {
                     name: "SHOW SECONDS",
                     help: "Shows the seconds as well. The clock then updates every second instead of every minute.",
                     sub: "TICKS EVERY SECOND"
+                }
+            ]
+        },
+        {
+            kind: "page",
+            name: "TIME & TIME ZONE",
+            aka: "ZEIT · ZEITZONE · UHRZEIT ÄNDERN · UHR STELLEN · TIMEZONE · WELTZEIT",
+            help: "The time the whole shell shows — the bar, the lock, the desktop widgets, the island, Velly. YOUR COMPUTER is its own clock; A TIME ZONE shows the time somewhere else (summer time comes and goes by itself); SET BY HAND runs from a time you type, on from there. Your computer's clock itself is never changed.",
+            sub: "YOUR COMPUTER'S · ANOTHER ZONE · SET BY HAND",
+            items: [
+                {
+                    kind: "info",
+                    name: "RIGHT NOW",
+                    help: "What the shell shows, where it is from, and your computer's own time beside it.",
+                    sub: "WHAT THE SHELL SHOWS",
+                    live: "timeStatus"
+                },
+                {
+                    kind: "choice",
+                    key: "time.mode",
+                    name: "TIME FROM",
+                    help: "YOUR COMPUTER: its own clock. A TIME ZONE: the time in the zone below. SET BY HAND: a time you type (or nudge), running on from there.",
+                    sub: "YOUR COMPUTER · A TIME ZONE · SET BY HAND",
+                    options: [
+                        { value: "system", label: "YOUR COMPUTER" },
+                        { value: "zone", label: "A TIME ZONE" },
+                        { value: "manual", label: "SET BY HAND" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "time.zone",
+                    name: "TIME ZONE",
+                    help: "The city whose time the shell shows. Not in the list? Type any zone under ANY OTHER ZONE.",
+                    sub: "WHOSE TIME THE SHELL SHOWS",
+                    when: { key: "time.mode", is: "zone" },
+                    options: [
+                        { value: "America/Los_Angeles", label: "LOS ANGELES" },
+                        { value: "America/Denver", label: "DENVER" },
+                        { value: "America/Chicago", label: "CHICAGO" },
+                        { value: "America/Mexico_City", label: "MEXICO CITY" },
+                        { value: "America/New_York", label: "NEW YORK" },
+                        { value: "America/Sao_Paulo", label: "SÃO PAULO" },
+                        { value: "UTC", label: "UTC" },
+                        { value: "Europe/London", label: "LONDON" },
+                        { value: "Europe/Berlin", label: "BERLIN" },
+                        { value: "Europe/Istanbul", label: "ISTANBUL" },
+                        { value: "Europe/Moscow", label: "MOSCOW" },
+                        { value: "Asia/Dubai", label: "DUBAI" },
+                        { value: "Asia/Kolkata", label: "DELHI · MUMBAI" },
+                        { value: "Asia/Bangkok", label: "BANGKOK" },
+                        { value: "Asia/Shanghai", label: "SHANGHAI" },
+                        { value: "Asia/Seoul", label: "SEOUL" },
+                        { value: "Asia/Tokyo", label: "TOKYO" },
+                        { value: "Australia/Sydney", label: "SYDNEY" },
+                        { value: "Pacific/Auckland", label: "AUCKLAND" },
+                        { value: "Pacific/Honolulu", label: "HONOLULU" }
+                    ]
+                },
+                {
+                    kind: "text",
+                    key: "time.zone",
+                    name: "ANY OTHER ZONE",
+                    aka: "ZEITZONE EINTIPPEN · STADT",
+                    help: "Any of the world's time zones, by its name (Europe/Lisbon) or just the city (lisbon, new york, kathmandu). The shell finds it and writes its full name back.",
+                    sub: "BY NAME OR BY CITY",
+                    when: { key: "time.mode", is: "zone" },
+                    placeholder: "e.g. Lisbon  or  America/Toronto",
+                    examples: ["Lisbon", "Toronto", "Kathmandu", "Cairo", "Singapore", "Europe/Zurich"],
+                    empty: "NONE YET"
+                },
+                {
+                    kind: "text",
+                    key: "time.setTo",
+                    name: "SET THE TIME",
+                    aka: "UHRZEIT EINSTELLEN · UHR STELLEN",
+                    help: "Type the time the shell should show — 7:45, 19:45 or 7:45 pm — and it runs on from there. Your computer's clock is not changed.",
+                    sub: "TYPE IT · IT RUNS ON FROM THERE",
+                    when: { key: "time.mode", is: "manual" },
+                    placeholder: "e.g. 7:45  or  19:45",
+                    examples: ["7:00", "12:00", "18:30", "23:59"],
+                    empty: "TYPE A TIME"
+                },
+                {
+                    kind: "slider",
+                    key: "time.manualOffset",
+                    name: "NUDGE IT",
+                    aka: "VORSTELLEN · ZURÜCKSTELLEN · MINUTEN",
+                    help: "Moves the shown time forward or back by minutes — a clock a few minutes fast, so you are never late.",
+                    sub: "MINUTES AHEAD OR BEHIND YOUR COMPUTER",
+                    when: { key: "time.mode", is: "manual" },
+                    min: -720, max: 720, step: 1, fmt: "int", unit: " min"
+                },
+                {
+                    kind: "toggle",
+                    key: "time.showTag",
+                    name: "SAY WHERE IT IS FROM",
+                    help: "The bar's clock carries a small tag (TOKYO, BY HAND) while it does not show your computer's own time, so you never mistake it.",
+                    sub: "A SMALL TAG BESIDE THE BAR'S CLOCK"
+                },
+                {
+                    kind: "action",
+                    name: "BACK TO YOUR COMPUTER'S TIME",
+                    help: "The shell shows your computer's own clock again.",
+                    sub: "NO ZONE, NOTHING SET BY HAND",
+                    when: { key: "time.mode", not: "system" },
+                    fn: "timeBackToSystem"
                 }
             ]
         },
@@ -4725,6 +4956,20 @@ Singleton {
                 },
                 {
                     kind: "choice",
+                    key: "scene.floatSize",
+                    name: "NEW FLOATING WINDOWS",
+                    aka: "FLOATING SIZE · FENSTERGRÖSSE · SCHWEBENDE FENSTER · KLEIN ÖFFNEN",
+                    help: "How big a window comes up on a FLOATING desktop (DESKTOP → WINDOWS ON DESKTOP n), in the middle of the screen — Hyprland would float it at the size of the whole screen. An app that makes itself big again a moment after it opens (kitty, browsers putting back their last size) is brought back down. SUPER+V floats a window at this size too; dialogs keep their own.",
+                    sub: "IN THE MIDDLE · SMALL · MEDIUM · LARGE · HUGE",
+                    options: [
+                        { value: 45, label: "SMALL" },
+                        { value: 60, label: "MEDIUM" },
+                        { value: 75, label: "LARGE" },
+                        { value: 90, label: "HUGE" }
+                    ]
+                },
+                {
+                    kind: "choice",
                     key: "scene.terminal",
                     name: "TERMINAL",
                     help: "Which terminal the little desktop programs open in. AUTO uses the first one installed.",
@@ -5264,6 +5509,122 @@ Singleton {
                     max: 1,
                     step: 0.05,
                     fmt: "percent"
+                },
+                {
+                    kind: "toggle",
+                    key: "sfx.fidget",
+                    name: "FIDGET FEEL",
+                    aka: "FIDGET TOY · HAPTIK · SPASS · KLICKEN · TACTILE",
+                    help: "The shell answers your hand like a toy: switches snap over with a stretch and a bounce, sliders tick past their notches (louder as they fill, firmer at the ends), every press has a small mechanical click under it, and the WLAN | LAN lever clunks into place — or shakes its head when there is no cable. Off: the plain clicks and the calm motion.",
+                    sub: "SNAPS · TICKS · CLUNKS · BOUNCES"
+                },
+                {
+                    kind: "slider",
+                    key: "sfx.fidgetVolume",
+                    name: "FIDGET LOUDNESS",
+                    help: "How loud the fidget sounds (ticks, the lever, the bounces) are next to the other clicks.",
+                    sub: "THE TICKS AND CLUNKS",
+                    when: { key: "sfx.fidget", is: true },
+                    min: 0.1,
+                    max: 1.5,
+                    step: 0.05,
+                    fmt: "percent"
+                }
+            ]
+        },
+        {
+            kind: "page",
+            name: "NETWORK · LAN",
+            aka: "LAN · KABEL · ETHERNET · NETZWERKKABEL · FESTE IP · STATISCHE IP · DNS · GATEWAY · WIRED",
+            help: "The network cable. The WLAN | LAN lever (QUICK SETTINGS) switches between Wi-Fi and the cable without ever leaving you offline: the new way comes up first, then the old one goes. Here the cable gets its address: AUTOMATIC from the router, or a FIXED one you type. A fixed address lives on the shell's own wired profile (Velvet LAN), made for you — so it changes without an administrator password.",
+            sub: "THE CABLE · ITS SPEED · AUTOMATIC OR A FIXED ADDRESS",
+            icon: "lan",
+            items: [
+                {
+                    kind: "info",
+                    name: "RIGHT NOW",
+                    help: "The cable (is one in, how fast, which address) and what carries your connection.",
+                    sub: "THE CABLE AND THE WI-FI",
+                    live: "lanStatus"
+                },
+                {
+                    kind: "action",
+                    name: "ON THE CABLE",
+                    help: "Connects the cable and lets the Wi-Fi go once the cable is up (its radio stays on, so going back is quick) — what flipping the lever to LAN does.",
+                    sub: "THE LEVER TO LAN",
+                    fn: "lanUse"
+                },
+                {
+                    kind: "action",
+                    name: "BACK TO WI-FI",
+                    help: "Joins a Wi-Fi network you have used before and lets the cable go once it is in — what flipping the lever to WLAN does. With no known network in range the cable stays on.",
+                    sub: "THE LEVER TO WLAN",
+                    fn: "wifiUse"
+                },
+                {
+                    kind: "toggle",
+                    key: "lan.autoconnect",
+                    name: "CONNECT BY ITSELF",
+                    help: "The cable connects as soon as it is plugged in (for the shell's own profile; it takes effect with APPLY).",
+                    sub: "AS SOON AS A CABLE GOES IN"
+                },
+                {
+                    kind: "choice",
+                    key: "lan.method",
+                    name: "ADDRESS",
+                    help: "AUTOMATIC: the router hands the cable an address (DHCP) — right for almost every home. FIXED: the address you type below, for a PC others reach by its address.",
+                    sub: "AUTOMATIC FROM THE ROUTER · OR FIXED",
+                    options: [
+                        { value: "auto", label: "AUTOMATIC" },
+                        { value: "manual", label: "FIXED" }
+                    ]
+                },
+                {
+                    kind: "text",
+                    key: "lan.address",
+                    name: "FIXED ADDRESS",
+                    help: "The address with its network size, like 192.168.178.50/24 (without /24, /24 is assumed). Pick one outside your router's DHCP range.",
+                    sub: "LIKE 192.168.178.50/24",
+                    when: { key: "lan.method", is: "manual" },
+                    placeholder: "e.g. 192.168.178.50/24",
+                    examples: ["192.168.178.50/24", "192.168.1.50/24", "10.0.0.50/24"],
+                    empty: "NONE YET"
+                },
+                {
+                    kind: "text",
+                    key: "lan.gateway",
+                    name: "GATEWAY",
+                    help: "Your router's address, like 192.168.178.1.",
+                    sub: "YOUR ROUTER",
+                    when: { key: "lan.method", is: "manual" },
+                    placeholder: "e.g. 192.168.178.1",
+                    examples: ["192.168.178.1", "192.168.1.1", "10.0.0.1"],
+                    empty: "NONE YET"
+                },
+                {
+                    kind: "text",
+                    key: "lan.dns",
+                    name: "DNS",
+                    aka: "NAMESERVER",
+                    help: "Which name servers to ask, space or comma between them (1.1.1.1 9.9.9.9). Empty: the router's.",
+                    sub: "EMPTY: THE ROUTER'S",
+                    placeholder: "e.g. 1.1.1.1 9.9.9.9",
+                    examples: ["1.1.1.1 1.0.0.1", "9.9.9.9 149.112.112.112", "8.8.8.8 8.8.4.4"],
+                    empty: "THE ROUTER'S"
+                },
+                {
+                    kind: "action",
+                    name: "APPLY",
+                    help: "Puts the address (and the DNS) on the cable: the shell's own wired profile is made the first time, then the cable reconnects with it.",
+                    sub: "THE CABLE RECONNECTS WITH IT",
+                    fn: "lanApply"
+                },
+                {
+                    kind: "action",
+                    name: "BACK TO THE SYSTEM'S PROFILE",
+                    help: "Switches the shell's wired profile off and lets the system's own (automatic) profile run the cable again.",
+                    sub: "AUTOMATIC, AS IT CAME",
+                    fn: "lanSystem"
                 }
             ]
         },
@@ -7383,6 +7744,20 @@ Singleton {
             help: "A coverflow of your pictures — pick one and it becomes your ~/.face photo.",
             sub: "A COVERFLOW OVER YOUR PICTURES — PICK ONE AND IT BECOMES YOUR FACE",
             fn: "openFacePicker"
+        },
+        {
+            kind: "choice",
+            key: "home.faceStyle",
+            name: "MATCH THE WALLPAPER",
+            aka: "PROFILBILD WALLPAPER FARBEN · AVATAR FARBE · PROFILBILD ANPASSEN",
+            help: "Your picture in the wallpaper's colours — on the lock, in HOME and on the desktop widgets, and again with every new wallpaper. PHOTO wears it as it is; TINT lays the wallpaper's colours over it; DUOTONE paints it in them, from deep to light; POSTER cuts it into four flat tones of them.",
+            sub: "PHOTO · TINT · DUOTONE · POSTER — FOLLOWS EVERY WALLPAPER",
+            options: [
+                { value: "photo", label: "PHOTO" },
+                { value: "tint", label: "TINT" },
+                { value: "duotone", label: "DUOTONE" },
+                { value: "poster", label: "POSTER" }
+            ]
         },
         {
             kind: "choice",

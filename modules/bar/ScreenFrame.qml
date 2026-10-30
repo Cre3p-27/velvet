@@ -66,5 +66,9 @@ PanelWindow {
         reveal: root.reveal
         bumpEdge: root.islandHome ? Appearance.islandEdge : ""
         bumpAt: root.islandAt
+        // the notifications' tab (NOTIFICATIONS → IN THE FRAME)
+        tabPos: Config.notifs.inFrame ? Config.notifs.position : ""
+        tabW: Notifs.frameTabs[root.modelData?.name ?? ""]?.w ?? 0
+        tabH: Notifs.frameTabs[root.modelData?.name ?? ""]?.h ?? 0
     }
 }

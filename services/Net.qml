@@ -5,6 +5,7 @@
 //  as aliases so nothing that read them has to change.
 pragma Singleton
 
+import qs.config
 import Quickshell
 import Quickshell.Io
 import QtQuick
@@ -49,6 +50,43 @@ Singleton {
 
     readonly property string label: connected ? (type === "ethernet" ? "Wired" : ssid) : "Offline"
 
+    // ---------------------------------------------------------------- LAN
+    // The first wired port: its state, whether a cable is in (the carrier),
+    // the speed it agreed on (Mb/s, -1 unknown), the address it got and the
+    // profile it runs. NetworkManager's states: 100 connected, 40–90 on its
+    // way, 30 disconnected, 20 unavailable (no cable), 10 unmanaged.
+    property string ethDevice: ""
+    property int ethState: 0
+    property bool ethCable: false
+    property int ethSpeed: -1
+    property string ethIp: ""
+    property string ethConnection: ""
+    readonly property bool ethConnected: root.ethState === 100
+    readonly property bool ethConnecting: root.ethState >= 40 && root.ethState < 100
+    readonly property bool hasLan: root.ethDevice !== ""
+    // the lever's side (WLAN | LAN): on the cable while it carries the
+    // connection, or while a switch to it is on its way
+    readonly property bool onLan: root.lanSwitch !== "" ? root.lanSwitch === "lan" : root.ethConnected
+    property string lanSwitch: ""       // "lan" | "wifi" while the lever's switch runs
+    property string wifiDevice: ""
+    // the shell's own wired profile (LAN → ADDRESS): yours, so its address can
+    // change without an administrator password
+    readonly property string ownProfile: "Velvet LAN"
+    property bool ownProfileExists: false
+
+    readonly property string lanLine: {
+        if (!root.hasLan)
+            return "NO NETWORK PORT FOUND";
+        if (!root.ethCable)
+            return "NO CABLE IN";
+        if (root.ethConnecting)
+            return "CONNECTING…";
+        if (!root.ethConnected)
+            return root.ethSpeed > 0 ? `CABLE IN · ${root.speedText} · NOT CONNECTED` : "CABLE IN · NOT CONNECTED";
+        return `CONNECTED · ${root.speedText}${root.ethIp !== "" ? " · " + root.ethIp.split("/")[0] : ""}`;
+    }
+    readonly property string speedText: root.ethSpeed >= 1000 ? `${root.ethSpeed / 1000} GBIT/S` : (root.ethSpeed > 0 ? `${root.ethSpeed} MBIT/S` : "SPEED UNKNOWN")
+
     // ---------------------------------------------------------------- bluetooth
     // The Bluetooth service owns all of this now. These names stay so the
     // bar's status cluster and the quick panel never had to move.
@@ -59,6 +97,142 @@ Singleton {
 
     function toggleBluetooth(): void {
         Bluetooth.togglePower();
+    }
+
+    // ---------------------------------------------------------------- the lever
+    //  WLAN ⇄ LAN. To the cable: connect it, and only once it is up let the
+    //  Wi-Fi go (its radio stays on, so the way back is quick). Back to
+    //  WLAN: the Wi-Fi joins a network it knows, and only then the cable is
+    //  let go — a switch never leaves you offline. Returns false when the
+    //  cable side cannot be had (no cable): the lever springs back.
+    function useLan(on: bool): bool {
+        if (on && (!root.hasLan || !root.ethCable)) {
+            Toast.show(root.hasLan ? `NO CABLE IN ${root.ethDevice.toUpperCase()} — PLUG ONE IN AND FLIP AGAIN` : "THIS PC HAS NO NETWORK PORT", "warn", 3600);
+            return false;
+        }
+        if (on === root.onLan && root.lanSwitch === "")
+            return true;
+        root.lanSwitch = on ? "lan" : "wifi";
+        const q = t => `'${`${t ?? ""}`.replace(/'/g, "'\\''")}'`;
+        const eth = q(root.ethDevice);
+        const own = q(root.ownProfile);
+        const script = on ? `
+            wifi=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}')
+            if nmcli -t -f NAME connection show | grep -qxF ${own}; then out=$(nmcli connection up ${own} ifname ${eth} 2>&1); else out=$(nmcli device connect ${eth} 2>&1); fi
+            if [ $? -ne 0 ]; then echo "ERR:$(echo "$out" | tail -1)"; exit 0; fi
+            [ -n "$wifi" ] && nmcli device disconnect "$wifi" >/dev/null 2>&1
+            echo "OK:lan"
+        ` : `
+            wifi=$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2=="wifi"{print $1; exit}')
+            [ -n "$wifi" ] || { echo "ERR:NO WI-FI CARD"; exit 0; }
+            nmcli radio wifi on >/dev/null 2>&1
+            out=$(nmcli device connect "$wifi" 2>&1)
+            if [ $? -ne 0 ]; then echo "ERR:NOWIFI:$(echo "$out" | tail -1)"; exit 0; fi
+            nmcli device disconnect ${eth} >/dev/null 2>&1
+            echo "OK:wifi"
+        `;
+        lever.command = ["bash", "-c", script];
+        lever.running = false;
+        lever.running = true;
+        return true;
+    }
+
+    function connectLan(): void {
+        root.useLan(true);
+    }
+
+    function disconnectLan(): void {
+        if (!root.hasLan)
+            return;
+        root.ethState = 30;
+        runCmd(`nmcli device disconnect '${root.ethDevice}'`);
+        refreshLater.restart();
+    }
+
+    Process {
+        id: lever
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const out = text.trim().split("\n").pop() ?? "";
+                const toLan = root.lanSwitch === "lan";
+                root.lanSwitch = "";
+                if (out.startsWith("OK:")) {
+                    Toast.ok(toLan ? `ON THE CABLE · ${root.speedText}` : `ON WI-FI${root.ssid !== "" ? " · " + root.ssid : ""}`);
+                } else if (out.startsWith("ERR:NOWIFI")) {
+                    Toast.show("NO WI-FI YOU HAVE USED BEFORE IS IN RANGE — PICK ONE BELOW; THE CABLE STAYS ON", "warn", 4400);
+                } else {
+                    Toast.show(`${toLan ? "THE CABLE" : "WI-FI"} DID NOT CONNECT: ${out.replace(/^ERR:/, "").toUpperCase().slice(0, 80)}`, "warn", 4400);
+                }
+                poll.running = false;
+                poll.running = true;
+                refreshLater2.restart();
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- LAN → ADDRESS
+    //  A fixed address (or back to automatic) on the shell's own wired
+    //  profile, made the first time and yours (connection.permissions), so
+    //  NetworkManager lets you change it without an administrator password.
+    //  It takes over from the system's profile on this port.
+    function applyLan(): void {
+        if (!root.hasLan) {
+            Toast.show("THIS PC HAS NO NETWORK PORT", "warn", 3000);
+            return;
+        }
+        const manual = Config.lan.method === "manual";
+        const addr = `${Config.lan.address ?? ""}`.trim();
+        const gw = `${Config.lan.gateway ?? ""}`.trim();
+        const dns = `${Config.lan.dns ?? ""}`.trim().replace(/[,;]+/g, " ").replace(/\s+/g, " ");
+        if (manual && !/^\d{1,3}(\.\d{1,3}){3}(\/\d{1,2})?$/.test(addr)) {
+            Toast.show("ADDRESS FIRST — LIKE 192.168.178.50/24", "warn", 3600);
+            return;
+        }
+        const withPrefix = addr.indexOf("/") >= 0 ? addr : `${addr}/24`;
+        const q = t => `'${`${t ?? ""}`.replace(/'/g, "'\\''")}'`;
+        const own = q(root.ownProfile);
+        const eth = q(root.ethDevice);
+        const ip = manual ? `ipv4.method manual ipv4.addresses ${q(withPrefix)} ipv4.gateway ${q(gw)}` : `ipv4.method auto ipv4.addresses '' ipv4.gateway ''`;
+        const script = `
+            if ! nmcli -t -f NAME connection show | grep -qxF ${own}; then
+              out=$(nmcli connection add type ethernet ifname ${eth} con-name ${own} connection.permissions "user:$USER" connection.autoconnect ${Config.lan.autoconnect ? "yes" : "no"} connection.autoconnect-priority 10 2>&1) || { echo "ERR:$(echo "$out" | tail -1)"; exit 0; }
+            fi
+            out=$(nmcli connection modify ${own} connection.autoconnect ${Config.lan.autoconnect ? "yes" : "no"} ${ip} ipv4.dns ${q(dns)} ipv4.ignore-auto-dns ${dns !== "" ? "yes" : "no"} 2>&1) || { echo "ERR:$(echo "$out" | tail -1)"; exit 0; }
+            if [ "$(cat /sys/class/net/${root.ethDevice}/carrier 2>/dev/null)" = "1" ]; then
+              out=$(nmcli connection up ${own} ifname ${eth} 2>&1) || { echo "ERR:$(echo "$out" | tail -1)"; exit 0; }
+            fi
+            echo OK
+        `;
+        lanApply.command = ["bash", "-c", script];
+        lanApply.running = false;
+        lanApply.running = true;
+        Toast.show("SETTING UP THE CABLE…", "info", 2000);
+    }
+
+    // Back to the system's own profile (automatic, as it came): the shell's
+    // profile is switched off, not deleted.
+    function lanBackToSystem(): void {
+        const own = `'${root.ownProfile}'`;
+        lanApply.command = ["bash", "-c", `nmcli connection modify ${own} connection.autoconnect no >/dev/null 2>&1; nmcli connection down ${own} >/dev/null 2>&1; nmcli device connect '${root.ethDevice}' >/dev/null 2>&1; echo OK`];
+        lanApply.running = false;
+        lanApply.running = true;
+    }
+
+    Process {
+        id: lanApply
+
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const out = text.trim().split("\n").pop() ?? "";
+                if (out === "OK")
+                    Toast.ok(root.ethCable ? "THE CABLE IS SET UP" : "SAVED — IT CONNECTS WHEN A CABLE GOES IN");
+                else
+                    Toast.show(`THE CABLE COULD NOT BE SET UP: ${out.replace(/^ERR:/, "").toUpperCase().slice(0, 90)}`, "warn", 5200);
+                poll.running = false;
+                poll.running = true;
+            }
+        }
     }
 
     // ---------------------------------------------------------------- actions
@@ -270,6 +444,16 @@ Singleton {
             nmcli -t -f WIFI radio 2>/dev/null || echo 'enabled'
             echo '---'
             nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY,FREQ device wifi list --rescan no 2>/dev/null | head -40
+            echo '---'
+            d=$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="ethernet"{print $1; exit}')
+            if [ -n "$d" ]; then
+              echo "dev=$d"
+              echo "carrier=$(cat /sys/class/net/$d/carrier 2>/dev/null || echo 0)"
+              echo "speed=$(cat /sys/class/net/$d/speed 2>/dev/null || echo -1)"
+              nmcli -t -f GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS device show "$d" 2>/dev/null | head -3
+            fi
+            echo "wifidev=$(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2=="wifi"{print $1; exit}')"
+            nmcli -t -f NAME connection show 2>/dev/null | grep -qxF 'Velvet LAN' && echo "own=1"
         `]
 
         stdout: StdioCollector {
@@ -339,6 +523,38 @@ Singleton {
                 }
                 nets.sort((a, b) => (b.active - a.active) || (b.signal - a.signal));
                 root.networks = nets;
+
+                // --- the wired port
+                let edev = "", car = false, spd = -1, st = 0, con = "", ip = "", wdev = "", own = false;
+                const wl = (blocks[4] ?? "").split("\n");
+                for (let i = 0; i < wl.length; i++) {
+                    const l = wl[i].trim();
+                    if (l.startsWith("dev="))
+                        edev = l.slice(4);
+                    else if (l.startsWith("carrier="))
+                        car = l.slice(8) === "1";
+                    else if (l.startsWith("speed="))
+                        spd = parseInt(l.slice(6));
+                    else if (l.startsWith("GENERAL.STATE:"))
+                        st = parseInt(l.slice(14)) || 0;
+                    else if (l.startsWith("GENERAL.CONNECTION:"))
+                        con = l.slice(19);
+                    else if (l.startsWith("IP4.ADDRESS"))
+                        ip = l.split(":").slice(1).join(":");
+                    else if (l.startsWith("wifidev="))
+                        wdev = l.slice(8);
+                    else if (l === "own=1")
+                        own = true;
+                }
+                root.ethDevice = edev;
+                root.ethCable = car;
+                root.ethSpeed = isNaN(spd) ? -1 : spd;
+                if (root.lanSwitch === "")
+                    root.ethState = st;
+                root.ethConnection = con;
+                root.ethIp = ip;
+                root.wifiDevice = wdev;
+                root.ownProfileExists = own;
             }
         }
     }

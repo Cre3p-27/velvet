@@ -32,8 +32,20 @@ Item {
     readonly property real clamped: Math.max(0, Math.min(1, _drag >= 0 ? _drag : value))
     readonly property real fillWidth: Math.max(root.trackHeight * 0.6, root.width * clamped)
 
+    // FIDGET FEEL: a tick at every twentieth of the way, louder as it fills,
+    // and a firmer one at either end — a dial with notches under the hand
+    property int _notch: -1
+
+    function _detent(v: real): void {
+        const n = Math.round(v * 20);
+        if (root._notch >= 0 && n !== root._notch)
+            Sfx.tick(n === 0 || n === 20 ? 0.9 : 0.25 + v * 0.45);
+        root._notch = n;
+    }
+
     function _apply(x: real, commit: bool): void {
         const v = Math.max(0, Math.min(1, x / Math.max(1, root.width)));
+        root._detent(v);
         root._drag = v;
         root.moved(v);
         if (commit) {
@@ -44,6 +56,8 @@ Item {
 
     function nudge(delta: real): void {
         const v = Math.max(0, Math.min(1, root.clamped + delta));
+        root._notch = -1;
+        Sfx.tick(v <= 0 || v >= 1 ? 0.9 : 0.25 + v * 0.45);
         root._drag = v;
         root.moved(v);
         root.released(v);
@@ -120,7 +134,10 @@ Item {
         preventStealing: true
         cursorShape: Qt.PointingHandCursor
 
-        onPressed: event => root._apply(event.x - 6, false)
+        onPressed: event => {
+            root._notch = -1;
+            root._apply(event.x - 6, false);
+        }
         onPositionChanged: event => {
             if (pressed)
                 root._apply(event.x - 6, false);

@@ -198,7 +198,7 @@ Item {
                 onTriggered: clockSurf.peek = false
             }
 
-            SystemClock {
+            ShellClock {
                 id: clock
                 precision: SystemClock.Minutes
             }
@@ -1202,7 +1202,7 @@ Item {
                             id: userFace
 
                             anchors.fill: parent
-                            source: `file://${Quickshell.env("HOME") ?? ""}/.face`
+                            source: Avatar.url
                             sourceSize.width: 140
                             sourceSize.height: 140
                             fillMode: Image.PreserveAspectCrop
@@ -1282,7 +1282,7 @@ Item {
                     id: avatarFace
 
                     anchors.fill: parent
-                    source: `file://${Quickshell.env("HOME") ?? ""}/.face`
+                    source: Avatar.url
                     sourceSize.width: 208
                     sourceSize.height: 208
                     fillMode: Image.PreserveAspectCrop
@@ -1311,7 +1311,7 @@ Item {
 
             onActivated: WidgetActions.run("greeting")
 
-            SystemClock {
+            ShellClock {
                 id: gclock
                 precision: SystemClock.Minutes
             }
@@ -1388,7 +1388,7 @@ Item {
                 onTriggered: calSurf.peek = false
             }
 
-            SystemClock {
+            ShellClock {
                 id: cal
                 precision: SystemClock.Minutes
             }

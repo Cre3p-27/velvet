@@ -30,7 +30,12 @@ Item {
     property bool joined: false
     readonly property int fw: Math.max(0, Config.bar.frameWidth)
     readonly property int rr: Math.max(0, Config.bar.frameRounding)
-    readonly property color colour: Colours.alpha(Colours.frameBase, Math.max(0.2, Math.min(1, Config.bar.frameOpacity)))
+    readonly property color colour: Colours.alpha(Colours.frameBase, root.op)
+    // Inside its own group the frame is drawn solid and the group as a whole
+    // takes FRAME OPACITY: pieces that overlap (the island's home, the
+    // notifications' tab) never show a darker seam.
+    readonly property real op: Math.max(0.2, Math.min(1, Config.bar.frameOpacity))
+    readonly property color solid: Colours.alpha(Colours.frameBase, 1)
 
     readonly property real band: root.strip > 0 ? Math.max(0, root.fw + (root.strip - root.fw) * root.reveal) : 0
 
@@ -73,6 +78,151 @@ Item {
         if (part === "line")
             return `M ${P(a, 0)}` + curve;
         return `M ${P(a, -1.5)} L ${P(a, 0)}` + curve + ` L ${P(b, -1.5)} Z`;
+    }
+
+    // ── NOTIFICATIONS → IN THE FRAME: a tab of the frame itself that the
+    //  popups sit in — grown out of a corner of the desktop, or out of the
+    //  middle of its top or bottom edge — whose sides flare into the frame in
+    //  concave curves. It reaches into the frame's band, so frame and tab
+    //  meet without an edge of their own. `tabPos` "" = none; "top-right" …
+    //  "bottom-centre" as NOTIFICATIONS → POSITION says.
+    property string tabPos: ""
+    property real tabW: 0
+    property real tabH: 0
+    readonly property bool tabOn: root.tabPos !== "" && root.tabH > 0.5 && root.tabW > 1
+
+    // the cubic that draws a quarter circle
+    readonly property real kq: 0.5523
+
+    function f2(n: real): string {
+        return n.toFixed(2);
+    }
+
+    // The desktop's window: what FRAME OUTLINE strokes.
+    function holePath(): string {
+        const r = Math.max(0, Math.min(root.rr, root.iw / 2, root.ih / 2));
+        const k = root.kq;
+        const L = root.ix, T = root.iy, R = root.ix + root.iw, B = root.iy + root.ih;
+        const P = (x, y) => `${root.f2(x)},${root.f2(y)}`;
+        let p = `M ${P(L + r, T)} C ${P(L + r - k * r, T)} ${P(L, T + r - k * r)} ${P(L, T + r)}`;
+        p += ` L ${P(L, B - r)} C ${P(L, B - r + k * r)} ${P(L + r - k * r, B)} ${P(L + r, B)}`;
+        p += ` L ${P(R - r, B)} C ${P(R - r + k * r, B)} ${P(R, B - r + k * r)} ${P(R, B - r)}`;
+        p += ` L ${P(R, T + r)} C ${P(R, T + r - k * r)} ${P(R - r + k * r, T)} ${P(R - r, T)} Z`;
+        return p;
+    }
+
+    // The tab, built in "tab space" — u along the edge away from the corner,
+    // v into the desktop — and written backwards when the mapping mirrors it
+    // once, so it always runs clockwise on the screen.
+    function tabPath(): string {
+        if (!root.tabOn)
+            return "";
+        const pos = root.tabPos;
+        const top = !pos.startsWith("bottom");
+        const centre = pos.endsWith("centre");
+        const right = pos.endsWith("right");
+        const L = root.ix, T = root.iy, R = root.ix + root.iw, B = root.iy + root.ih;
+        const th = Math.min(root.tabH, root.ih - 2);
+        const tw = Math.min(root.tabW, root.iw - 2);
+        const k = root.kq;
+        // the convex corners inside, and the concave flares into the frame
+        const c = Math.max(0, Math.min(Math.max(8, root.rr), th / 2, tw / 2));
+        const f = Math.max(0, Math.min(Math.max(10, root.rr), th / 2, centre ? 40 : th));
+        const e = Math.max(root.inset("top"), root.inset("bottom"), root.inset("left"), root.inset("right")) + 2;
+        const sy = top ? 1 : -1;
+        const Ay = top ? T : B;
+        // u, v → the screen
+        let X;
+        let sx;
+        if (centre) {
+            const cx = L + root.iw / 2;
+            sx = 1;
+            X = u => cx + u;
+        } else {
+            sx = right ? 1 : -1;
+            const Ax = right ? R : L;
+            X = u => Ax - sx * u;
+        }
+        const Q = (u, v) => [X(u), Ay + sy * v];
+        // the segments: [start, then {c1, c2, p} or {p}]
+        let pts;
+        if (centre) {
+            const a = -tw / 2, b = tw / 2;
+            pts = [Q(a - f, -e), {
+                    p: Q(b + f, -e)
+                }, {
+                    p: Q(b + f, 0)
+                }, {
+                    c1: Q(b + f - k * f, 0),
+                    c2: Q(b, f - k * f),
+                    p: Q(b, f)
+                }, {
+                    p: Q(b, th - c)
+                }, {
+                    c1: Q(b, th - c + k * c),
+                    c2: Q(b - c + k * c, th),
+                    p: Q(b - c, th)
+                }, {
+                    p: Q(a + c, th)
+                }, {
+                    c1: Q(a + c - k * c, th),
+                    c2: Q(a, th - c + k * c),
+                    p: Q(a, th - c)
+                }, {
+                    p: Q(a, f)
+                }, {
+                    c1: Q(a, f - k * f),
+                    c2: Q(a - f + k * f, 0),
+                    p: Q(a - f, 0)
+                }];
+        } else {
+            pts = [Q(tw + f, -e), {
+                    p: Q(-e, -e)
+                }, {
+                    p: Q(-e, th + f)
+                }, {
+                    p: Q(0, th + f)
+                }, {
+                    c1: Q(0, th + f - k * f),
+                    c2: Q(f - k * f, th),
+                    p: Q(f, th)
+                }, {
+                    p: Q(tw - c, th)
+                }, {
+                    c1: Q(tw - c + k * c, th),
+                    c2: Q(tw, th - c + k * c),
+                    p: Q(tw, th - c)
+                }, {
+                    p: Q(tw, f)
+                }, {
+                    c1: Q(tw, f - k * f),
+                    c2: Q(tw + f - k * f, 0),
+                    p: Q(tw + f, 0)
+                }];
+        }
+        // one mirror turns the path round: write it backwards
+        if (sx * sy < 0) {
+            const rev = [pts[pts.length - 1].p];
+            for (let i = pts.length - 1; i >= 1; i--) {
+                const seg = pts[i];
+                const to = i - 1 === 0 ? pts[0] : pts[i - 1].p;
+                rev.push(seg.c1 ? {
+                    c1: seg.c2,
+                    c2: seg.c1,
+                    p: to
+                } : {
+                    p: to
+                });
+            }
+            pts = rev;
+        }
+        const P = q => `${root.f2(q[0])},${root.f2(q[1])}`;
+        let out = `M ${P(pts[0])}`;
+        for (let i = 1; i < pts.length; i++) {
+            const seg = pts[i];
+            out += seg.c1 ? ` C ${P(seg.c1)} ${P(seg.c2)} ${P(seg.p)}` : ` L ${P(seg.p)}`;
+        }
+        return out + " Z";
     }
 
     function inset(side: string): real {
@@ -119,7 +269,8 @@ Item {
             // FRAME SHADOW: the frame casts a soft shadow inwards, onto the desktop.
             Item {
                 anchors.fill: parent
-                layer.enabled: Config.bar.frameShadow
+                opacity: root.op
+                layer.enabled: Config.bar.frameShadow || root.op < 0.999
                 layer.effect: MultiEffect {
                     shadowEnabled: true
                     shadowColor: Qt.rgba(0, 0, 0, 0.55)
@@ -136,7 +287,7 @@ Item {
                     preferredRendererType: Shape.CurveRenderer
 
                     ShapePath {
-                        fillColor: root.colour
+                        fillColor: root.solid
                         strokeColor: "transparent"
                         strokeWidth: 0
 
@@ -146,12 +297,32 @@ Item {
                     }
                 }
 
+                // FRAME OUTLINE: a hairline of accent round the desktop —
+                // and round the notifications' tab. Drawn twice as wide
+                // UNDER the frame, which covers its outer half and every
+                // stretch the tab has grown over.
+                Shape {
+                    anchors.fill: parent
+                    visible: Config.bar.frameOutline
+                    preferredRendererType: Shape.CurveRenderer
+
+                    ShapePath {
+                        fillColor: "transparent"
+                        strokeColor: Colours.alpha(Colours.accent, 0.5)
+                        strokeWidth: 3
+
+                        PathSvg {
+                            path: root.holePath() + " " + root.tabPath()
+                        }
+                    }
+                }
+
                 Shape {
                     anchors.fill: parent
                     preferredRendererType: Shape.CurveRenderer
 
                     ShapePath {
-                        fillColor: root.colour
+                        fillColor: root.solid
                         strokeColor: "transparent"
                         strokeWidth: 0
                         fillRule: ShapePath.OddEvenFill
@@ -170,26 +341,16 @@ Item {
                             radius: root.rr
                         }
                     }
-                }
-            }
 
-            // FRAME OUTLINE: a hairline of accent round the desktop.
-            Shape {
-                anchors.fill: parent
-                visible: Config.bar.frameOutline
-                preferredRendererType: Shape.CurveRenderer
+                    // the notifications' tab
+                    ShapePath {
+                        fillColor: root.solid
+                        strokeColor: "transparent"
+                        strokeWidth: 0
 
-                ShapePath {
-                    fillColor: "transparent"
-                    strokeColor: Colours.alpha(Colours.accent, 0.5)
-                    strokeWidth: 1.5
-
-                    PathRectangle {
-                        x: root.ix
-                        y: root.iy
-                        width: root.iw
-                        height: root.ih
-                        radius: root.rr
+                        PathSvg {
+                            path: root.tabPath()
+                        }
                     }
                 }
             }

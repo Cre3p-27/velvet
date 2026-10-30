@@ -32,7 +32,7 @@ FocusScope {
 
 
     // The strip's date — refreshed in minutes, not seconds.
-    property var now: new Date()
+    property var now: Time.now
     readonly property string dateLine: Qt.formatDate(root.now, "ddd d MMM").toUpperCase()
 
     Timer {
@@ -40,7 +40,7 @@ FocusScope {
         interval: 5000
         repeat: true
         triggeredOnStart: true
-        onTriggered: root.now = new Date()
+        onTriggered: root.now = Time.now
     }
 
     // ---------------------------------------------------------- keyboard model
@@ -171,12 +171,15 @@ FocusScope {
         return out;
     }
 
+    // the network lever is the first stop of the right column (when there is a cable port)
+    readonly property int netKeys: Net.hasLan ? 1 : 0
+
     function colMax(): int {
         if (root.col === 0)
             return root.col0Visible().length;
         if (root.col === 1)
             return 2 + Bluetooth.devices.length;
-        return 2 + Net.networks.length + (root.outputs.length > 0 ? root.outputs.length : 0);
+        return root.netKeys + 2 + Net.networks.length + (root.outputs.length > 0 ? root.outputs.length : 0);
     }
 
     function moveRow(d: int): void {
@@ -233,16 +236,21 @@ FocusScope {
             }
             return;
         }
-        if (root.sel === 0) {
+        if (root.netKeys > 0 && root.sel === 0) {
+            netLever.throwTo(!netLever.wantRight);
+            return;
+        }
+        const k = root.sel - root.netKeys;
+        if (k === 0) {
             Net.toggleWifi();
-        } else if (root.sel === 1) {
+        } else if (k === 1) {
             Net.refreshNetworks();
-        } else if (root.sel < 2 + Net.networks.length) {
-            const n = Net.networks[root.sel - 2];
+        } else if (k < 2 + Net.networks.length) {
+            const n = Net.networks[k - 2];
             if (n)
                 root.requestConnect(n);
         } else {
-            const out = root.outputs[root.sel - 2 - Net.networks.length];
+            const out = root.outputs[k - 2 - Net.networks.length];
             if (out)
                 root.pickOutput(out);
         }
@@ -319,7 +327,7 @@ FocusScope {
         }
         const rowH = root.col === 1 ? 54 : 44;
         const fl = root.col === 1 ? devList : netList;
-        const fixed = root.col === 1 ? [btPower, btScan] : [wifiRow, wifiRefresh];
+        const fixed = root.col === 1 ? [btPower, btScan] : (root.netKeys > 0 ? [netLever, wifiRow, wifiRefresh] : [wifiRow, wifiRefresh]);
         if (root.sel < fixed.length) {
             const it = fixed[root.sel];
             const p = it.mapToItem(root, 0, 0);
@@ -332,8 +340,8 @@ FocusScope {
         }
         // The SOUND OUT list lives in its own scroller below the networks;
         // its rows are computed from its own geometry.
-        if (root.col === 2 && root.sel >= 2 + Net.networks.length) {
-            const k = root.sel - 2 - Net.networks.length;
+        if (root.col === 2 && root.sel >= fixed.length + Net.networks.length) {
+            const k = root.sel - fixed.length - Net.networks.length;
             const y2 = k * 50;
             ring.x = outList.x - 5;
             ring.y = outList.y + y2 - outList.contentY - 2;
@@ -1797,6 +1805,9 @@ FocusScope {
     Item {
         id: rightCol
 
+        // the network lever (WLAN | LAN) and the cable's line above the Wi-Fi
+        readonly property real netH: Net.hasLan ? 78 : 0
+
         x: root.lw + root.gap + root.mw + root.gap
         y: root.topH
         width: root.rw
@@ -1820,7 +1831,65 @@ FocusScope {
             }
         }
 
+        // ── WLAN | LAN: the lever, and what the cable is doing
+        Item {
+            id: netTop
+
+            visible: Net.hasLan
+            width: parent.width
+            height: rightCol.netH
+
+            P5Text {
+                y: 2
+                display: true
+                text: "NETWORK"
+                color: Colours.ink
+                font.pixelSize: Appearance.font.size.large
+                tracking: 2
+            }
+
+            P5Text {
+                y: 28
+                width: parent.width - netLever.width - 8
+                text: `LAN · ${Net.lanLine}`
+                color: Net.ethConnected ? Colours.success : (Net.ethCable ? Colours.inkDim : Colours.alpha(Colours.inkDim, 0.7))
+                font.pixelSize: Appearance.font.size.tiny
+                tracking: 1.2
+                elide: Text.ElideRight
+            }
+
+            P5Text {
+                y: 46
+                width: parent.width - netLever.width - 8
+                visible: Net.ethConnected && Net.ethSpeed > 0 && Net.ethSpeed < 1000
+                text: `${Net.speedText}: THE CABLE OR THE PORT HOLDS IT BACK — A CAT5E/CAT6 CABLE GIVES 1 GBIT/S`
+                color: Colours.alpha(Colours.warning, 0.9)
+                font.pixelSize: Appearance.font.size.tiny - 1
+                tracking: 0.8
+                elide: Text.ElideRight
+            }
+
+            Lever {
+                id: netLever
+
+                anchors.right: parent.right
+                y: 4
+                width: 176
+                height: 60
+                leftLabel: "WLAN"
+                rightLabel: "LAN"
+                atRight: Net.onLan
+                leftLit: Net.type === "wifi" && Net.connected
+                rightLit: Net.ethConnected
+                onFlipped: toRight => {
+                    if (!Net.useLan(toRight))
+                        netLever.refuse();
+                }
+            }
+        }
+
         P5Text {
+            y: rightCol.netH
             display: true
             text: "WI-FI"
             color: Colours.ink
@@ -1830,7 +1899,7 @@ FocusScope {
 
         P5Text {
             x: 0
-            y: 26
+            y: rightCol.netH + 26
             text: Net.type === "ethernet" && Net.connected ? `WIRED  ·  ${Net.label}` : (Net.connected ? `${Net.label}  ·  ${Net.strength}%` : "OFFLINE")
             color: Net.connected ? Colours.inkDim : Colours.warning
             font.pixelSize: Appearance.font.size.tiny
@@ -1841,7 +1910,7 @@ FocusScope {
         Row {
             id: wifiRow
 
-            y: 48
+            y: rightCol.netH + 48
             spacing: Appearance.spacing.small
 
             Chip {
@@ -1922,7 +1991,7 @@ FocusScope {
         Plate {
             id: pwPrompt
 
-            y: 100
+            y: rightCol.netH + 100
             width: parent.width
             height: 40
             radius: Appearance.rounding.normal
@@ -1998,7 +2067,7 @@ FocusScope {
         Flickable {
             id: netList
 
-            y: root.pwFor !== "" ? 152 : 104
+            y: rightCol.netH + (root.pwFor !== "" ? 152 : 104)
             width: parent.width
             height: parent.height - y - 34 - (outSection.visible ? outSection.height + 10 : 0)
             clip: true

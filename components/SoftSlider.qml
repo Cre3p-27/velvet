@@ -101,14 +101,30 @@ Item {
         anchors.bottomMargin: -6 * root.u
         preventStealing: true
         cursorShape: Qt.PointingHandCursor
-        onPressed: mouse => root.moved(root.valueAt(mouse.x))
+        onPressed: mouse => {
+            root._notch = -1;
+            root.moved(root._detent(root.valueAt(mouse.x)));
+        }
         onPositionChanged: mouse => {
             if (drag.pressed)
-                root.moved(root.valueAt(mouse.x));
+                root.moved(root._detent(root.valueAt(mouse.x)));
         }
         onWheel: wheel => {
             const s = (root.step > 0 ? root.step : Math.abs(root.span) / 20) * (root.span < 0 ? -1 : 1);
-            root.moved(Math.max(Math.min(root.from, root.to), Math.min(Math.max(root.from, root.to), root.value + (wheel.angleDelta.y > 0 ? s : -s))));
+            root.moved(root._detent(Math.max(Math.min(root.from, root.to), Math.min(Math.max(root.from, root.to), root.value + (wheel.angleDelta.y > 0 ? s : -s)))));
         }
+    }
+
+    // FIDGET FEEL: a tick at every twentieth of the way, louder as it fills,
+    // a firmer one at either end (hands the value straight through)
+    property int _notch: -1
+
+    function _detent(v: real): real {
+        const f = root.span !== 0 ? Math.max(0, Math.min(1, (v - root.from) / root.span)) : 0;
+        const n = Math.round(f * 20);
+        if (root._notch >= 0 && n !== root._notch)
+            Sfx.tick(n === 0 || n === 20 ? 0.9 : 0.25 + f * 0.45);
+        root._notch = n;
+        return v;
     }
 }

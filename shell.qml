@@ -355,7 +355,13 @@ ShellRoot {
         // DESKTOP → WINDOWS ON THIS DESKTOP: its rules and the sweep.
         WorkspaceModes.anyForced,
         // Is this install in step with itself? (SHELL → UPDATE & REPAIR)
-        Updates.checked
+        Updates.checked,
+        // Your picture, ready before the first lock or HOME asks for it.
+        Avatar.exists,
+        // The shell's own time (TIME & TIME ZONE): read the zone at start.
+        Time.mode,
+        // The SCRATCHPAD: its pages read, its keys (SUPER+O, the IPC) live.
+        Scratch.loaded
     ]
 
     // ────────────────────────────────────────────────────────── the health check

@@ -27,7 +27,7 @@ Singleton {
 
     // Live rows read through `revision`, so anything that can change behind
     // the settings menu's back has to bump it.
-    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine, LiveWalls.thisMoves, LiveWalls.previewLine, NightShift.status, NightShift.screenLine, NightShift.lastLine, Books.shelfLine, Books.nowLine, Books.engineLine]
+    readonly property var liveWatch: [Desk.status, Lyrics.status, Looks.count, Locker.status, Scenes.status, Term.status, Hypr.status, Tasks.pill, Velly.facts, Velly.sessions, Velly.brain, Monitors.status, SoundCheck.facts, LiveWalls.status, LiveWalls.thisLine, LiveWalls.thisMoves, LiveWalls.previewLine, NightShift.status, NightShift.screenLine, NightShift.lastLine, Books.shelfLine, Books.nowLine, Books.engineLine, Time.status, Net.lanLine, Net.onLan, Net.ssid]
 
     onLiveWatchChanged: root.revision++
 
@@ -62,6 +62,10 @@ Singleton {
                 return Desk.status;
             case "sceneStatus":
                 return Scenes.status;
+            case "timeStatus":
+                return Time.status;
+            case "lanStatus":
+                return `${Net.lanLine}  ·  ${Net.onLan ? "YOUR CONNECTION RUNS ON THE CABLE" : (Net.type === "wifi" && Net.connected ? "YOUR CONNECTION RUNS ON WI-FI" : "OFFLINE")}${Net.ownProfileExists ? "  ·  PROFILE: VELVET LAN" : ""}`;
             case "termStatus":
                 return Term.status;
             case "dispatchStatus":
@@ -305,6 +309,25 @@ Singleton {
             break;
         case "openDesktopTab":
             Panels.openSettingsTabNamed("DESKTOP");
+            break;
+        case "scratchOpen":
+            Scratch.open();
+            break;
+        case "lanUse":
+            Net.useLan(true);
+            break;
+        case "wifiUse":
+            Net.useLan(false);
+            break;
+        case "lanApply":
+            Net.applyLan();
+            break;
+        case "lanSystem":
+            Net.lanBackToSystem();
+            break;
+        case "timeBackToSystem":
+            Time.backToSystem();
+            Toast.ok("THE SHELL SHOWS YOUR COMPUTER'S TIME AGAIN");
             break;
         case "takeLoginSong":
             LoginSong.takeNow();

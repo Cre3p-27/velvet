@@ -19,7 +19,7 @@ Item {
     implicitWidth: root.compact ? 160 : 340
 
     // The greeting follows the day: morning, afternoon, evening, night.
-    SystemClock {
+    ShellClock {
         id: clock
 
         precision: SystemClock.Minutes

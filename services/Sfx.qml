@@ -30,16 +30,27 @@ Singleton {
             launch: "launch.wav",
             whoosh: "whoosh.wav",
             quest: "quest.wav",
-            charge: "charge.wav"
+            charge: "charge.wav",
+            // the fidget sounds — one set for every pack (tools/fidget_sfx.py)
+            tick: "tick.wav",
+            lever: "lever.wav",
+            nope: "nope.wav",
+            pop: "pop.wav",
+            boing: "boing.wav",
+            snap: "snap.wav"
         })
+    readonly property var shared: ["tick", "lever", "nope", "pop", "boing", "snap"]
 
     function play(name: string, gain: real): int {
         if (!Config.sfx.enabled || root.player === "" || Focus.mutesShell)
             return -1;
 
-        const pack = ["arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"].indexOf(Config.sfx.pack) >= 0 ? `${root.dir}/${Config.sfx.pack}` : root.dir;
+        const fidget = root.shared.indexOf(name) >= 0;
+        if (fidget && !Config.sfx.fidget)
+            return -1;
+        const pack = !fidget && ["arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"].indexOf(Config.sfx.pack) >= 0 ? `${root.dir}/${Config.sfx.pack}` : root.dir;
         const file = `${pack}/${root.files[name] ?? root.files.cursor}`;
-        const vol = Config.sfx.volume * (gain > 0 ? gain : 1);
+        const vol = Config.sfx.volume * (gain > 0 ? gain : 1) * (fidget ? Config.sfx.fidgetVolume : 1);
 
         let cmd;
         if (root.player === "pw-play")
@@ -63,8 +74,12 @@ Singleton {
     function cursor(): void {
         play("cursor");
     }
+    // FIDGET FEEL lays a small mechanical tick under a press and a flip, so a
+    // click sounds like something was pressed, in every sound pack
     function select(): void {
         play("select");
+        if (Config.sfx.fidget)
+            root.tick(0.32);
     }
     function back(): void {
         play("back");
@@ -77,12 +92,41 @@ Singleton {
     }
     function toggle(): void {
         play("toggle");
+        if (Config.sfx.fidget)
+            root.tick(0.5);
     }
     function launch(): void {
         play("launch");
     }
     function whoosh(): void {
         play("whoosh");
+    }
+
+    // ── FIDGET FEEL: the toy sounds. A tick is rate-limited, so a slider
+    // dragged fast clicks like a ratchet instead of buzzing.
+    property double lastTick: 0
+
+    function tick(gain: real): void {
+        const now = Date.now();
+        if (now - root.lastTick < 38)
+            return;
+        root.lastTick = now;
+        play("tick", gain > 0 ? gain : 0.7);
+    }
+    function lever(): void {
+        play("lever");
+    }
+    function nope(): void {
+        play("nope", 0.8);
+    }
+    function pop(): void {
+        play("pop", 0.75);
+    }
+    function boing(): void {
+        play("boing", 0.7);
+    }
+    function snap(): void {
+        play("snap", 0.85);
     }
 
     // Finishing a task — the game-menu flourish, SHELL → GAME FEEL.

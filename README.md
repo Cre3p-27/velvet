@@ -686,6 +686,65 @@ AMBIENT — only the clock, the lyric and the music stay until you move or type.
 
 ---
 
+## The scratchpad (SUPER+O)
+
+An endless sheet to keep things on, in the Dynamic Island. **SUPER+O** opens it
+from anywhere (or pick its tab in the island at the edge of the screen);
+SUPER+O again, or Esc, puts it away. Everything stays — `~/.config/velvet/scratch.json`,
+pasted pictures beside it in `scratch/`.
+
+- **Pen, marker, eraser** (P · M · E), **text** (T: click and type) and **sticky
+  notes** (N), **line, arrow, box, circle** (L · A · R · O; Shift keeps them
+  straight, square, round), seven colours (1–7, the first always reads on the
+  sheet), `[` `]` for thinner and thicker.
+- **Select** (V): click, drag to move, drag the sheet for a frame; Del removes,
+  Ctrl+D doubles, the arrows nudge, a colour key recolours what is selected.
+- **Endless**: the wheel moves the sheet, Ctrl+wheel (or a pinch) zooms at the
+  pointer, a middle or right drag moves it too; Ctrl+0 back to 100 %, Ctrl+1
+  everything in view.
+- **Pages**: Ctrl+N, Ctrl+PgUp / PgDn; double-click a page's chip to rename it,
+  its × and then a click on it to delete it.
+- **Ctrl+V** pastes a picture (or text, as a note) — Velvet reads the clipboard
+  itself (`bin/velvet-input`), no wl-clipboard needed. **Ctrl+S** saves what you
+  see as a PNG in `~/Pictures`. Undo and redo everything (Ctrl+Z, Ctrl+Shift+Z).
+- **F1** (or ?) in the pad lists every key. MODULES → SCRATCHPAD: its width and
+  height, the paper (dots, grid, lines, plain), the sheet (the island's own,
+  paper, ink), the pen, how much a line is smoothed, the toolbar at the top or
+  the bottom, names under the tools.
+
+## Windows that float, the time, your picture
+
+- **SUPER+V** floats a window at a size that fits (DESKTOP → NEW FLOATING
+  WINDOWS: small, medium, large, huge) in the middle of what you see, and tiles
+  it again. A **FLOATING desktop** opens every window at that size — Hyprland
+  would float it over the whole screen — and brings an app that makes itself big
+  a moment later (kitty, browsers) back down.
+- **SUPER+CTRL+arrows** jump from the window you are on — after SUPER+ALT
+  swapped it away, zoomed out, or on a desktop of tiled and floating windows.
+- **MODULES → TASKBAR → TIME & TIME ZONE**: the whole shell shows your
+  computer's time, another time zone (any city; summer time by itself) or a time
+  set by hand (and nudged). The bar's clock says where its time is from.
+  Your computer's clock itself is never changed.
+- **HOME → MATCH THE WALLPAPER**: your picture everywhere it is worn, in the
+  wallpaper's colours — TINT, DUOTONE or POSTER — and a new picture shows on the
+  lock, HOME and the widgets at once.
+- **NOTIFICATIONS → IN THE FRAME** (with a SCREEN FRAME): the popups come out
+  of the frame itself, in a tab of its colour that grows from the corner.
+
+## The network cable (LAN) and the lever
+
+QUICK SETTINGS has a **WLAN | LAN lever**: flip it (or throw it) and the
+connection moves over without ever leaving you offline — the new way comes up
+first, then the old one goes. With no cable in, it shakes its head and springs
+back. The line beside it says what the cable does (and when a cable or port
+holds it at 100 Mbit/s). **SHELL → NETWORK · LAN**: connect, back to Wi-Fi,
+an AUTOMATIC or FIXED address with gateway and DNS — kept on the shell's own
+wired profile (Velvet LAN), so it changes without an administrator password.
+
+**FIDGET FEEL** (SHELL → SOUNDS): switches snap over with a stretch, sliders
+tick past their notches, presses have a small mechanical click, the lever
+clunks. `tools/fidget_sfx.py` makes those sounds.
+
 ## The Dynamic Island, and where things stand
 
 Touch the top edge and the island rises: swipe it for music, the desktop map,

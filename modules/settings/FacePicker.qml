@@ -335,7 +335,7 @@ FocusScope {
 
                             anchors.fill: parent
                             visible: card.modelData !== ""
-                            source: card.modelData !== "" ? "file://" + card.modelData : ""
+                            source: card.modelData === "" ? "" : (card.isFace && Avatar.url !== "" ? Avatar.url : "file://" + card.modelData)
                             fillMode: Image.PreserveAspectCrop
                             asynchronous: true
                             cache: false
@@ -460,7 +460,7 @@ FocusScope {
                     Image {
                         anchors.fill: parent
                         visible: card.modelData !== ""
-                        source: card.modelData !== "" ? "file://" + card.modelData : ""
+                        source: card.modelData === "" ? "" : (card.modelData === root.facePath && Avatar.url !== "" ? Avatar.url : "file://" + card.modelData)
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: false

@@ -28,20 +28,10 @@ Item {
     // so the shell simply keeps its rest form.
     readonly property int hoverTarget: GP.kindOfName(Config.lock.backgroundShape)
 
-    // Probe ~/.face once, so a missing picture never produces a QML
-    // warning — the initial simply stays.
-    property bool faceExists: false
-    readonly property string faceUrl: `file://${Quickshell.env("HOME") ?? ""}/.face`
-
-    FileView {
-        id: faceProbe
-
-        path: root.faceUrl.replace("file://", "")
-        printErrors: false
-
-        onLoaded: root.faceExists = true
-        onLoadFailed: root.faceExists = false
-    }
+    // The picture (services/Avatar.qml): a missing one never produces a QML
+    // warning — the initial simply stays — and a new one shows at once.
+    readonly property bool faceExists: Avatar.exists && Avatar.url !== ""
+    readonly property string faceUrl: Avatar.url
 
     ModuleCard {
         anchors.fill: parent

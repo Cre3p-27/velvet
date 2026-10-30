@@ -19,7 +19,7 @@ import QtQuick
 Item {
     id: root
 
-    property date now: new Date()
+    property date now: Time.now
     // "none" = VERTICAL, "line" = LINE, any M3Shape kind = the dial.
     property string shape: "none"
     property bool analog: false

@@ -18,6 +18,10 @@ machine; on this one none was).
     velvet-input copy [TEXT]        TEXT (or stdin) into the clipboard. A small server keeps
                                     it there until something else is copied, like wl-copy
     velvet-input paste              the clipboard's text on stdout (exit 1: empty)
+    velvet-input paste --image FILE a picture on the clipboard into FILE, else its text:
+                                    {"kind": "image", "mime": …} | {"kind": "text", "text": …}
+    velvet-input copy --file FILE --type MIME
+                                    FILE's bytes into the clipboard as MIME (a picture)
     velvet-input shot FILE [--output NAME]
                                     a PNG of one screen (the focused one, or NAME)
     velvet-input globals            what this compositor offers (diagnostics)
@@ -422,6 +426,7 @@ class Pointer:
 
 # ──────────────────────────────────────────────────────────── the clipboard
 TEXT_TYPES = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"]
+IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"]
 
 
 def data_control(wl: Wayland):
@@ -434,6 +439,12 @@ def data_control(wl: Wayland):
 
 
 def paste() -> str:
+    mime, data = read_clipboard(TEXT_TYPES)
+    return data.decode("utf-8", "replace") if mime else ""
+
+
+def read_clipboard(wanted) -> (str, bytes):
+    """The first of `wanted` the clipboard offers, and its bytes ("" when none)."""
     wl = Wayland()
     seat = wl.seat()
     manager, _iface = data_control(wl)
@@ -462,16 +473,16 @@ def paste() -> str:
     wl.roundtrip()
     oid = current[0]
     if not oid:
-        return ""
-    mime = next((m for m in TEXT_TYPES if m in offers.get(oid, [])), "")
+        return "", b""
+    mime = next((m for m in wanted if m in offers.get(oid, [])), "")
     if not mime:
-        return ""
+        return "", b""
     rfd, wfd = os.pipe()
     wl.send(oid, 0, Wayland.wstr(mime), fds=[wfd])              # receive(mime, fd)
     os.close(wfd)
     wl.roundtrip()
     chunks = []
-    end = time.monotonic() + 3
+    end = time.monotonic() + (8 if mime.startswith("image/") else 3)
     os.set_blocking(rfd, False)
     while time.monotonic() < end:
         try:
@@ -483,13 +494,15 @@ def paste() -> str:
             break
         chunks.append(piece)
     os.close(rfd)
-    return b"".join(chunks).decode("utf-8", "replace")
+    return mime, b"".join(chunks)
 
 
-def copy(text: str, foreground: bool = False) -> int:
-    """Owns the clipboard with `text` until someone else copies — in a child
-    process that outlives this call, the way wl-copy does it."""
-    data = text.encode("utf-8")
+def copy(text: str, foreground: bool = False, data: bytes = None, mimes=None) -> int:
+    """Owns the clipboard with `text` (or `data` as `mimes`) until someone else
+    copies — in a child process that outlives this call, the way wl-copy does it."""
+    if data is None:
+        data = text.encode("utf-8")
+    mimes = mimes or TEXT_TYPES
     if not foreground:
         rfd, wfd = os.pipe()
         pid = os.fork()
@@ -514,7 +527,7 @@ def copy(text: str, foreground: bool = False) -> int:
         manager, _iface = data_control(wl)
         source = wl.new_id()
         wl.send(manager, 0, struct.pack("<I", source))              # create_data_source
-        for mime in TEXT_TYPES:
+        for mime in mimes:
             wl.send(source, 0, Wayland.wstr(mime))                  # offer
         device = wl.new_id()
         wl.send(manager, 1, struct.pack("<II", device, seat))
@@ -792,9 +805,29 @@ def main() -> int:
             print(json.dumps({"ok": True}))
             return 0
         if cmd == "copy":
+            if "--file" in rest:
+                path = rest[rest.index("--file") + 1]
+                mime = rest[rest.index("--type") + 1] if "--type" in rest else "image/png"
+                with open(path, "rb") as f:
+                    blob = f.read()
+                return copy("", foreground="--foreground" in rest, data=blob, mimes=[mime])
             text = " ".join(rest) if rest and rest[0] != "--foreground" else sys.stdin.read()
             return copy(text, foreground="--foreground" in rest)
         if cmd == "paste":
+            if "--image" in rest:
+                path = rest[rest.index("--image") + 1]
+                mime, blob = read_clipboard(IMAGE_TYPES + TEXT_TYPES)
+                if mime.startswith("image/") and blob:
+                    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+                    with open(path, "wb") as f:
+                        f.write(blob)
+                    print(json.dumps({"ok": True, "kind": "image", "mime": mime, "bytes": len(blob)}))
+                    return 0
+                if mime and blob:
+                    print(json.dumps({"ok": True, "kind": "text", "text": blob.decode("utf-8", "replace")}))
+                    return 0
+                print(json.dumps({"ok": False, "kind": "none"}))
+                return 1
             text = paste()
             sys.stdout.write(text)
             return 0 if text else 1

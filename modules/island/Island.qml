@@ -183,7 +183,7 @@ PanelWindow {
     //  them at once and the assistant had nowhere to stand. One table now:
     //  everything else asks it.
     //
-    //    NOW PLAYING · DESKTOP MAP · TASKS · WEATHER · SYSTEM · VELLY
+    //    NOW PLAYING · DESKTOP MAP · TASKS · WEATHER · SYSTEM · SCRATCHPAD · VELLY
     //
     //  Each but the map can be switched off (MODULES → DYNAMIC ISLAND →
     //  MODULES IN THE ISLAND; Velly by her own switch); the ones that are on
@@ -199,6 +199,8 @@ PanelWindow {
             o.push("weather");
         if (Config.map.islandSystem)
             o.push("system");
+        if (Config.map.islandScratch)
+            o.push("scratch");
         if (Config.velly.enabled)
             o.push("velly");
         return o;
@@ -209,6 +211,7 @@ PanelWindow {
     readonly property int weatherIdx: root.order.indexOf("weather")
     readonly property int systemIdx: root.order.indexOf("system")
     readonly property int vellyIdx: root.order.indexOf("velly")
+    readonly property int scratchIdx: root.order.indexOf("scratch")
 
     readonly property var meta: {
         const size = {
@@ -219,10 +222,16 @@ PanelWindow {
             system: { w: 400, h: 336, glyph: "memory" },
             // The assistant gets the tallest capsule of the lot: orb, answer,
             // tool chips and an input row all live inside it.
-            velly: { w: 462, h: 560, glyph: "auto_awesome" }
+            velly: { w: 462, h: 560, glyph: "auto_awesome" },
+            // SCRATCHPAD → SIZE, never more than the screen leaves round it
+            scratch: { w: root.scratchW, h: root.scratchH, glyph: "edit_note" }
         };
         return root.order.map(n => size[n]);
     }
+
+    // ── the SCRATCHPAD's size (SCRATCHPAD → WIDTH, HEIGHT)
+    readonly property int scratchW: Math.round(Math.max(620, Math.min(Config.scratch.width, root.width - 200)))
+    readonly property int scratchH: root.pillH + 4 + Math.round(Math.max(340, Math.min(Config.scratch.height, root.height - 220)))
 
     // ── the DESKTOP module's size: the canvas keeps the monitor's shape and
     // takes MAP SIZE (MODULES → DESKTOP MAP) of the screen's width, never so
@@ -284,6 +293,10 @@ PanelWindow {
         // is listening, thinking or has no key — the island does not.
         if (i === root.vellyIdx)
             return Velly.pill;
+        if (i === root.scratchIdx) {
+            const n = Scratch.items.length;
+            return `SCRATCHPAD  ·  ${Scratch.current.name}  ·  ${n === 0 ? "EMPTY" : n + " THING" + (n === 1 ? "" : "S")}`;
+        }
         return `CPU ${Math.round(SysInfo.cpuPercent)}%  ·  RAM ${SysInfo.memoryUsedGb.toFixed(1)}G`;
     }
 
@@ -298,6 +311,8 @@ PanelWindow {
             return Weather.ready ? Weather.icon : "cloud";
         if (i === root.vellyIdx)
             return Velly.glyph;
+        if (i === root.scratchIdx)
+            return "edit_note";
         return "memory";
     }
 
@@ -680,6 +695,38 @@ PanelWindow {
         root.poke();
     }
 
+    // SUPER+O (services/Scratch.qml): the island opens on the scratchpad.
+    function openScratch(): void {
+        if (root.scratchIdx < 0)
+            return;
+        Scratch.wantIsland = false;
+        root.moduleIdx = root.scratchIdx;
+        root.previewIdx = root.scratchIdx;
+        root.touched = true;
+        if (!root.expanded) {
+            root.expanded = true;
+            Sfx.open();
+        }
+        root.poke();
+    }
+
+    readonly property bool scratchOpen: root.active && root.expanded && root.moduleIdx === root.scratchIdx
+    onScratchOpenChanged: {
+        if (root.scratchOpen)
+            Scratch.shown = true;
+        else if (root.mine || !root.active)
+            Scratch.shown = false;
+    }
+
+    Connections {
+        target: Scratch
+
+        function onWantIslandChanged(): void {
+            if (Scratch.wantIsland && root.active)
+                root.openScratch();
+        }
+    }
+
     // A tab of the open island (or Ctrl+Tab): straight to that module.
     function switchTo(i: int): void {
         root.poke();
@@ -750,6 +797,8 @@ PanelWindow {
             return Qt.resolvedUrl("IslandSystem.qml");
         if (i === root.vellyIdx)
             return Qt.resolvedUrl("IslandVelly.qml");
+        if (i === root.scratchIdx)
+            return Qt.resolvedUrl("IslandScratch.qml");
         return "";
     }
 
@@ -1044,6 +1093,8 @@ PanelWindow {
                 root.openMap();
             else if (Velly.wantIsland)
                 root.openVelly();
+            else if (Scratch.wantIsland)
+                root.openScratch();
         } else {
             root.disarm();
             root.expanded = false;
@@ -2288,6 +2339,14 @@ PanelWindow {
                             // Velly's orb breathes only while you can see it
                             if (slot.index === root.vellyIdx)
                                 slot.item.onScreen = Qt.binding(() => root.active && root.expanded && slot.current);
+                            if (slot.index === root.scratchIdx) {
+                                slot.item.live = Qt.binding(() => root.active && root.moduleIdx === root.scratchIdx && (root.expanded || root.pressed));
+                                slot.item.keys = Qt.binding(() => root.expanded && root.mine);
+                                slot.item.ground = Qt.binding(() => root.shellCol);
+                                slot.item.poked.connect(root.poke);
+                                // a text or a note written: the keys come back to the island
+                                slot.item.doneTyping.connect(() => keyboard.forceActiveFocus());
+                            }
                             if (slot.index === root.deskIdx) {
                                 // live while open — and already while you pull it
                                 // out, so the pull reveals the real canvas

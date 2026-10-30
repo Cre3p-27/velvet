@@ -67,14 +67,14 @@ Item {
     }
 
     // ════════════════════════════════════════════════════════════ state
-    property date now: new Date()
+    property date now: Time.now
 
     Timer {
         interval: 1000
         repeat: true
         running: face.live && face.visible
         triggeredOnStart: true
-        onTriggered: face.now = new Date()
+        onTriggered: face.now = Time.now
     }
 
     readonly property string layout: ["vertical", "horizontal", "greeting", "custom"].indexOf(Config.lock.layout) >= 0 ? Config.lock.layout : "vertical"
@@ -462,17 +462,10 @@ Item {
     readonly property real clockBare: 200 * face.u * face.clockScale
     readonly property real clockDial: 460 * face.u * face.clockScale
 
-    // Your photo, probed once so a missing ~/.face never warns.
-    property bool faceExists: false
-    readonly property string faceUrl: `file://${Quickshell.env("HOME") ?? ""}/.face`
-
-    FileView {
-        path: face.faceUrl.replace("file://", "")
-        printErrors: false
-
-        onLoaded: face.faceExists = true
-        onLoadFailed: face.faceExists = false
-    }
+    // Your photo (services/Avatar.qml: a missing ~/.face never warns, a new
+    // one shows at once).
+    readonly property bool faceExists: Avatar.exists && Avatar.url !== ""
+    readonly property string faceUrl: Avatar.url
 
     // ═══════════════════════════════════════════ the stage — its elements
     //  Every piece of the soft lock is an ELEMENT: the clock, the greeting,

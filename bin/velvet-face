@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""velvet-face — your ~/.face, the way the shell wears it.
+
+    velvet-face <src> <dst> <style> <dark> <accent> <light>
+    velvet-face --selftest
+
+Writes a square 512 px PNG to <dst>: the photo as it is (photo), or dressed
+in the wallpaper's colours — `tint` lays them over the photo, `duotone` paints
+it in them from <dark> through <accent> to <light>, `poster` cuts it into four
+flat tones of them. Colours are #rrggbb. Without Pillow the photo is copied as
+it is (still a fresh file, so every module shows the new one).
+"""
+
+import os
+import shutil
+import sys
+
+
+def hexrgb(s):
+    s = s.strip().lstrip("#")
+    if len(s) == 8:  # #aarrggbb
+        s = s[2:]
+    if len(s) >= 6:
+        return tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
+    return (128, 128, 128)
+
+
+def mix(a, b, t):
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+def dress(src, dst, style, dark, accent, light):
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        shutil.copyfile(src, dst)
+        return "copied (no Pillow)"
+    im = Image.open(src)
+    im = ImageOps.exif_transpose(im).convert("RGB")
+    # the middle square, 512 px
+    w, h = im.size
+    side = min(w, h)
+    im = im.crop(((w - side) // 2, (h - side) // 2, (w - side) // 2 + side, (h - side) // 2 + side))
+    im = im.resize((512, 512), Image.LANCZOS)
+    if style == "photo":
+        im.save(dst, "PNG")
+        return "photo"
+    d, a, l = hexrgb(dark), hexrgb(accent), hexrgb(light)
+    grey = ImageOps.autocontrast(ImageOps.grayscale(im), cutoff=1)
+    if style == "poster":
+        # four flat tones: deep, the accent's shade, the accent, light
+        tones = [d, mix(d, a, 0.55), a, l]
+        band = [min(3, v * 4 // 256) for v in range(256)]
+        out = Image.merge("RGB", [grey.point([tones[band[v]][c] for v in range(256)]) for c in range(3)])
+        out.save(dst, "PNG")
+        return "poster"
+    painted = ImageOps.colorize(grey, black=d, white=l, mid=a, blackpoint=0, whitepoint=255, midpoint=128)
+    if style == "tint":
+        painted = Image.blend(im, painted, 0.42)
+    painted.save(dst, "PNG")
+    return style
+
+
+def selftest():
+    import tempfile
+    try:
+        from PIL import Image
+    except ImportError:
+        print("velvet-face selftest: ok (no Pillow — photos are copied as they are)")
+        return 0
+    tmp = tempfile.mkdtemp(prefix="velvet-face-")
+    src = os.path.join(tmp, "in.jpg")
+    img = Image.new("RGB", (640, 400))
+    for x in range(640):
+        for y in range(400):
+            img.putpixel((x, y), (x * 255 // 639, y * 255 // 399, 90))
+    img.save(src, "JPEG")
+    for style in ("photo", "tint", "duotone", "poster"):
+        dst = os.path.join(tmp, f"{style}.png")
+        dress(src, dst, style, "#140f0c", "#c9a07a", "#f4ece4")
+        out = Image.open(dst)
+        assert out.size == (512, 512), (style, out.size)
+        if style == "poster":
+            assert out.getcolors(4) is not None, "poster has more than four tones"
+    shutil.rmtree(tmp)
+    print("velvet-face selftest: ok")
+    return 0
+
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+        return selftest()
+    if len(sys.argv) < 7:
+        print(__doc__.strip())
+        return 2
+    src, dst, style, dark, accent, light = sys.argv[1:7]
+    if not os.path.isfile(src):
+        print("no picture")
+        return 1
+    tmp = dst + ".part"
+    try:
+        what = dress(src, tmp, style if style in ("photo", "tint", "duotone", "poster") else "photo", dark, accent, light)
+        os.replace(tmp, dst)
+    except Exception as e:  # a picture Pillow cannot read: wear it as it is
+        try:
+            shutil.copyfile(src, tmp)
+            os.replace(tmp, dst)
+            what = f"copied ({e.__class__.__name__})"
+        except OSError:
+            print("failed")
+            return 1
+    print(f"ok {what}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

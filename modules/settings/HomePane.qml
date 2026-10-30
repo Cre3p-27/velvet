@@ -28,41 +28,26 @@ FocusScope {
     focus: true
 
     // ---------------------------------------------------------- the profile
-    //  ~/.face, probed once like the lock does — a missing picture is a
-    //  quiet badge, not a QML warning.
-    property bool faceExists: false
-    readonly property string faceUrl: `file://${Quickshell.env("HOME") ?? ""}/.face`
+    //  ~/.face through services/Avatar.qml — a missing picture is a quiet
+    //  badge, not a QML warning, and a new one (or the wallpaper's colours,
+    //  MATCH THE WALLPAPER) shows here the moment it is ready.
+    readonly property bool faceExists: Avatar.exists && Avatar.url !== ""
+    readonly property string faceUrl: Avatar.url
     // Bumped by the settings window every time the face picker applies a
-    // photo, so the avatar swaps instantly instead of showing a stale cache.
+    // photo: the picture is read again at once.
     property int faceRev: 0
     // The settings window answers by raising its face picker overlay.
     signal openFacePicker()
 
-    FileView {
-        id: faceProbe
-
-        path: root.faceUrl.replace("file://", "")
-        printErrors: false
-        watchChanges: true
-
-        onFileChanged: reload()
-        onLoaded: root.faceExists = true
-        onLoadFailed: root.faceExists = false
-    }
-
     readonly property bool wearFace: Config.home.avatarFace && root.faceExists
 
-    // The photo is set imperatively rather than bound: a fresh pick (or a
-    // changed ~/.face) must re-read the file, and query-string cache
-    // busters on file:// URLs are exactly what breaks the load.
     function refreshFace(): void {
-        faceImg.source = "";
-        if (root.wearFace)
-            faceImg.source = root.faceUrl;
+        faceImg.source = root.wearFace ? root.faceUrl : "";
     }
 
-    onFaceRevChanged: root.refreshFace()
-    onFaceExistsChanged: root.refreshFace()
+    onFaceRevChanged: Avatar.refresh()
+    onWearFaceChanged: root.refreshFace()
+    onFaceUrlChanged: root.refreshFace()
     readonly property string playerName: Config.home.displayName !== "" ? Config.home.displayName : Locker.user
     readonly property string initial: root.playerName.length > 0 ? root.playerName[0].toUpperCase() : "?"
 
@@ -101,14 +86,14 @@ FocusScope {
     readonly property real colW: Math.min(root.width * 0.44, 640)
 
     // ---------------------------------------------------------- the clock
-    property var now: new Date()
+    property var now: Time.now
 
     Timer {
         running: true
         interval: 1000
         repeat: true
         triggeredOnStart: true
-        onTriggered: root.now = new Date()
+        onTriggered: root.now = Time.now
     }
 
     readonly property string dateLine: Qt.formatDate(root.now, "ddd · d MMM").toUpperCase()

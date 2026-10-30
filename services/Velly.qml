@@ -353,7 +353,7 @@ Singleton {
     }
 
     readonly property var greetings: {
-        const h = new Date().getHours();
+        const h = Time.minute.getHours();
         const n = root.userName;
         const any = n ? [`Hey ${n}! Was kann ich für dich tun?`, `Hi ${n}, bin da — was gibt's?`, "Ich höre dir zu.", `Na, ${n}? Womit fangen wir an?`] : ["Hey! Was kann ich für dich tun?", "Bin da — was gibt's?", "Ich höre dir zu.", "Hallo! Womit fangen wir an?"];
         if (h >= 5 && h < 11)
@@ -939,7 +939,7 @@ Singleton {
         for (let i = 0; i < Math.min(5, Tasks.open.length); i++)
             open.push(`${Tasks.open[i].id}: ${Tasks.open[i].text}`);
         return JSON.stringify({
-            time: Qt.formatDateTime(new Date(), "HH:mm ddd"),
+            time: Qt.formatDateTime(Time.now, "HH:mm ddd") + (Time.tag !== "" ? ` (${Time.tag})` : ""),
             workspace: Hypr.activeWsId,
             workspaces: spaces,
             activeWindow: `${Hypr.activeTitle}`.slice(0, 70),

@@ -520,12 +520,22 @@ Item {
             Slash {
                 id: knob
 
+                // FIDGET FEEL: the knob stretches as it flies and squashes
+                // flat, then springs back round when it lands
+                readonly property real stretch: Config.sfx.fidget ? Math.min(0.42, Math.abs(knobSlide.speed) / 2600) : 0
+
                 width: Math.round(38 * Appearance.densityScale)
                 height: parent.height - 10
                 y: 5
                 x: knobSlide.value
                 shear: Appearance.skew
                 color: parent.checked ? (root.selected ? Colours.accent : Colours.paper) : Colours.ink
+                transform: Scale {
+                    origin.x: knob.width / 2
+                    origin.y: knob.height / 2
+                    xScale: 1 + knob.stretch
+                    yScale: 1 - knob.stretch * 0.35
+                }
 
                 Spring {
                     id: knobSlide

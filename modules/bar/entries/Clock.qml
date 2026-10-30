@@ -15,10 +15,12 @@ BarButton {
     readonly property string ss: Qt.formatDateTime(now, "ss")
     readonly property string ampm: Qt.formatDateTime(now, "AP")
     readonly property real fs: Config.bar.fontSize + 1
+    // where the time is from, when it is not the computer's (SHELL → TIME)
+    readonly property string tag: Config.time.showTag ? Time.tag : ""
 
     padding: 4
     active: Panels.notifCentre
-    tip: "NOTIFICATIONS  ·  RIGHT-CLICK FOR CLOCK SETTINGS"
+    tip: root.tag !== "" ? `${root.tag} TIME  ·  RIGHT-CLICK FOR CLOCK SETTINGS` : "NOTIFICATIONS  ·  RIGHT-CLICK FOR CLOCK SETTINGS"
 
     onClicked: {
         Sfx.open();
@@ -26,7 +28,7 @@ BarButton {
     }
     onRightClicked: Panels.openSettingsKey("bar.clock.format24h")
 
-    SystemClock {
+    ShellClock {
         id: clock
         precision: Config.bar.clock.showSeconds ? SystemClock.Seconds : SystemClock.Minutes
     }
@@ -93,6 +95,16 @@ BarButton {
 
             P5Text {
                 anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.tag !== ""
+                height: visible ? implicitHeight : 0
+                text: Time.shortTag
+                color: Colours.accentInk
+                font.pixelSize: root.fs * 0.56
+                tracking: 0.6
+            }
+
+            P5Text {
+                anchors.horizontalCenter: parent.horizontalCenter
                 visible: Config.bar.clock.showDate
                 height: visible ? implicitHeight : 0
                 text: Qt.formatDateTime(root.now, "dd")
@@ -123,6 +135,15 @@ BarButton {
                 color: Colours.ink
                 font.pixelSize: root.fs
                 tracking: 0.8
+            }
+
+            P5Text {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.tag !== ""
+                text: root.tag
+                color: Colours.accentInk
+                font.pixelSize: root.fs * 0.62
+                tracking: 1.2
             }
 
             Rectangle {

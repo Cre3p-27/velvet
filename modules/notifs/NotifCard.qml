@@ -13,6 +13,9 @@ Item {
     required property var wrapper
     property bool showTime: false
     property bool selected: false
+    // NOTIFICATIONS → IN THE FRAME: the card has no ground of its own — it
+    // sits on the frame's tab, in the frame's ink
+    property bool bare: false
 
     signal dismissed
     signal closed
@@ -38,6 +41,8 @@ Item {
     readonly property string wv: Appearance.winVer
     readonly property bool velvet: root.style === "velvet"
     readonly property color ink: {
+        if (root.bare)
+            return Colours.ink;
         if (root.style === "poster")
             return Colours.paper;
         if (root.style === "start")
@@ -46,7 +51,7 @@ Item {
             return Colours.ink;
         return Colours.ink;
     }
-    readonly property color dim: root.style === "poster" ? Colours.alpha(Colours.paper, 0.75) : (root.style === "start" ? Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.72) : Colours.inkDim)
+    readonly property color dim: root.bare ? Colours.inkDim : root.style === "poster" ? Colours.alpha(Colours.paper, 0.75) : (root.style === "start" ? Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.72) : Colours.inkDim)
     readonly property string face: ({
             prompt: Appearance.fontFamily.mono,
             arcade: Appearance.fontFamily.pixel,
@@ -64,7 +69,7 @@ Item {
             grimoire: "A missive",
             poster: "NOTICE"
         })[root.style] ?? ""
-    readonly property real lead: ({
+    readonly property real lead: root.bare ? 30 : ({
             velvet: 30,
             prompt: 16,
             arcade: 20,
@@ -93,7 +98,7 @@ Item {
     // ── the card of each look
     Item {
         anchors.fill: parent
-        visible: !root.velvet
+        visible: !root.velvet && !root.bare
 
         // shadows: arcade hard, glass and the quiet looks soft, clay tinted
         Rectangle {
@@ -260,7 +265,7 @@ Item {
 
     Slash {
         anchors.fill: parent
-        visible: !root.critical && root.velvet
+        visible: !root.critical && root.velvet && !root.bare
         shear: Appearance.skew * 0.6
         color: Colours.alpha(Colours.surfaceHigh, root.selected ? 1.0 : 0.96)
         borderColor: root.selected ? Colours.ink : Colours.alpha(root.edge, hover.containsMouse ? 1.0 : 0.7)
@@ -280,7 +285,7 @@ Item {
     // every resize is the difference between a list and a freeze.
     Loader {
         anchors.fill: parent
-        active: root.critical && root.velvet
+        active: root.critical && root.velvet && !root.bare
         asynchronous: true
 
         sourceComponent: Jagged {
@@ -296,7 +301,7 @@ Item {
 
     // Urgency stripe down the leading edge.
     Rectangle {
-        visible: root.velvet
+        visible: root.velvet || root.bare
         anchors.left: parent.left
         anchors.leftMargin: 10
         anchors.verticalCenter: parent.verticalCenter
@@ -351,7 +356,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.style === "prompt" ? (root.wrapper?.appName ?? "system").toLowerCase() + ":" : (root.style === "grimoire" || root.style === "start" || root.style === "raycast" || root.style === "spotlight" ? (root.wrapper?.appName ?? "System") : (root.wrapper?.appName ?? "SYSTEM").toUpperCase())
                 font.family: root.velvet ? Appearance.fontFamily.body : root.face
-                color: root.velvet ? root.edge : (root.style === "poster" ? Colours.paper : (root.critical ? Colours.danger : (root.style === "start" ? root.dim : Colours.accentInk)))
+                color: root.velvet || root.bare ? root.edge : (root.style === "poster" ? Colours.paper : (root.critical ? Colours.danger : (root.style === "start" ? root.dim : Colours.accentInk)))
                 font.pixelSize: Appearance.font.size.tiny
                 tracking: 2
             }

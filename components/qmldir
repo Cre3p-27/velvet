@@ -33,3 +33,5 @@ StyleCard 1.0 StyleCard.qml
 AppIcon 1.0 AppIcon.qml
 Spring 1.0 Spring.qml
 Skeleton 1.0 Skeleton.qml
+ShellClock 1.0 ShellClock.qml
+Lever 1.0 Lever.qml

@@ -106,7 +106,7 @@ WlSessionLock {
         }
 
         // ═════════════════════════════════════════════════════════ core: clock
-        SystemClock {
+        ShellClock {
             id: clock
             precision: SystemClock.Seconds
         }

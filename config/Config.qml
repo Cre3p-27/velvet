@@ -36,6 +36,9 @@ Singleton {
     readonly property var books: adapter.books
     readonly property var pad: adapter.pad
     readonly property var display: adapter.display
+    readonly property var time: adapter.time
+    readonly property var lan: adapter.lan
+    readonly property var scratch: adapter.scratch
 
     // DISPLAY → RESOLUTION's choices, filled by services/Monitors.qml from
     // the screen itself (Schema reads them here: no service in config/).

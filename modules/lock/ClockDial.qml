@@ -16,7 +16,7 @@ import QtQuick
 Item {
     id: root
 
-    property date now: new Date()
+    property date now: Time.now
     property real size: 320
     property string shape: "cookie"   // an M3Shape kind
     property bool analog: false

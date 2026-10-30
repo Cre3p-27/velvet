@@ -58,7 +58,7 @@ Item {
     implicitWidth: body.implicitWidth
     implicitHeight: body.implicitHeight
 
-    SystemClock {
+    ShellClock {
         id: clock
 
         // The dial's seconds dot needs seconds; the rest is happy with minutes.

@@ -14,7 +14,7 @@ Item {
 
     readonly property real x0: root.host.insetL + root.host.pad
     readonly property real span: root.host.fieldW - root.host.pad * 2
-    readonly property string today: Qt.formatDate(new Date(), "dddd, d MMMM yyyy")
+    readonly property string today: Qt.formatDate(Time.minute, "dddd, d MMMM yyyy")
     readonly property color rule: Colours.alpha(Colours.ink, 0.3)
     readonly property int total: {
         let n = 0;

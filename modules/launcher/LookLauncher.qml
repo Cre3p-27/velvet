@@ -726,7 +726,7 @@ PanelWindow {
                 horizontalAlignment: Text.AlignHCenter
                 text: ({
                         arcade: "PLAYER 1  ·  CREDIT 99",
-                        index: Qt.formatDateTime(new Date(), "dddd, d MMMM yyyy").toUpperCase() + "  ·  EVERY PROGRAM ON THIS MACHINE",
+                        index: Qt.formatDateTime(Time.minute, "dddd, d MMMM yyyy").toUpperCase() + "  ·  EVERY PROGRAM ON THIS MACHINE",
                         grimoire: "~ speak the name of what you would summon ~"
                     })[root.style] ?? ""
                 color: root.dim

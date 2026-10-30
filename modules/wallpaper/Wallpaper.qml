@@ -359,7 +359,7 @@ PanelWindow {
     //  The picture itself knows what time it is: warm at sunset, cool and
     //  deep after midnight, clean through the day. One overlay, gliding on
     //  a slow colour fade so the change never snaps. WALLPAPER → LIVING.
-    SystemClock {
+    ShellClock {
         id: tclock
 
         precision: SystemClock.Minutes

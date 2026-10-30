@@ -1756,6 +1756,59 @@ FocusScope {
                             }
                         }
                     }
+
+                    // How big a new window comes up on a floating desktop
+                    // (one that would cover most of the screen comes down to
+                    // this share of it, in the middle)
+                    P5Text {
+                        visible: modeCard.mode === "floating"
+                        width: parent.width
+                        text: "NEW WINDOWS OPEN"
+                        color: Colours.inkDim
+                        font.pixelSize: Appearance.font.size.tiny
+                        tracking: 1.5
+                    }
+
+                    Row {
+                        visible: modeCard.mode === "floating"
+                        width: parent.width
+                        spacing: 6
+
+                        Repeater {
+                            model: [
+                                {
+                                    v: 45,
+                                    label: "SMALL",
+                                    glyph: "photo_size_select_small"
+                                },
+                                {
+                                    v: 60,
+                                    label: "MEDIUM",
+                                    glyph: "crop_square"
+                                },
+                                {
+                                    v: 75,
+                                    label: "LARGE",
+                                    glyph: "photo_size_select_large"
+                                },
+                                {
+                                    v: 90,
+                                    label: "HUGE",
+                                    glyph: "open_in_full"
+                                }
+                            ]
+
+                            MiniButton {
+                                required property var modelData
+
+                                width: (modeCol.width - 18) / 4
+                                label: modelData.label
+                                glyph: modelData.glyph
+                                accent: Config.scene.floatSize === modelData.v
+                                onClicked: Config.set("scene.floatSize", modelData.v)
+                            }
+                        }
+                    }
                 }
             }
 

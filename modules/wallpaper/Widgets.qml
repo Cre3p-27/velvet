@@ -187,7 +187,7 @@ Item {
             width: clockCol.implicitWidth
             height: clockCol.implicitHeight
 
-            SystemClock {
+            ShellClock {
                 id: clock
 
                 precision: SystemClock.Minutes   // HH:mm — waking every second bought nothing
@@ -754,7 +754,7 @@ Item {
 
                     Image {
                         anchors.fill: parent
-                        source: `file://${Quickshell.env("HOME") ?? ""}/.face`
+                        source: Avatar.url
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                     }
@@ -791,7 +791,7 @@ Item {
             width: greetCol.implicitWidth
             height: greetCol.implicitHeight
 
-            SystemClock {
+            ShellClock {
                 id: greetClock
 
                 precision: SystemClock.Minutes
@@ -850,7 +850,7 @@ Item {
                 id: face
 
                 anchors.fill: parent
-                source: `file://${Quickshell.env("HOME") ?? ""}/.face`
+                source: Avatar.url
                 sourceSize.width: 144
                 sourceSize.height: 144
                 fillMode: Image.PreserveAspectCrop
@@ -896,7 +896,7 @@ Item {
         Column {
             spacing: 0
 
-            SystemClock {
+            ShellClock {
                 id: calClock
 
                 precision: SystemClock.Minutes

@@ -6,6 +6,7 @@
 //  touches PAM itself.
 import qs.config
 import qs.services
+import qs.components
 import Quickshell
 import Quickshell.Io
 import QtQuick
@@ -114,9 +115,10 @@ Item {
     property real shake: 0
     property real recoil: 1
 
-    // the picture of the user: ~/.face when it exists
-    readonly property string faceUrl: `file://${Quickshell.env("HOME") ?? ""}/.face`
-    property bool hasFace: false
+    // the picture of the user: ~/.face when it exists (services/Avatar.qml —
+    // a new picture shows at once, in the wallpaper's colours if asked)
+    readonly property string faceUrl: Avatar.url
+    readonly property bool hasFace: Avatar.exists && Avatar.url !== ""
 
     function focusInput(): void {
         input.forceActiveFocus();
@@ -131,17 +133,10 @@ Item {
         input.text = "";
     }
 
-    SystemClock {
+    ShellClock {
         id: clock
 
         precision: SystemClock.Seconds
-    }
-
-    FileView {
-        path: root.faceUrl.replace("file://", "")
-        printErrors: false
-        onLoaded: root.hasFace = true
-        onLoadFailed: root.hasFace = false
     }
 
     // The invisible field every face types into. Esc empties it.
