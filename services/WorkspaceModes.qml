@@ -1,8 +1,9 @@
 //  VELVET  ·  services/WorkspaceModes.qml
 //  Each desktop can be told how its windows sit: NORMAL (as Hyprland and your
-//  rules decide), TILING (every window tiles) or FLOATING (every window floats
-//  — the infinite canvas). Set in SUPER+TAB → DESKTOP, kept in
-//  scene.workspaceModes as { "<desktop>": "tiling" | "floating" }.
+//  rules decide), TILING (every window tiles), FLOATING (every window floats
+//  — the infinite canvas) or STAGE (one window in the middle, the others as
+//  cards at the edge — services/Stage.qml). Set in SUPER+TAB → DESKTOP, kept
+//  in scene.workspaceModes as { "<desktop>": "tiling" | "floating" | "stage" }.
 //
 //  Two halves:
 //    · a Hyprland window rule per forced desktop, so a window opens in the
@@ -37,7 +38,7 @@ Singleton {
 
     function modeOf(ws: int): string {
         const m = root.modes[String(ws)];
-        return m === "tiling" || m === "floating" ? m : "normal";
+        return m === "tiling" || m === "floating" || m === "stage" ? m : "normal";
     }
 
     function setMode(ws: int, mode: string): void {
@@ -46,7 +47,7 @@ Singleton {
         const next = {};
         for (const k in root.modes)
             next[k] = root.modes[k];
-        if (mode === "tiling" || mode === "floating")
+        if (mode === "tiling" || mode === "floating" || mode === "stage")
             next[String(ws)] = mode;
         else
             delete next[String(ws)];
@@ -108,7 +109,7 @@ Singleton {
             for (const sz in root.sizesUsed)
                 if (parseInt(sz) !== root.share)
                     lines.push(`hl.window_rule({ name = "velvet-ws-${ws}-float-${sz}", enabled = false, match = { workspace = "${ws}" } })`);
-            lines.push(`hl.window_rule({ name = "velvet-ws-${ws}-float-${root.share}", enabled = ${m === "floating"}, match = { workspace = "${ws}", modal = false }, float = true${root.sizeRule} })`);
+            lines.push(`hl.window_rule({ name = "velvet-ws-${ws}-float-${root.share}", enabled = ${m === "floating" || m === "stage"}, match = { workspace = "${ws}", modal = false }, float = true${root.sizeRule} })`);
             lines.push(`hl.window_rule({ name = "velvet-ws-${ws}-tile", enabled = ${m === "tiling"}, match = { workspace = "${ws}", modal = false }, tile = true })`);
         }
         root.known = all;
@@ -201,6 +202,15 @@ Singleton {
         return cls.startsWith("dev.velvet.") || cls === "org.quickshell";
     }
 
+    // a dialog (a file picker, a "save changes?") stays above the window on
+    // stage instead of taking its place
+    function dialog(c: var): bool {
+        const t = Hypr.toplevelFor(c.address ?? "");
+        if (t && t.parent)
+            return true;
+        return /portal/i.test(c.class ?? "") || /^(open|save|choose|select|export|import|print)\b/i.test(c.title ?? "");
+    }
+
     function sweep(json: string): void {
         let list = [];
         try {
@@ -225,6 +235,13 @@ Singleton {
                 continue;
             if (c.title === "Velvet Settings" || c.title === "Welcome to Velvet")
                 continue;
+            // STAGE: a new window takes the stage (the first sweep after a
+            // start only learns what is there)
+            if (mode === "stage") {
+                if (root.primed && c.fullscreen !== 2 && !root.dialog(c))
+                    Stage.arrive(c.address, ws);
+                continue;
+            }
             // fullscreen (2: a game, a video) stays as it is; an app that
             // maximized itself as it opened (1) floats like the rest
             const fitting = mode === "floating" && Config.scene.floatSize > 0 && !Scenes.working;

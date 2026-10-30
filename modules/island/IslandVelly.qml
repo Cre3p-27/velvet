@@ -152,14 +152,36 @@ Item {
         elide: Text.ElideRight
     }
 
+    // ───────────────────────────────────────────────────────────────── face
+    // VELLY → FACE → DOTS: the dot-matrix display (VellyFace.qml). She looks
+    // at your pointer while it is over the island (Island.qml hands it over,
+    // in scene coordinates).
+    property var pointerScene: null
+
+    VellyFace {
+        id: face
+
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: 64
+        width: 180
+        height: 180
+        visible: !orb.shown
+        onScreen: root.onScreen && face.visible
+        pointer: root.pointerScene ? face.mapFromItem(null, root.pointerScene.x, root.pointerScene.y) : null
+    }
+
     // ────────────────────────────────────────────────────────────────── orb
+    // VELLY → FACE → ORB
     Item {
         id: orb
+
+        readonly property bool shown: Config.velly.face === "orb"
 
         anchors.horizontalCenter: parent.horizontalCenter
         y: 68
         width: 172
         height: 172
+        visible: orb.shown
 
         readonly property int bars: 28
         readonly property bool listening: root.phase === "listening" || root.phase === "hearing"
@@ -167,7 +189,7 @@ Item {
         readonly property bool speaking: root.phase === "speaking"
         // the live levels arrive ~25 times a second while she listens: off
         // screen they are not read at all, or the hidden orb keeps redrawing
-        readonly property real energy: root.onScreen ? Velly.listenEnergy() : 0.08
+        readonly property real energy: root.onScreen && orb.shown ? Velly.listenEnergy() : 0.08
 
         function barLength(i: int): real {
             if (!root.onScreen)
@@ -193,7 +215,7 @@ Item {
 
         // Two clocks, one for each kind of motion; both stop when she sleeps.
         NumberAnimation on sweep {
-            running: orb.thinking && root.onScreen
+            running: orb.thinking && root.onScreen && orb.shown
             loops: Animation.Infinite
             from: 0
             to: 1
@@ -201,7 +223,7 @@ Item {
             easing.type: Easing.Linear
         }
         NumberAnimation on pulse {
-            running: !orb.thinking && root.onScreen
+            running: !orb.thinking && root.onScreen && orb.shown
             loops: Animation.Infinite
             from: 0
             to: Math.PI * 2
@@ -304,7 +326,7 @@ Item {
             opacity: orb.thinking ? 1 : 0
 
             RotationAnimation on rotation {
-                running: orb.thinking && root.onScreen
+                running: orb.thinking && root.onScreen && orb.shown
                 loops: Animation.Infinite
                 from: 0
                 to: 360

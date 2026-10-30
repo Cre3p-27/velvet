@@ -214,6 +214,148 @@ Singleton {
         },
         {
             kind: "page",
+            name: "DOCK",
+            aka: "SECOND TASKBAR · ZWEITE TASKLEISTE · SHORTCUTS · VERKNÜPFUNGEN · FAVOURITES",
+            help: "A second taskbar of your own shortcuts on an edge of its own: apps, terminal commands, folders, web links and the shell's own doors (settings, the scratchpad, the launcher …). + adds one (type to find an app, or switch to COMMAND, FOLDER, WEB LINK, SHELL), drag along the dock to reorder, drag one off to remove it. A click opens it — an app that is already open comes forward (click again: its next window); a middle click opens a new one.",
+            sub: "YOUR OWN SHORTCUTS  ·  APPS, COMMANDS, FOLDERS, LINKS",
+            icon: "dock_to_bottom",
+            items: [
+                {
+                    kind: "toggle",
+                    key: "dock.enabled",
+                    name: "DOCK",
+                    aka: "SECOND TASKBAR · ZWEITE TASKLEISTE",
+                    help: "The second taskbar, on every screen. The first time it comes up it holds the apps you pinned in the launcher (or the ones you open most).",
+                    sub: "THE SECOND TASKBAR, ON EVERY SCREEN"
+                },
+                {
+                    kind: "choice",
+                    key: "dock.position",
+                    name: "EDGE",
+                    help: "Which edge of the screen it lives on — the bottom like a dock, or any other.",
+                    sub: "BOTTOM · TOP · LEFT · RIGHT",
+                    when: { key: "dock.enabled", is: true },
+                    options: [
+                        { value: "bottom", label: "BOTTOM" },
+                        { value: "top", label: "TOP" },
+                        { value: "left", label: "LEFT" },
+                        { value: "right", label: "RIGHT" }
+                    ]
+                },
+                {
+                    kind: "slider",
+                    key: "dock.size",
+                    name: "ICON SIZE",
+                    help: "How big its icons are, in pixels.",
+                    sub: "HOW BIG THE ICONS ARE",
+                    when: { key: "dock.enabled", is: true },
+                    min: 28, max: 80, step: 2, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "choice",
+                    key: "dock.style",
+                    name: "STYLE",
+                    help: "AUTO follows the look you wear: pop-it BUBBLES on FIDGET, GLASS on the glass looks, a SOLID pill on the rest. Or pick one.",
+                    sub: "AUTO · SOLID · GLASS · BUBBLES",
+                    when: { key: "dock.enabled", is: true },
+                    options: [
+                        { value: "auto", label: "AUTO" },
+                        { value: "solid", label: "SOLID" },
+                        { value: "glass", label: "GLASS" },
+                        { value: "bubble", label: "BUBBLES" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "dock.magnify",
+                    name: "MAGNIFY",
+                    aka: "VERGRÖSSERN · ZOOM",
+                    help: "The icon under the pointer grows out of the dock, its neighbours a little, like a wave following your hand.",
+                    sub: "THE ICON UNDER THE POINTER GROWS",
+                    when: { key: "dock.enabled", is: true }
+                },
+                {
+                    kind: "toggle",
+                    key: "dock.labels",
+                    name: "NAMES",
+                    help: "The name of what you point at, just beside it.",
+                    sub: "THE NAME OF WHAT YOU POINT AT",
+                    when: { key: "dock.enabled", is: true }
+                },
+                {
+                    kind: "toggle",
+                    key: "dock.running",
+                    name: "OPEN APPS TOO",
+                    help: "Apps that are open but not on the dock show after a thin line, so the dock doubles as a task list. A dot under an icon says it is open (one per window, up to three).",
+                    sub: "OPEN APPS AFTER A LINE  ·  DOTS FOR OPEN WINDOWS",
+                    when: { key: "dock.enabled", is: true }
+                },
+                {
+                    kind: "toggle",
+                    key: "dock.autoHide",
+                    name: "HIDE UNTIL NEEDED",
+                    aka: "AUTO HIDE · AUSBLENDEN",
+                    help: "Away until the pointer touches its edge; then it springs out. Off: it keeps its place and windows stay clear of it.",
+                    sub: "SPRINGS OUT WHEN YOU TOUCH ITS EDGE",
+                    when: { key: "dock.enabled", is: true }
+                }
+            ]
+        },
+        {
+            kind: "page",
+            name: "STAGE",
+            aka: "STAGE MANAGER · BÜHNE · FENSTER VERWALTEN · WINDOW MANAGEMENT · CARDS",
+            help: "A desktop can be a STAGE (SUPER+TAB → DESKTOP → STAGE): one window stands in the middle, every other window of that desktop waits at the edge as a card that leans back into the screen — a live picture of itself with the app's badge. Point at a card: it straightens up and goes live. Click: that window steps on stage, the one there becomes a card. A new window takes the stage; close the one on stage and the last one before it comes back. CTRL+SUPER+arrows walk the cards. Turning the desktop back to NORMAL, TILING or FLOATING brings every card back out.",
+            sub: "ONE WINDOW IN THE MIDDLE  ·  THE OTHERS AS CARDS AT THE EDGE",
+            icon: "view_sidebar",
+            items: [
+                {
+                    kind: "slider",
+                    key: "stage.size",
+                    name: "ON STAGE",
+                    help: "How big the window on stage is: a share of the screen that the bar and the cards leave, in the middle of it.",
+                    sub: "HOW BIG THE WINDOW IN THE MIDDLE IS",
+                    min: 40, max: 94, step: 2, fmt: "int", unit: "%"
+                },
+                {
+                    kind: "choice",
+                    key: "stage.side",
+                    name: "THE CARDS",
+                    help: "Which edge the cards wait at.",
+                    sub: "LEFT · RIGHT",
+                    options: [
+                        { value: "left", label: "LEFT" },
+                        { value: "right", label: "RIGHT" }
+                    ]
+                },
+                {
+                    kind: "slider",
+                    key: "stage.card",
+                    name: "CARD SIZE",
+                    help: "How wide a card is, in pixels.",
+                    sub: "HOW WIDE A CARD IS",
+                    min: 110, max: 260, step: 2, fmt: "int", unit: "px"
+                },
+                {
+                    kind: "slider",
+                    key: "stage.cards",
+                    name: "HOW MANY",
+                    help: "How many cards show at once — the rest wait as +N, and come forward as you bring cards on stage.",
+                    sub: "CARDS AT ONCE",
+                    min: 2, max: 10, step: 1, fmt: "int"
+                },
+                {
+                    kind: "toggle",
+                    key: "stage.tilt",
+                    name: "LEAN BACK",
+                    aka: "TILT · 3D · NEIGEN",
+                    help: "The cards lean back into the screen, the far side smaller; the one you point at straightens up. Off: flat cards.",
+                    sub: "CARDS LEAN BACK INTO THE SCREEN"
+                }
+            ]
+        },
+        {
+            kind: "page",
             name: "DYNAMIC ISLAND",
             help: "The island that rises when you touch its screen edge: a pill on the top edge, a rail of icons on the left or right edge. It holds the modules (music, map, tasks, weather, system, Velly): swipe, scrub or scroll to flip between them, click or pull one out to open it, hold it to wake Velly. Docked, it grows out of the screen frame or the taskbar.",
             sub: "TOP PILL OR SIDE RAIL  ·  DOCKED IN THE FRAME",
@@ -346,6 +488,30 @@ Singleton {
                 },
                 {
                     kind: "toggle",
+                    key: "map.islandDepth",
+                    name: "DEPTH",
+                    aka: "TIEFE · GLASS · RIM",
+                    help: "The island is deep where it meets the frame and turns to glass towards its free edge: the wallpaper's colour comes into it there, and a rim of light runs along that edge — like a slab of glass hanging out of the frame.",
+                    sub: "DEEP AT THE FRAME  ·  GLASS AND A RIM OF LIGHT AT THE EDGE"
+                },
+                {
+                    kind: "toggle",
+                    key: "map.islandBlurIn",
+                    name: "INTO FOCUS",
+                    aka: "UNSCHÄRFE · BLUR",
+                    help: "What opens in the island comes up out of a blur, as if through frosted glass — and so does the next module when you switch.",
+                    sub: "MODULES COME UP OUT OF A BLUR"
+                },
+                {
+                    kind: "toggle",
+                    key: "map.islandSparkles",
+                    name: "SPARKS",
+                    aka: "FUNKEN · PARTICLES",
+                    help: "A few sparks fly off the island's corners when it lands open, and fade.",
+                    sub: "A FEW SPARKS WHEN IT LANDS OPEN"
+                },
+                {
+                    kind: "toggle",
                     key: "map.islandDock",
                     name: "DOCK TO THE EDGE",
                     help: "The island grows out of its edge instead of floating near it: flush with the screen frame or the taskbar there, square where it meets them and flared into them with soft inner curves. With SCREEN FRAME on and the theme FRAME, island, frame and bar read as one surface, and the frame's OUTLINE runs round the island. Off: a free pill a little way off the edge.",
@@ -408,7 +574,7 @@ Singleton {
                     key: "notifs.inFrame",
                     name: "NOTIFICATIONS IN THE FRAME",
                     aka: "BENACHRICHTIGUNGEN IM RAHMEN · NOTIFICATIONS IN THE FRAME · RAHMEN",
-                    help: "The popups come out of the SCREEN FRAME itself: a tab of the frame's own colour grows from the corner (or the middle of the edge) you chose under POSITION, its sides flowing into the frame in soft curves, and the cards sit in it in the frame's ink — frame, bar, island and notifications as one surface. Needs TASKBAR → SCREEN FRAME.",
+                    help: "The popups come out of the SCREEN FRAME itself: a tab of the frame's own colour grows from the corner (or the middle of the edge) you chose under POSITION, its sides flowing into the frame in soft curves, and the cards sit in it in the frame's ink — frame, bar, island and notifications as one surface. The centre (SUPER+N) comes out of the frame too, as a drawer (THE CENTRE TOO). Needs TASKBAR → SCREEN FRAME.",
                     sub: "A TAB OF THE FRAME THAT THE CARDS SIT IN",
                     when: { key: "bar.frame", is: true }
                 },
@@ -563,6 +729,41 @@ Singleton {
                     aka: "JETZT WECKEN",
                     help: "Opens the island and a session with Velly, just like the long press.",
                     sub: "OPENS THE ISLAND AND A SESSION — LIKE THE LONG PRESS"
+                },
+                {
+                    kind: "choice",
+                    key: "velly.face",
+                    name: "FACE",
+                    aka: "GESICHT · DOT MATRIX · PUNKTE · ORB",
+                    help: "How Velly looks in the island. DOTS: a round dot-matrix display with a face — she blinks, looks at your pointer, goes wide-eyed while she listens, looks up while she thinks (a comet of dots runs round the rim), talks with a mouth of dot bars, squints happily when an answer has landed, and a halo of dot rays rides the voice. ORB: the breathing rings and radial bars.",
+                    sub: "DOTS · ORB",
+                    options: [
+                        { value: "dots", label: "DOTS" },
+                        { value: "orb", label: "ORB" }
+                    ]
+                },
+                {
+                    kind: "choice",
+                    key: "velly.faceDots",
+                    name: "DOTS",
+                    aka: "PUNKTE · GRAIN · RASTER",
+                    help: "How fine her display is: CHUNKY (17 dots across), CLASSIC (21) or FINE (25).",
+                    sub: "CHUNKY · CLASSIC · FINE",
+                    when: { key: "velly.face", is: "dots" },
+                    options: [
+                        { value: 17, label: "CHUNKY" },
+                        { value: 21, label: "CLASSIC" },
+                        { value: 25, label: "FINE" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "velly.faceHalo",
+                    name: "HALO",
+                    aka: "STRAHLEN · RAYS",
+                    help: "The ring of dot rays round her display: it breathes in a slow wave, rides your voice while she listens and hers while she speaks.",
+                    sub: "DOT RAYS THAT RIDE THE VOICE",
+                    when: { key: "velly.face", is: "dots" }
                 },
                 {
                     kind: "choice",
@@ -1715,9 +1916,18 @@ Singleton {
                     key: "notifs.inFrame",
                     name: "IN THE FRAME",
                     aka: "BENACHRICHTIGUNGEN IM RAHMEN · NOTIFICATIONS IN THE FRAME · RAHMEN",
-                    help: "The popups come out of the SCREEN FRAME itself: a tab of the frame's own colour grows from the corner (or the middle of the edge) you chose under POSITION, its sides flowing into the frame in soft curves, and the cards sit in it in the frame's ink — frame, bar, island and notifications as one surface. Needs TASKBAR → SCREEN FRAME.",
+                    help: "The popups come out of the SCREEN FRAME itself: a tab of the frame's own colour grows from the corner (or the middle of the edge) you chose under POSITION, its sides flowing into the frame in soft curves, and the cards sit in it in the frame's ink — frame, bar, island and notifications as one surface. The centre (SUPER+N) comes out of the frame too, as a drawer (THE CENTRE TOO). Needs TASKBAR → SCREEN FRAME.",
                     sub: "A TAB OF THE FRAME THAT THE CARDS SIT IN",
                     when: { key: "bar.frame", is: true }
+                },
+                {
+                    kind: "toggle",
+                    key: "notifs.centreInFrame",
+                    name: "THE CENTRE TOO",
+                    aka: "NOTIFICATION CENTRE IN THE FRAME · CENTRE · SUPER+N · ZENTRALE IM RAHMEN",
+                    help: "The notification centre (SUPER+N, or a click on the clock) slides out of the frame's side as a drawer of the frame's own colour, its ends flowing into the frame, instead of a card floating beside it. Off: the card, as before.",
+                    sub: "SUPER+N AS A DRAWER OF THE FRAME",
+                    when: { key: "notifs.inFrame", is: true }
                 },
                 {
                     kind: "slider",
@@ -2524,7 +2734,7 @@ Singleton {
     readonly property var thisLook: {
         const v = id => ({ key: "appearance.vibe", is: id });
         const glass = { key: "appearance.vibe", in: ["glass", "chrome"] };
-        const soft = { key: "appearance.vibe", in: ["neu", "clay"] };
+        const soft = { key: "appearance.vibe", in: ["neu", "clay", "fidget"] };
         const quiet = { key: "appearance.skin", is: "clean" };
         const persona = { key: "appearance.skin", is: "persona" };
         const out = [
@@ -2732,7 +2942,7 @@ Singleton {
                     { value: "sky", label: "SKY" },
                     { value: "lilac", label: "LILAC" }
                 ],
-                when: v("clay")
+                when: { key: "appearance.vibe", in: ["clay", "fidget"] }
             },
             { kind: "info", name: "THE QUIET SHEET", sub: "ROWS AND SIDEBAR", help: "How the calm settings window lays out its rows.", when: quiet },
             {

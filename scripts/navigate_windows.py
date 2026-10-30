@@ -16,10 +16,13 @@ the screen's middle and skipped windows or went nowhere.
     kinds are neighbours, so the keys never go dead
   · only tiled windows: Hyprland's own movefocus (it also crosses screens)
   · past the last window in a direction: round to the far side
+  · a STAGE desktop: ↓/→ brings the latest card on stage, ↑/← the oldest
+    (services/Stage.qml)
 
 Usage: python3 navigate_windows.py <left|right|up|down>
 """
 
+import json
 import os
 import re
 import subprocess
@@ -30,6 +33,16 @@ from hypr_ipc import hyprctl_json, move_focus, move_window_exact_lua, focus_wind
 
 DIR_SHORT = {"left": "l", "right": "r", "up": "u", "down": "d"}
 OPPOSITE = {"left": "right", "right": "left", "up": "down", "down": "up"}
+
+
+def stage_desktop(ws_id):
+    """Is this desktop a STAGE (scene.workspaceModes in config.json)?"""
+    path = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "velvet", "config.json")
+    try:
+        with open(path) as f:
+            return (json.load(f).get("scene", {}).get("workspaceModes") or {}).get(str(ws_id)) == "stage"
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def focused_monitor():
@@ -163,6 +176,10 @@ def main():
     ws = hyprctl_json(["activeworkspace"])
     if not ws:
         sys.exit(1)
+    if stage_desktop(ws["id"]):
+        step = "1" if direction in ("down", "right") else "-1"
+        subprocess.run(["qs", "-c", "velvet", "ipc", "call", "stage", "step", step], capture_output=True, timeout=3)
+        return
     fixed = fixed_classes()
     windows = [w for w in (hyprctl_json(["clients"]) or [])
                if w.get("workspace", {}).get("id") == ws["id"] and w.get("mapped", True)

@@ -91,6 +91,14 @@ Item {
     property real tabH: 0
     readonly property bool tabOn: root.tabPos !== "" && root.tabH > 0.5 && root.tabW > 1
 
+    // The notification centre's drawer (NOTIFICATIONS → THE CENTRE TOO): the
+    // frame's side band grown thick, the whole height of the desktop, its
+    // edge flowing into the top and bottom of the frame in quarter curves —
+    // "side-right" / "side-left", `drawerW` = how far it is out.
+    property string drawerPos: ""
+    property real drawerW: 0
+    property real drawerH: 0
+
     // the cubic that draws a quarter circle
     readonly property real kq: 0.5523
 
@@ -115,15 +123,24 @@ Item {
     // v into the desktop — and written backwards when the mapping mirrors it
     // once, so it always runs clockwise on the screen.
     function tabPath(): string {
-        if (!root.tabOn)
+        return root.tabShape(root.tabPos, root.tabW, root.tabH);
+    }
+
+    function drawerPath(): string {
+        return root.tabShape(root.drawerPos, root.drawerW, root.drawerH);
+    }
+
+    function tabShape(pos: string, wantW: real, wantH: real): string {
+        if (pos === "" || wantH <= 0.5 || wantW <= 1)
             return "";
-        const pos = root.tabPos;
+        if (pos.startsWith("side-"))
+            return root.sideShape(pos === "side-right", wantW);
         const top = !pos.startsWith("bottom");
         const centre = pos.endsWith("centre");
         const right = pos.endsWith("right");
         const L = root.ix, T = root.iy, R = root.ix + root.iw, B = root.iy + root.ih;
-        const th = Math.min(root.tabH, root.ih - 2);
-        const tw = Math.min(root.tabW, root.iw - 2);
+        const th = Math.min(wantH, root.ih - 2);
+        const tw = Math.min(wantW, root.iw - 2);
         const k = root.kq;
         // the convex corners inside, and the concave flares into the frame
         const c = Math.max(0, Math.min(Math.max(8, root.rr), th / 2, tw / 2));
@@ -202,6 +219,60 @@ Item {
         }
         // one mirror turns the path round: write it backwards
         if (sx * sy < 0) {
+            const rev = [pts[pts.length - 1].p];
+            for (let i = pts.length - 1; i >= 1; i--) {
+                const seg = pts[i];
+                const to = i - 1 === 0 ? pts[0] : pts[i - 1].p;
+                rev.push(seg.c1 ? {
+                    c1: seg.c2,
+                    c2: seg.c1,
+                    p: to
+                } : {
+                    p: to
+                });
+            }
+            pts = rev;
+        }
+        const P = q => `${root.f2(q[0])},${root.f2(q[1])}`;
+        let out = `M ${P(pts[0])}`;
+        for (let i = 1; i < pts.length; i++) {
+            const seg = pts[i];
+            out += seg.c1 ? ` C ${P(seg.c1)} ${P(seg.c2)} ${P(seg.p)}` : ` L ${P(seg.p)}`;
+        }
+        return out + " Z";
+    }
+
+    // A side drawer, in "side space": u in from the side edge, y down the
+    // screen. Its flares give the desktop round corners where they meet it,
+    // so they grow with the drawer (a sliver of drawer, a sliver of curve).
+    function sideShape(right: bool, wantW: real): string {
+        const L = root.ix, T = root.iy, R = root.ix + root.iw, B = root.iy + root.ih;
+        const tw = Math.min(wantW, root.iw - 2);
+        const k = root.kq;
+        const f = Math.max(0, Math.min(Math.max(10, root.rr), tw, root.ih / 4));
+        const e = Math.max(root.inset("top"), root.inset("bottom"), root.inset("left"), root.inset("right")) + 2;
+        const Q = (u, y) => [right ? R - u : L + u, y];
+        let pts = [Q(tw + f, T - e), {
+                p: Q(-e, T - e)
+            }, {
+                p: Q(-e, B + e)
+            }, {
+                p: Q(tw + f, B + e)
+            }, {
+                p: Q(tw + f, B)
+            }, {
+                c1: Q(tw + f - k * f, B),
+                c2: Q(tw, B - f + k * f),
+                p: Q(tw, B - f)
+            }, {
+                p: Q(tw, T + f)
+            }, {
+                c1: Q(tw, T + f - k * f),
+                c2: Q(tw + f - k * f, T),
+                p: Q(tw + f, T)
+            }];
+        // the left side mirrors it once: write it backwards (clockwise again)
+        if (!right) {
             const rev = [pts[pts.length - 1].p];
             for (let i = pts.length - 1; i >= 1; i--) {
                 const seg = pts[i];
@@ -312,7 +383,7 @@ Item {
                         strokeWidth: 3
 
                         PathSvg {
-                            path: root.holePath() + " " + root.tabPath()
+                            path: root.holePath() + " " + root.tabPath() + " " + root.drawerPath()
                         }
                     }
                 }
@@ -350,6 +421,17 @@ Item {
 
                         PathSvg {
                             path: root.tabPath()
+                        }
+                    }
+
+                    // the centre's drawer
+                    ShapePath {
+                        fillColor: root.solid
+                        strokeColor: "transparent"
+                        strokeWidth: 0
+
+                        PathSvg {
+                            path: root.drawerPath()
                         }
                     }
                 }

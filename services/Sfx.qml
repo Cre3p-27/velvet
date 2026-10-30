@@ -113,9 +113,6 @@ Singleton {
         root.lastTick = now;
         play("tick", gain > 0 ? gain : 0.7);
     }
-    function lever(): void {
-        play("lever");
-    }
     function nope(): void {
         play("nope", 0.8);
     }

@@ -55,6 +55,7 @@ import qs.config
 import qs.services
 import qs.components
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import QtQuick.Shapes
@@ -253,6 +254,9 @@ PanelWindow {
     // The island starts on the map, in the middle of the swipe cycle:
     // music lies left of it, tasks/weather/system right.
     property int moduleIdx: root.order.indexOf("desk")
+    // the open module's entry — never past the end, even for the moment
+    // between a shorter cycle and the clamp below
+    readonly property var cur: root.meta[Math.max(0, Math.min(root.meta.length - 1, root.moduleIdx))]
     property int previewIdx: root.order.indexOf("desk")
 
     // Turning the TASKS module off (or on) reshapes the cycle — clamp the
@@ -541,8 +545,8 @@ PanelWindow {
     // only once the swipe is past its commit point (that is the promise)
     readonly property int shownIdx: root.pressed && root.axis === "h" && (root.onSide || root.swipePast) ? root.previewIdx : root.moduleIdx
     readonly property bool sideLabels: root.onSide && !root.expanded && !(root.pressed && root.axis === "v") && (root.hoverPeek || (root.pressed && root.axis === "h"))
-    readonly property real sideFullW: root.railW + root.meta[root.moduleIdx].w
-    readonly property real sideFullH: Math.max(root.railH, root.meta[root.moduleIdx].h)
+    readonly property real sideFullW: root.railW + root.cur.w
+    readonly property real sideFullH: Math.max(root.railH, root.cur.h)
     readonly property bool sideOpen: root.onSide && (root.expanded || (root.pressed && root.axis === "v"))
 
     readonly property bool showText: root.touched || root.pressed || root.expanded || root.hoverPeek
@@ -569,7 +573,7 @@ PanelWindow {
     readonly property real textW: Math.min(480, Math.max(restW, 48 + Math.min(320, pillLabel.implicitWidth) + 10 + 41 + 20))
 
     readonly property real shellW: {
-        const m = root.meta[root.moduleIdx];
+        const m = root.cur;
         if (root.onSide) {
             const rest = root.railW + (root.sideLabels ? root.labelW : 0);
             if (root.expanded)
@@ -596,9 +600,9 @@ PanelWindow {
             return root.railH;
         }
         if (root.expanded)
-            return root.meta[root.moduleIdx].h;
+            return root.cur.h;
         if (root.pressed && root.axis === "v")
-            return root.pillH + (root.meta[root.moduleIdx].h - root.pillH) * root.pullEase(root.progress);
+            return root.pillH + (root.cur.h - root.pillH) * root.pullEase(root.progress);
         return root.pillH;
     }
 
@@ -642,6 +646,17 @@ PanelWindow {
             return Colours.light ? Colours.alpha(Colours.surfaceHigh, op) : Qt.rgba(0.019, 0.019, 0.021, op);
         }
     }
+    // DEPTH (MODULES → DYNAMIC ISLAND): the glass at the free edge — the
+    // island's own colour with the wallpaper's in it, a touch see-through —
+    // and the rim of light along that edge
+    readonly property bool depth: Config.map.islandDepth
+    readonly property color lipCol: {
+        const t = Colours.mix(root.shellCol, Colours.wallpaperTint, Colours.light ? 0.18 : 0.3);
+        return Qt.rgba(t.r, t.g, t.b, root.shellCol.a * (Colours.light ? 0.94 : 0.86));
+    }
+    readonly property color rimCol: Colours.light ? Qt.rgba(1, 1, 1, 0.95) : Colours.alpha(Colours.mix(Colours.wallpaperTint, "#ffffff", 0.55), 0.8)
+    // the rim's width at the free edge, and up the sides
+    readonly property real rimW: root.depth ? 1.6 : 0
     // glass catches light at the top: the sheen's first stop
     readonly property color sheenCol: Qt.rgba(Math.min(1, root.shellCol.r + 0.10), Math.min(1, root.shellCol.g + 0.10), Math.min(1, root.shellCol.b + 0.11), Math.min(1, root.shellCol.a + 0.08))
 
@@ -1124,6 +1139,10 @@ PanelWindow {
         target: Panels
 
         function onIslandSetModuleChanged(): void {
+            // an index past the last module is not a module (it used to leave
+            // the island showing nothing, throwing on every frame)
+            if (Panels.islandSetModule >= root.meta.length)
+                Panels.islandSetModule = -1;
             if (root.active && Panels.islandSetModule >= 0) {
                 root.moduleIdx = Panels.islandSetModule;
                 root.touched = true;
@@ -1137,7 +1156,7 @@ PanelWindow {
             // in the same breath
             if (!root.active || Panels.islandSetExpand === -2)
                 return;
-            if (Panels.islandSetExpand < 0) {
+            if (Panels.islandSetExpand < 0 || Panels.islandSetExpand >= root.meta.length) {
                 root.expanded = false;
             } else {
                 root.moduleIdx = Panels.islandSetExpand;
@@ -1273,7 +1292,38 @@ PanelWindow {
                 closeTimer.restart();
                 return;
             }
-            root.dismissQuiet();
+            // Lost hover is not always a hand that left. A mouse that drops
+            // off the seat and comes back (Bluetooth, a wireless receiver
+            // waking up) re-enters the window "nowhere" until it moves, and
+            // the island shut under a resting pointer. Ask the compositor
+            // where the pointer really is before closing.
+            whereIsIt.running = false;
+            whereIsIt.running = true;
+        }
+    }
+
+    Process {
+        id: whereIsIt
+
+        command: ["hyprctl", "cursorpos", "-j"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                if (!root.active || keepHover.hovered)
+                    return;
+                let at = null;
+                try {
+                    at = JSON.parse(text);
+                } catch (e) {}
+                if (at && typeof at.x === "number" && root.modelData) {
+                    const q = shield.mapFromItem(inputArea, at.x - root.modelData.x, at.y - root.modelData.y);
+                    // still on it: look again in a moment (the next move brings the hover back)
+                    if (shield.contains(q)) {
+                        closeTimer.restart();
+                        return;
+                    }
+                }
+                root.dismissQuiet();
+            }
         }
     }
 
@@ -1345,6 +1395,52 @@ PanelWindow {
                 shadowVerticalOffset: 0
             }
 
+            // DEPTH: the rim of light — the whole island again, under it, lit
+            // towards the free edge; the body above stands back from that edge
+            // by the rim's width, so only the edge shows it
+            Shape {
+                id: rimShape
+
+                x: dockHost.pad
+                y: dockHost.pad
+                width: capsule.width
+                height: capsule.height
+                visible: root.depth
+                preferredRendererType: Shape.CurveRenderer
+
+                LinearGradient {
+                    id: rimFill
+
+                    x1: root.edge === "right" ? rimShape.width : 0
+                    y1: 0
+                    x2: root.edge === "left" ? rimShape.width : 0
+                    y2: root.onSide ? 0 : rimShape.height
+
+                    GradientStop {
+                        position: 0
+                        color: "transparent"
+                    }
+                    GradientStop {
+                        position: 0.5
+                        color: "transparent"
+                    }
+                    GradientStop {
+                        position: 1
+                        color: root.rimCol
+                    }
+                }
+
+                ShapePath {
+                    fillGradient: rimFill
+                    strokeColor: "transparent"
+                    strokeWidth: 0
+
+                    PathSvg {
+                        path: root.dockPath(capsule.width, capsule.height, false)
+                    }
+                }
+            }
+
             Shape {
                 id: dockShape
 
@@ -1353,6 +1449,35 @@ PanelWindow {
                 width: capsule.width
                 height: capsule.height
                 preferredRendererType: Shape.CurveRenderer
+                transform: Scale {
+                    origin.x: root.edge === "left" ? 0 : (root.edge === "right" ? dockShape.width : dockShape.width / 2)
+                    origin.y: root.onSide ? dockShape.height / 2 : 0
+                    xScale: root.onSide ? Math.max(0, (dockShape.width - root.rimW) / Math.max(1, dockShape.width)) : Math.max(0, (dockShape.width - root.rimW * 1.5) / Math.max(1, dockShape.width))
+                    yScale: root.onSide ? Math.max(0, (dockShape.height - root.rimW * 1.5) / Math.max(1, dockShape.height)) : Math.max(0, (dockShape.height - root.rimW) / Math.max(1, dockShape.height))
+                }
+
+                // DEPTH: deep at the joint, glass at the free edge
+                LinearGradient {
+                    id: depthFill
+
+                    x1: root.edge === "right" ? dockShape.width : 0
+                    y1: 0
+                    x2: root.edge === "left" ? dockShape.width : 0
+                    y2: root.onSide ? 0 : dockShape.height
+
+                    GradientStop {
+                        position: 0
+                        color: root.shellCol
+                    }
+                    GradientStop {
+                        position: 0.58
+                        color: root.shellCol
+                    }
+                    GradientStop {
+                        position: 1
+                        color: root.lipCol
+                    }
+                }
 
                 LinearGradient {
                     id: sheen
@@ -1374,7 +1499,7 @@ PanelWindow {
 
                 ShapePath {
                     fillColor: root.shellCol
-                    fillGradient: root.glassy ? sheen : null
+                    fillGradient: root.glassy ? sheen : (root.depth ? depthFill : null)
                     strokeColor: "transparent"
                     strokeWidth: 0
 
@@ -1393,6 +1518,77 @@ PanelWindow {
                     }
                 }
             }
+        }
+
+        // SPARKS (MODULES → DYNAMIC ISLAND): a few fly off the free edge's
+        // corners as the island lands open, and fade
+        Item {
+            id: sparks
+
+            property real t: 1
+            property var seeds: []
+
+            anchors.fill: parent
+            z: 11
+            visible: sparks.t < 1
+
+            function fire(): void {
+                const s = [];
+                for (let i = 0; i < 12; i++)
+                    s.push([Math.random(), Math.random(), Math.random()]);
+                sparks.seeds = s;
+                sparkRun.restart();
+            }
+
+            NumberAnimation {
+                id: sparkRun
+
+                target: sparks
+                property: "t"
+                from: 0
+                to: 1
+                duration: 900
+                easing.type: Easing.OutCubic
+            }
+
+            Repeater {
+                model: sparks.seeds.length
+
+                Rectangle {
+                    required property int index
+
+                    readonly property var sd: sparks.seeds[index] ?? [0.5, 0.5, 0.5]
+                    readonly property bool far: index % 2 === 1
+                    readonly property real inset: Math.min(20, Math.min(capsule.width, capsule.height) / 4)
+                    // the corner it flies from, and which way
+                    readonly property real ox: root.edge === "top" ? capsule.x + (far ? capsule.width - inset : inset) : (root.edge === "left" ? capsule.x + capsule.width : capsule.x)
+                    readonly property real oy: root.edge === "top" ? capsule.y + capsule.height : capsule.y + (far ? capsule.height - inset : inset)
+                    readonly property real ang: {
+                        const k = 0.05 + sd[0] * 0.4;
+                        if (root.edge === "top")
+                            return Math.PI * (far ? k : 1 - k);
+                        if (root.edge === "left")
+                            return Math.PI * (far ? k : -k);
+                        return Math.PI * (far ? 1 - k : -(1 - k));
+                    }
+                    readonly property real dist: 10 + sd[1] * 30
+
+                    width: 2 + sd[2] * 2.2
+                    height: width
+                    radius: width / 2
+                    color: Colours.light ? Colours.accent : Qt.rgba(1, 1, 1, 0.95)
+                    x: ox + Math.cos(ang) * dist * sparks.t - width / 2
+                    y: oy + Math.sin(ang) * dist * sparks.t - height / 2
+                    opacity: (1 - sparks.t) * (0.6 + 0.4 * Math.sin(sparks.t * 18 + index))
+                }
+            }
+        }
+
+        Timer {
+            id: sparkDelay
+
+            interval: 170
+            onTriggered: sparks.fire()
         }
 
         Item {
@@ -1535,6 +1731,40 @@ PanelWindow {
                             duration: Appearance.anim.normal
                         }
                     }
+                }
+
+                // DEPTH: glass towards the free edge, a rim of light along it
+                Rectangle {
+                    anchors.fill: parent
+                    visible: root.depth && !root.glassy
+                    radius: parent.radius
+                    antialiasing: true
+                    gradient: Gradient {
+                        orientation: root.onSide ? Gradient.Horizontal : Gradient.Vertical
+
+                        GradientStop {
+                            position: 0
+                            color: root.edge === "right" ? Colours.alpha(Colours.wallpaperTint, Colours.light ? 0.12 : 0.2) : "transparent"
+                        }
+                        GradientStop {
+                            position: root.edge === "right" ? 0.42 : 0.58
+                            color: "transparent"
+                        }
+                        GradientStop {
+                            position: 1
+                            color: root.edge === "right" ? "transparent" : Colours.alpha(Colours.wallpaperTint, Colours.light ? 0.12 : 0.2)
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: root.depth
+                    x: root.onSide ? (root.edge === "left" ? parent.width - width : 0) : parent.radius * 0.7
+                    y: root.onSide ? parent.radius * 0.7 : parent.height - height
+                    width: root.onSide ? 1.5 : parent.width - parent.radius * 1.4
+                    height: root.onSide ? parent.height - parent.radius * 1.4 : 1.5
+                    color: root.rimCol
+                    antialiasing: true
                 }
 
                 // GLASS: the sheen — light catching the top edge and falling
@@ -1862,10 +2092,52 @@ PanelWindow {
 
                 x: !root.onSide ? 0 : (root.edge === "left" ? root.railW : capsule.width - root.railW - sheet.width)
                 y: root.onSide ? Math.round((capsule.height - root.sideFullH) / 2) : 0
-                width: root.onSide ? root.meta[root.moduleIdx].w : capsule.width
+                width: root.onSide ? root.cur.w : capsule.width
                 height: root.onSide ? root.sideFullH : capsule.height
                 visible: !root.onSide || root.sideOpen || capsule.width > root.railW + root.labelW + 1
                 z: 2
+
+                // INTO FOCUS (MODULES → DYNAMIC ISLAND): what opens comes up
+                // out of a blur, as if through frosted glass
+                property real haze: 0
+                layer.enabled: sheet.haze > 0.004
+                layer.effect: MultiEffect {
+                    blurEnabled: true
+                    blur: sheet.haze
+                    blurMax: 24
+                }
+
+                NumberAnimation {
+                    id: unhaze
+
+                    target: sheet
+                    property: "haze"
+                    to: 0
+                    duration: 360
+                    easing.type: Easing.OutCubic
+                }
+
+                Connections {
+                    target: root
+
+                    function onExpandedChanged(): void {
+                        if (!root.expanded)
+                            return;
+                        if (Config.map.islandBlurIn) {
+                            sheet.haze = 0.9;
+                            unhaze.restart();
+                        }
+                        if (Config.map.islandSparkles)
+                            sparkDelay.restart();
+                    }
+
+                    function onModuleIdxChanged(): void {
+                        if (root.expanded && Config.map.islandBlurIn) {
+                            sheet.haze = 0.5;
+                            unhaze.restart();
+                        }
+                    }
+                }
 
                 // The pill row — the drag surface and the text view. On a side
                 // edge it is the open module's title: click it to fold it back.
@@ -2337,8 +2609,13 @@ PanelWindow {
                             if (slot.index === root.musicIdx)
                                 slot.item.bridge = Qt.binding(() => root.bridge);
                             // Velly's orb breathes only while you can see it
-                            if (slot.index === root.vellyIdx)
+                            if (slot.index === root.vellyIdx) {
                                 slot.item.onScreen = Qt.binding(() => root.active && root.expanded && slot.current);
+                                // where the pointer is (scene): her eyes follow it. The shield's
+                                // keep-alive hover is the only one that hears it — a hover
+                                // handler inside the capsule never gets the pointer under it
+                                slot.item.pointerScene = Qt.binding(() => keepHover.hovered ? keepHover.point.scenePosition : null);
+                            }
                             if (slot.index === root.scratchIdx) {
                                 slot.item.live = Qt.binding(() => root.active && root.moduleIdx === root.scratchIdx && (root.expanded || root.pressed));
                                 slot.item.keys = Qt.binding(() => root.expanded && root.mine);

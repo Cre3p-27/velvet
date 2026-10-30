@@ -195,8 +195,11 @@ Singleton {
     readonly property string osdStyle: root.partStyle(Config.appearance.osdStyle)
     readonly property string sessionStyle: root.partStyle(Config.appearance.sessionStyle)
     // The quiet sheet (skin "clean") comes in five moods, told apart by the vibe
-    // wearing it: clean, minimal, flat, neu (neumorphism) and clay.
-    readonly property string flavour: ["minimal", "flat", "neu", "clay"].indexOf(Config.appearance.vibe) >= 0 ? Config.appearance.vibe : "clean"
+    // wearing it: clean, minimal, flat, neu (neumorphism) and clay. FIDGET
+    // wears clay's squeezable body (in its own candy colours) and adds the
+    // toys on top: popping bubbles, springier presses (`fidget` below).
+    readonly property string flavour: Config.appearance.vibe === "fidget" ? "clay" : (["minimal", "flat", "neu", "clay"].indexOf(Config.appearance.vibe) >= 0 ? Config.appearance.vibe : "clean")
+    readonly property bool fidget: Config.appearance.vibe === "fidget"
     // Which windows the WINDOWS look is wearing: 95 | xp | 7 | 10 | 11.
     readonly property string winVer: Config.appearance.winVersion
 

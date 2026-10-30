@@ -686,6 +686,46 @@ AMBIENT — only the clock, the lyric and the music stay until you move or type.
 
 ---
 
+## STAGE desktops — one window on stage, the rest as cards
+
+**SUPER+TAB → DESKTOP → STAGE** turns a desktop into a stage: one window stands
+in the middle (ON STAGE: MEDIUM, LARGE, HUGE), every other window of that
+desktop waits at the edge as a card that leans back into the screen — a
+picture of itself with the app's badge. Point at a card: it straightens up and
+goes live. Click it: that window steps on stage and the one there becomes a
+card. A new window takes the stage; close the one on stage and the last one
+before it comes back. **CTRL+SUPER+arrows** walk the cards. Another mode for
+the desktop brings every card back out. **MODULES → STAGE**: size, which edge,
+card size, how many, lean back. (`services/Stage.qml`, `scripts/stage.py`,
+`modules/stage/StageStrip.qml` — the cards wait on a hidden special workspace.)
+
+## The dock — a second taskbar of your own
+
+**MODULES → DOCK**: a row of your own shortcuts on an edge of its own — apps,
+terminal commands, folders, web links and the shell's doors (settings, the
+scratchpad, the launcher, power …). **+** adds one: type an app's name, or Tab
+to COMMAND, FOLDER, WEB LINK or SHELL. Drag along the dock to reorder, drag
+one off and it goes in a puff. A click opens it — an app that is already open
+comes forward (click again: its next window), a middle click opens a new one.
+Dots show open windows; open apps that are not on it can show after a line.
+The icon under the pointer grows (MAGNIFY). STYLE AUTO follows the look:
+pop-it bubbles on FIDGET, glass on the glass looks, a solid pill elsewhere.
+
+## Velly's face, the island's depth, SUPER+N in the frame
+
+- **VELLY → FACE → DOTS**: a round dot-matrix display. She blinks, looks at
+  your pointer, goes wide-eyed while she listens, looks up while a comet of
+  dots runs round the rim as she thinks, talks with a mouth of dot bars,
+  squints happily when an answer has landed, crosses her eyes on an error; a
+  halo of dot rays rides the voice. ORB brings back the rings and bars.
+- **MODULES → DYNAMIC ISLAND → DEPTH**: deep where it meets the frame, glass
+  with the wallpaper's colour towards its free edge, a rim of light along it.
+  **INTO FOCUS**: what opens comes up out of a blur. **SPARKS**: a few sparks
+  when it lands open.
+- **NOTIFICATIONS → IN THE FRAME → THE CENTRE TOO**: SUPER+N slides out of the
+  frame's side as a drawer of the frame's own colour, top to bottom, its ends
+  flowing into the frame.
+
 ## The scratchpad (SUPER+O)
 
 An endless sheet to keep things on, in the Dynamic Island. **SUPER+O** opens it
@@ -731,19 +771,20 @@ pasted pictures beside it in `scratch/`.
 - **NOTIFICATIONS → IN THE FRAME** (with a SCREEN FRAME): the popups come out
   of the frame itself, in a tab of its colour that grows from the corner.
 
-## The network cable (LAN) and the lever
+## The network cable (LAN)
 
-QUICK SETTINGS has a **WLAN | LAN lever**: flip it (or throw it) and the
-connection moves over without ever leaving you offline — the new way comes up
-first, then the old one goes. With no cable in, it shakes its head and springs
-back. The line beside it says what the cable does (and when a cable or port
+QUICK SETTINGS has a **WLAN | LAN** choice: pick one and the connection moves
+over without ever leaving you offline — the new way comes up first, then the
+old one goes. With no cable in, it says so and stays where it is. The line beside it says what the cable does (and when a cable or port
 holds it at 100 Mbit/s). **SHELL → NETWORK · LAN**: connect, back to Wi-Fi,
 an AUTOMATIC or FIXED address with gateway and DNS — kept on the shell's own
 wired profile (Velvet LAN), so it changes without an administrator password.
 
 **FIDGET FEEL** (SHELL → SOUNDS): switches snap over with a stretch, sliders
-tick past their notches, presses have a small mechanical click, the lever
-clunks. `tools/fidget_sfx.py` makes those sounds.
+tick past their notches, presses have a small mechanical click.
+`tools/fidget_sfx.py` makes those sounds. The **FIDGET** look (LOOKS) goes all
+in on it: clean white and candy colours, squeezable pills, springy motion, a
+dock of pop-it bubbles.
 
 ## The Dynamic Island, and where things stand
 

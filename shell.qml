@@ -25,6 +25,8 @@ import qs.modules.island
 import qs.modules.lyrics
 import qs.modules.lock
 import qs.modules.aim
+import qs.modules.dock
+import qs.modules.stage
 // Timer and friends come from QtQuick; QML imports are not transitive, so
 // `import Quickshell` alone does not make them visible here.
 import QtQuick
@@ -78,6 +80,25 @@ ShellRoot {
         model: Quickshell.screens
 
         NotifPopups {}
+    }
+
+    // STAGE desktops: the cards of the windows in the wings, per screen
+    // (each strip shows itself only on a stage desktop with cards)
+    Variants {
+        model: Quickshell.screens
+
+        StageStrip {}
+    }
+
+    // TASKBAR → DOCK: the second taskbar, per screen, only while it is on
+    LazyLoader {
+        active: Config.dock.enabled
+
+        Variants {
+            model: Quickshell.screens
+
+            Dock {}
+        }
     }
 
     // The window map is per screen too: each one is a layer on its own
@@ -309,6 +330,7 @@ ShellRoot {
     // Component.onCompleted is not available on it.)
     readonly property var startedServices: [
         Config.loaded,
+        Stage.loaded,
         Colours.accent,
         Notifs.unread,
         HyprConf.ready,

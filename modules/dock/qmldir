@@ -1,0 +1,3 @@
+module qs.modules.dock
+Dock 1.0 Dock.qml
+DockAdder 1.0 DockAdder.qml

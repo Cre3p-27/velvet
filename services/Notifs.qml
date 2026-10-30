@@ -41,6 +41,23 @@ Singleton {
         root.frameTabs = next;
     }
 
+    // …and the centre's drawer (SUPER+N, THE CENTRE TOO): which corner it
+    // hangs from and how far it is out ({ "<screen>": { pos, w, h } })
+    property var centreTabs: ({})
+
+    function setCentreTab(screen: string, pos: string, w: real, h: real): void {
+        const was = root.centreTabs[screen];
+        if (was && was.pos === pos && Math.abs(was.w - w) < 0.25 && Math.abs(was.h - h) < 0.25)
+            return;
+        const next = Object.assign({}, root.centreTabs);
+        next[screen] = {
+            pos: pos,
+            w: w,
+            h: h
+        };
+        root.centreTabs = next;
+    }
+
     readonly property int unread: root.history.filter(n => !n.seen).length
     readonly property int total: root.history.length
 

@@ -39,6 +39,8 @@ Singleton {
     readonly property var time: adapter.time
     readonly property var lan: adapter.lan
     readonly property var scratch: adapter.scratch
+    readonly property var dock: adapter.dock
+    readonly property var stage: adapter.stage
 
     // DISPLAY → RESOLUTION's choices, filled by services/Monitors.qml from
     // the screen itself (Schema reads them here: no service in config/).
@@ -80,7 +82,7 @@ Singleton {
             "appearance.skin": ["persona", "console", "arcade", "hud", "ledger", "glass", "tome", "poster", "clean", "win"],
             "appearance.typeStyle": ["persona", "soft", "mono", "serif", "block", "arcade", "tech", "clean", "win"],
             "appearance.backdrop": ["persona", "plain", "grid", "dots", "checker", "ruled", "vignette", "aurora"],
-            "appearance.vibe": ["", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "minimal", "flat", "neu", "clay", "windows", "ink", "chrome"],
+            "appearance.vibe": ["", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "minimal", "flat", "neu", "clay", "fidget", "windows", "ink", "chrome"],
             "sfx.pack": ["velvet", "arcade", "cyber", "terminal", "paper", "glass", "rpg", "brutal", "clean", "windows"],
             "services.btQuality": ["best", "stable", "safest"],
             "velly.speakWhen": ["spoken", "always"],

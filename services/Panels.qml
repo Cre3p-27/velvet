@@ -551,7 +551,8 @@ Singleton {
     }
 
     // The island answers IPC too: `qs -c velvet ipc call island pop <name>`
-    // (empty name = first screen), `hide`, and `module <idx>`.
+    // (empty name = first screen), `hide`, `module <idx>`, and `state`
+    // (where it is open, or "closed").
     IpcHandler {
         target: "island"
 
@@ -572,6 +573,9 @@ Singleton {
         }
         function expand(idx: int): void {
             root.islandSetExpand = idx;
+        }
+        function state(): string {
+            return root.islandScreen === "" ? "closed" : `open on ${root.islandScreen}`;
         }
     }
 

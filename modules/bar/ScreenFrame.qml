@@ -70,5 +70,9 @@ PanelWindow {
         tabPos: Config.notifs.inFrame ? Config.notifs.position : ""
         tabW: Notifs.frameTabs[root.modelData?.name ?? ""]?.w ?? 0
         tabH: Notifs.frameTabs[root.modelData?.name ?? ""]?.h ?? 0
+        // the notification centre's drawer (THE CENTRE TOO)
+        drawerPos: Notifs.centreTabs[root.modelData?.name ?? ""]?.pos ?? ""
+        drawerW: Notifs.centreTabs[root.modelData?.name ?? ""]?.w ?? 0
+        drawerH: Notifs.centreTabs[root.modelData?.name ?? ""]?.h ?? 0
     }
 }

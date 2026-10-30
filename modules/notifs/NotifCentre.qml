@@ -1,5 +1,11 @@
 //  VELVET  ·  modules/notifs/NotifCentre.qml
 //  Clock click / Super+N. Calendar on top, notification history below.
+//
+//  NOTIFICATIONS → IN THE FRAME → THE CENTRE TOO: the panel is a drawer of
+//  the screen frame. It slides out from under the frame's inner edge on a
+//  spring, and the frame (ScreenFrame, from Notifs.centreTabs) grows a tab of
+//  its own colour exactly as far as the drawer is out, its ends flowing into
+//  the frame like the popups' tab.
 import qs.config
 import qs.services
 import qs.components
@@ -47,9 +53,42 @@ PanelWindow {
 
     // the centre is built the way the notifications are (THIS LOOK → SHELL PARTS)
     readonly property string style: Appearance.notifStyle
-    readonly property bool house: root.style === "velvet"
+    // in the frame the drawer wears the frame's ink, whatever the look
+    readonly property bool inFrame: Config.notifs.inFrame && Config.notifs.centreInFrame && Config.bar.frame
+    readonly property bool house: root.style === "velvet" || root.inFrame
     readonly property bool fromRight: Config.bar.position !== "right"
     readonly property int panelWidth: Math.min(460, screen ? screen.width * 0.32 : 460)
+
+    // how far the drawer is out (0 … its width; a little more as it lands)
+    readonly property real out: root.inFrame ? drawer.value * root.panelWidth : 0
+
+    Spring {
+        id: drawer
+
+        to: root.entered ? 1 : 0
+        spring: 3.2
+        damping: 0.55
+        epsilon: 0.002
+    }
+
+    // the frame draws the drawer on the screen the centre is on — and lets
+    // go of the one it was on before
+    property string tabScreen: ""
+
+    function tellFrame(): void {
+        const name = root.screen?.name ?? "";
+        if (root.tabScreen !== "" && root.tabScreen !== name)
+            Notifs.setCentreTab(root.tabScreen, "", 0, 0);
+        root.tabScreen = name;
+        if (name !== "")
+            Notifs.setCentreTab(name, root.fromRight ? "side-right" : "side-left", root.rendered ? Math.max(0, root.out) : 0, panel.height);
+    }
+
+    onOutChanged: root.tellFrame()
+    onInFrameChanged: root.tellFrame()
+    readonly property string screenName: root.screen?.name ?? ""
+    onScreenNameChanged: root.tellFrame()
+    onRenderedChanged: root.tellFrame()
 
     screen: Hypr.focusedScreen
     visible: rendered
@@ -163,7 +202,8 @@ PanelWindow {
 
     Timer {
         id: exitTimer
-        interval: Appearance.anim.normal + 40
+        // a drawer settles on its spring, a card on its curve
+        interval: root.inFrame ? 760 : Appearance.anim.normal + 40
         onTriggered: root.rendered = false
     }
 
@@ -172,237 +212,268 @@ PanelWindow {
         onClicked: Panels.closeAll()
     }
 
+    // In the frame the drawer only ever shows inside the desktop's window: it
+    // comes out from under the frame's edge, never over it.
     Item {
-        id: panel
+        id: room
 
-        // The window already keeps out of a pinned bar's zone (exclusiveZone
-        // 0): the panel steps round the screen frame and keeps a little air.
-        // (It used to add a whole bar again on the bar's side, and its top sat
-        // inside a 12 px frame.)
-        width: root.panelWidth
-        height: parent.height - Appearance.frameRoom("top") - Appearance.frameRoom("bottom") - 24
-        y: Appearance.frameRoom("top") + 12
+        x: root.inFrame ? Appearance.frameRoom("left") : 0
+        width: root.inFrame ? root.width - Appearance.frameRoom("left") - Appearance.frameRoom("right") : root.width
+        height: root.height
+        clip: root.inFrame
 
-        x: {
-            if (root.fromRight)
-                return root.entered ? root.width - width - Appearance.frameRoom("right") - 12 : root.width + 20;
-            return root.entered ? Appearance.frameRoom("left") + 12 : -width - 20;
-        }
+        Item {
+            id: panel
 
-        Behavior on x {
-            NumberAnimation {
-                duration: Appearance.anim.normal
-                easing.type: Easing.OutExpo
+            // The window already keeps out of a pinned bar's zone (exclusiveZone
+            // 0): the panel steps round the screen frame and keeps a little air.
+            // (It used to add a whole bar again on the bar's side, and its top sat
+            // inside a 12 px frame.) In the frame it is the frame's side grown
+            // thick: top to bottom of the desktop, the frame's colour round it.
+            width: root.panelWidth
+            height: root.height - Appearance.frameRoom("top") - Appearance.frameRoom("bottom") - (root.inFrame ? 0 : 24)
+            y: Appearance.frameRoom("top") + (root.inFrame ? 0 : 12)
+
+            x: {
+                if (root.inFrame)
+                    return root.fromRight ? room.width - root.out : root.out - width;
+                if (root.fromRight)
+                    return root.entered ? root.width - width - Appearance.frameRoom("right") - 12 : root.width + 20;
+                return root.entered ? Appearance.frameRoom("left") + 12 : -width - 20;
             }
-        }
 
-        StyleCard {
-            id: ground
+            Behavior on x {
+                enabled: !root.inFrame
 
-            anchors.fill: parent
-            visible: !root.house
-            style: root.style
-        }
+                NumberAnimation {
+                    duration: Appearance.anim.normal
+                    easing.type: Easing.OutExpo
+                }
+            }
 
-        Plate {
-            anchors.fill: parent
-            visible: root.house
-            radius: Appearance.rounding.large
-            color: Colours.alpha(Colours.surface, Math.min(0.98, Config.appearance.transparency + 0.12))
-            border.width: 1
-            border.color: Colours.alpha(Colours.accent, 0.32)
-            antialiasing: true
+            onHeightChanged: root.tellFrame()
 
-            Halftone {
+            StyleCard {
+                id: ground
+
                 anchors.fill: parent
-                strength: 0.03
-                density: 1.6
-            }
-        }
-
-        Column {
-            anchors.fill: parent
-            anchors.margins: Appearance.padding.large
-            spacing: Appearance.spacing.normal
-
-            // ---------------------------------------------------------- head
-            Row {
-                width: parent.width
-                spacing: 10
-
-                Slash {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 6
-                    height: 26
-                    color: Colours.accent
-                }
-
-                P5Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    display: true
-                    // every look heads its inbox its own way
-                    text: ({
-                            velvet: Qt.formatDateTime(clock.date, "dddd").toUpperCase(),
-                            prompt: "~/inbox $",
-                            arcade: "MESSAGES",
-                            hud: "INBOX //",
-                            index: "Correspondence",
-                            spotlight: "Notifications",
-                            grimoire: "Missives",
-                            poster: "NEWS.",
-                            raycast: "Notifications",
-                            start: Appearance.winVer === "95" || Appearance.winVer === "xp" ? "Notification Area" : "Notifications"
-                        })[root.style] ?? Qt.formatDateTime(clock.date, "dddd").toUpperCase()
-                    font.family: root.house ? Appearance.fontFamily.display : ground.face
-                    font.italic: root.house ? Appearance.type.italic : (root.style === "index" || root.style === "grimoire")
-                    color: root.house ? Colours.ink : ground.ink
-                    font.pixelSize: Appearance.font.size.large
-                }
-
-                Item {
-                    width: parent.width - 6 - 10 * 3 - 180
-                    height: 1
-                }
-
-                P5Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.style === "prompt" ? Qt.formatDateTime(clock.date, "yyyy-MM-dd") : Qt.formatDateTime(clock.date, "dd MMM yyyy").toUpperCase()
-                    font.family: root.house ? Appearance.fontFamily.body : ground.face
-                    color: root.house ? Colours.inkDim : ground.dim
-                    font.pixelSize: Appearance.font.size.small
-                    tracking: 1.4
-                }
+                visible: !root.house
+                style: root.style
             }
 
-            ShellClock {
-                id: clock
-                precision: SystemClock.Minutes
-            }
+            Plate {
+                anchors.fill: parent
+                visible: root.house && !root.inFrame
+                radius: Appearance.rounding.large
+                color: Colours.alpha(Colours.surface, Math.min(0.98, Config.appearance.transparency + 0.12))
+                border.width: 1
+                border.color: Colours.alpha(Colours.accent, 0.32)
+                antialiasing: true
 
-            // ------------------------------------------------------ controls
-            Row {
-                width: parent.width
-                spacing: 8
-
-                Slash {
-                    width: 132
-                    height: 34
-                    shear: Appearance.skew
-                    color: Config.notifs.doNotDisturb ? Colours.accent : Colours.alpha(Colours.ink, 0.1)
-                    borderColor: Colours.alpha(Colours.ink, 0.22)
-                    borderWidth: 1
-
-                    P5Text {
-                        anchors.centerIn: parent
-                        display: true
-                        text: Config.notifs.doNotDisturb ? "SILENCED" : "SILENCE"
-                        color: Config.notifs.doNotDisturb ? Colours.on(Colours.accent) : Colours.ink
-                        font.pixelSize: Appearance.font.size.tiny
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            Sfx.toggle();
-                            Config.toggle("notifs.doNotDisturb");
-                        }
-                    }
-                }
-
-                Slash {
-                    width: 118
-                    height: 34
-                    shear: Appearance.skew
-                    color: "transparent"
-                    borderColor: Colours.alpha(Colours.danger, 0.7)
-                    borderWidth: 2
-                    visible: Notifs.history.length > 0
-
-                    P5Text {
-                        anchors.centerIn: parent
-                        display: true
-                        text: "CLEAR ALL"
-                        color: Colours.danger
-                        font.pixelSize: Appearance.font.size.tiny
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            Sfx.back();
-                            Notifs.clearHistory();
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: Colours.alpha(Colours.ink, 0.12)
-            }
-
-            P5Text {
-                width: parent.width
-                visible: Notifs.history.length > 0
-                text: "↑↓ MOVE   ·   ENTER OPEN   ·   DEL DISMISS   ·   SHIFT+DEL CLEAR   ·   D SILENCE"
-                color: Colours.alpha(Colours.inkDim, 0.6)
-                font.pixelSize: Appearance.font.size.tiny
-                tracking: 1.4
-                elide: Text.ElideRight
-            }
-
-            // ------------------------------------------------------- history
-            Item {
-                width: parent.width
-                height: parent.height - y
-
-                P5Text {
-                    anchors.centerIn: parent
-                    visible: Notifs.history.length === 0
-                    display: true
-                    text: "NOTHING TO SEE"
-                    color: Colours.alpha(Colours.inkDim, 0.5)
-                    font.pixelSize: Appearance.font.size.large
-                }
-
-                ListView {
-                    id: notifList
-
+                Halftone {
                     anchors.fill: parent
-                    model: Notifs.history
-                    currentIndex: root.index
-                    spacing: Appearance.spacing.small
-                    clip: true
-                    // Only build what is on screen, and hand the same delegates
-                    // back to the next rows rather than making new ones. With
-                    // cards this rich, that is the difference between scrolling
-                    // and stuttering.
-                    reuseItems: true
-                    cacheBuffer: 0
-                    boundsBehavior: Flickable.StopAtBounds
-                    highlightRangeMode: ListView.ApplyRange
-                    preferredHighlightBegin: 0
-                    preferredHighlightEnd: height - 90
-                    highlightMoveDuration: Appearance.anim.fast
+                    strength: 0.03
+                    density: 1.6
+                }
+            }
 
-                    delegate: NotifCard {
-                        required property var modelData
-                        required property int index
+            Column {
+                anchors.fill: parent
+                anchors.margins: Appearance.padding.large
+                spacing: Appearance.spacing.normal
 
-                        width: ListView.view ? ListView.view.width : 0
-                        wrapper: modelData
-                        showTime: true
-                        selected: index === root.index
+                // ---------------------------------------------------------- head
+                Row {
+                    width: parent.width
+                    spacing: 10
 
-                        onClosed: Notifs.close(modelData)
-                        onDismissed: Notifs.close(modelData)
+                    Slash {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 6
+                        height: 26
+                        color: Colours.accent
                     }
 
-                    SmoothScroll {
-                        view: notifList
+                    P5Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        display: true
+                        // every look heads its inbox its own way
+                        text: ({
+                                velvet: Qt.formatDateTime(clock.date, "dddd").toUpperCase(),
+                                prompt: "~/inbox $",
+                                arcade: "MESSAGES",
+                                hud: "INBOX //",
+                                index: "Correspondence",
+                                spotlight: "Notifications",
+                                grimoire: "Missives",
+                                poster: "NEWS.",
+                                raycast: "Notifications",
+                                start: Appearance.winVer === "95" || Appearance.winVer === "xp" ? "Notification Area" : "Notifications"
+                            })[root.style] ?? Qt.formatDateTime(clock.date, "dddd").toUpperCase()
+                        font.family: root.house ? Appearance.fontFamily.display : ground.face
+                        font.italic: root.house ? Appearance.type.italic : (root.style === "index" || root.style === "grimoire")
+                        color: root.house ? Colours.ink : ground.ink
+                        font.pixelSize: Appearance.font.size.large
+                    }
+
+                    Item {
+                        width: parent.width - 6 - 10 * 3 - 180
+                        height: 1
+                    }
+
+                    P5Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: root.style === "prompt" ? Qt.formatDateTime(clock.date, "yyyy-MM-dd") : Qt.formatDateTime(clock.date, "dd MMM yyyy").toUpperCase()
+                        font.family: root.house ? Appearance.fontFamily.body : ground.face
+                        color: root.house ? Colours.inkDim : ground.dim
+                        font.pixelSize: Appearance.font.size.small
+                        tracking: 1.4
+                    }
+                }
+
+                ShellClock {
+                    id: clock
+                    precision: SystemClock.Minutes
+                }
+
+                // ------------------------------------------------------ controls
+                Row {
+                    width: parent.width
+                    spacing: 8
+
+                    Slash {
+                        width: 132
+                        height: 34
+                        shear: Appearance.skew
+                        color: Config.notifs.doNotDisturb ? Colours.accent : Colours.alpha(Colours.ink, 0.1)
+                        borderColor: Colours.alpha(Colours.ink, 0.22)
+                        borderWidth: 1
+
+                        P5Text {
+                            anchors.centerIn: parent
+                            display: true
+                            text: Config.notifs.doNotDisturb ? "SILENCED" : "SILENCE"
+                            color: Config.notifs.doNotDisturb ? Colours.on(Colours.accent) : Colours.ink
+                            font.pixelSize: Appearance.font.size.tiny
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                Sfx.toggle();
+                                Config.toggle("notifs.doNotDisturb");
+                            }
+                        }
+                    }
+
+                    Slash {
+                        width: 118
+                        height: 34
+                        shear: Appearance.skew
+                        color: "transparent"
+                        borderColor: Colours.alpha(Colours.danger, 0.7)
+                        borderWidth: 2
+                        visible: Notifs.history.length > 0
+
+                        P5Text {
+                            anchors.centerIn: parent
+                            display: true
+                            text: "CLEAR ALL"
+                            color: Colours.danger
+                            font.pixelSize: Appearance.font.size.tiny
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                Sfx.back();
+                                Notifs.clearHistory();
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: Colours.alpha(Colours.ink, 0.12)
+                }
+
+                P5Text {
+                    width: parent.width
+                    visible: Notifs.history.length > 0
+                    text: "↑↓ MOVE   ·   ENTER OPEN   ·   DEL DISMISS   ·   SHIFT+DEL CLEAR   ·   D SILENCE"
+                    color: Colours.alpha(Colours.inkDim, 0.6)
+                    font.pixelSize: Appearance.font.size.tiny
+                    tracking: 1.4
+                    elide: Text.ElideRight
+                }
+
+                // ------------------------------------------------------- history
+                Item {
+                    width: parent.width
+                    height: parent.height - y
+
+                    P5Text {
+                        anchors.centerIn: parent
+                        visible: Notifs.history.length === 0
+                        display: true
+                        text: "NOTHING TO SEE"
+                        color: Colours.alpha(Colours.inkDim, 0.5)
+                        font.pixelSize: Appearance.font.size.large
+                    }
+
+                    ListView {
+                        id: notifList
+
+                        anchors.fill: parent
+                        model: Notifs.history
+                        currentIndex: root.index
+                        spacing: Appearance.spacing.small
+                        clip: true
+                        // Only build what is on screen, and hand the same delegates
+                        // back to the next rows rather than making new ones. With
+                        // cards this rich, that is the difference between scrolling
+                        // and stuttering.
+                        reuseItems: true
+                        cacheBuffer: 0
+                        boundsBehavior: Flickable.StopAtBounds
+                        highlightRangeMode: ListView.ApplyRange
+                        preferredHighlightBegin: 0
+                        preferredHighlightEnd: height - 90
+                        highlightMoveDuration: Appearance.anim.fast
+
+                        delegate: NotifCard {
+                            id: card
+
+                            required property var modelData
+                            required property int index
+
+                            width: ListView.view ? ListView.view.width : 0
+                            wrapper: modelData
+                            showTime: true
+                            selected: index === root.index
+                            bare: root.inFrame
+
+                            onClosed: Notifs.close(modelData)
+                            onDismissed: Notifs.close(modelData)
+
+                            // in the frame: a hairline between one card and the next
+                            Rectangle {
+                                visible: root.inFrame && card.index < Notifs.history.length - 1
+                                x: 18
+                                y: parent.height + notifList.spacing / 2
+                                width: parent.width - 36
+                                height: 1
+                                color: Colours.alpha(Colours.ink, 0.12)
+                            }
+                        }
+
+                        SmoothScroll {
+                            view: notifList
+                        }
                     }
                 }
             }

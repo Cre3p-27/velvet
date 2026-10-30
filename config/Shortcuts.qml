@@ -45,6 +45,16 @@ Singleton {
             keys: [root.k("P · M · E", "Pen · marker · eraser"), root.k("T · N", "Text · sticky note: click to place it, type, Esc ends"), root.k("L · A · R · O", "Line · arrow · box · circle (Shift: straight, square, round)"), root.k("V · H", "Select (drag to move, drag the sheet for a frame) · move the sheet"), root.k("1 … 7", "Colour — it also recolours what is selected"), root.k("[  ]", "Thinner · thicker"), root.k("Ctrl + Z · Ctrl + Shift + Z", "Undo · redo"), root.k("Del", "Remove what is selected"), root.k("Ctrl + D · Ctrl + A", "Double it · select everything"), root.k("arrows", "Nudge what is selected (Shift: ten at a time)"), root.k("Ctrl + V", "Paste a picture — or text, as a note"), root.k("wheel · Shift + wheel", "Move the sheet up and down · sideways"), root.k("Ctrl + wheel · pinch", "Zoom at the pointer"), root.k("middle or right drag", "Move the sheet"), root.k("Ctrl + 0 · Ctrl + 1", "Back to 100 % · everything in view"), root.k("Ctrl + N · Ctrl + PgUp / PgDn", "A new page · the page before / after"), root.k("a page's chip", "Click: go there · double-click: rename · × then click: delete"), root.k("Ctrl + S", "Save what you see as a picture (~/Pictures)"), root.k("Ctrl + Shift + Backspace", "Clear the page (Ctrl + Z brings it back)"), root.k("double-click", "Write on a text or a note · a new text (select tool)"), root.k("F1 · ?", "This list"), root.k("Esc", "Close the pad · while writing: stop writing")]
         },
         {
+            name: "STAGE DESKTOPS",
+            sub: "SUPER + TAB → DESKTOP → STAGE",
+            keys: [root.k("click a card", "That window steps on stage · the one there becomes a card"), root.k("point at a card", "It straightens up and goes live · its title beside it"), root.k("Ctrl + Super + ↓ / →", "The latest card on stage"), root.k("Ctrl + Super + ↑ / ←", "The oldest card on stage"), root.k("open a window", "It takes the stage"), root.k("close the one on stage", "The last one before it comes back"), root.k("another mode for the desktop", "Every card comes back out")]
+        },
+        {
+            name: "THE DOCK",
+            sub: "TASKBAR → DOCK",
+            keys: [root.k("click", "Open it · an open app comes forward · again: its next window"), root.k("middle click", "A new one"), root.k("+", "Add: type an app's name, or Tab to COMMAND · FOLDER · WEB LINK · SHELL"), root.k("Enter · ↑ ↓", "Add what is picked · move in the list"), root.k("drag along the dock", "Reorder"), root.k("drag one off", "It goes, in a puff"), root.k("Esc", "Close the adder")]
+        },
+        {
             name: "THE DESKTOP TAB",
             sub: "SUPER + TAB → DESKTOP",
             keys: [root.k("drag from the tray", "Put a program on the desktop"), root.k("click a tray chip", "Same, dropped in the middle"), root.k("drag a tile", "Move it"), root.k("drag its corner", "Resize it"), root.k("double-click a tile", "Open it right now"), root.k("SNAP", "Grid on · off, while you drag"), root.k("← →", "Select"), root.k("Del", "Take it off the desktop")]

@@ -1693,7 +1693,7 @@ FocusScope {
 
                         Icon {
                             anchors.verticalCenter: parent.verticalCenter
-                            name: modeCard.mode === "tiling" ? "grid_view" : (modeCard.mode === "floating" ? "filter_none" : "dashboard")
+                            name: modeCard.mode === "tiling" ? "grid_view" : (modeCard.mode === "floating" ? "filter_none" : (modeCard.mode === "stage" ? "view_sidebar" : "dashboard"))
                             color: Colours.accent
                             font.pixelSize: Appearance.font.size.huge
                         }
@@ -1713,7 +1713,7 @@ FocusScope {
 
                             P5Text {
                                 width: parent.width
-                                text: modeCard.mode === "tiling" ? "EVERY WINDOW TILES  ·  SUPER+V STILL FLOATS ONE" : (modeCard.mode === "floating" ? "EVERY WINDOW FLOATS  ·  THE INFINITE CANVAS" : "AS HYPRLAND AND YOUR RULES DECIDE")
+                                text: modeCard.mode === "tiling" ? "EVERY WINDOW TILES  ·  SUPER+V STILL FLOATS ONE" : (modeCard.mode === "floating" ? "EVERY WINDOW FLOATS  ·  THE INFINITE CANVAS" : (modeCard.mode === "stage" ? "ONE WINDOW ON STAGE  ·  THE OTHERS AS CARDS AT THE EDGE" : "AS HYPRLAND AND YOUR RULES DECIDE"))
                                 color: Colours.accentInk
                                 font.pixelSize: Appearance.font.size.tiny
                                 tracking: 1.5
@@ -1742,13 +1742,18 @@ FocusScope {
                                     id: "floating",
                                     label: "FLOATING",
                                     glyph: "filter_none"
+                                },
+                                {
+                                    id: "stage",
+                                    label: "STAGE",
+                                    glyph: "view_sidebar"
                                 }
                             ]
 
                             MiniButton {
                                 required property var modelData
 
-                                width: (modeCol.width - 12) / 3
+                                width: (modeCol.width - 18) / 4
                                 label: modelData.label
                                 glyph: modelData.glyph
                                 accent: modeCard.mode === modelData.id
@@ -1807,6 +1812,61 @@ FocusScope {
                                 accent: Config.scene.floatSize === modelData.v
                                 onClicked: Config.set("scene.floatSize", modelData.v)
                             }
+                        }
+                    }
+
+                    // STAGE: how big the window on stage is, and which edge
+                    // the cards wait at (MODULES → STAGE has the rest)
+                    P5Text {
+                        visible: modeCard.mode === "stage"
+                        width: parent.width
+                        text: "ON STAGE  ·  THE CARDS"
+                        color: Colours.inkDim
+                        font.pixelSize: Appearance.font.size.tiny
+                        tracking: 1.5
+                    }
+
+                    Row {
+                        visible: modeCard.mode === "stage"
+                        width: parent.width
+                        spacing: 6
+
+                        Repeater {
+                            model: [
+                                {
+                                    v: 62,
+                                    label: "MEDIUM",
+                                    glyph: "crop_square"
+                                },
+                                {
+                                    v: 72,
+                                    label: "LARGE",
+                                    glyph: "photo_size_select_large"
+                                },
+                                {
+                                    v: 84,
+                                    label: "HUGE",
+                                    glyph: "open_in_full"
+                                }
+                            ]
+
+                            MiniButton {
+                                required property var modelData
+
+                                width: (modeCol.width - 18) / 4
+                                label: modelData.label
+                                glyph: modelData.glyph
+                                accent: Config.stage.size === modelData.v
+                                onClicked: Config.set("stage.size", modelData.v)
+                            }
+                        }
+
+                        MiniButton {
+                            width: (modeCol.width - 18) / 4
+                            label: Config.stage.side === "right" ? "RIGHT" : "LEFT"
+                            glyph: Config.stage.side === "right" ? "align_horizontal_right" : "align_horizontal_left"
+                            accent: true
+                            onClicked: Config.set("stage.side", Config.stage.side === "right" ? "left" : "right")
                         }
                     }
                 }

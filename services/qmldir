@@ -52,3 +52,4 @@ singleton LoginSong 1.0 LoginSong.qml
 singleton Time 1.0 Time.qml
 singleton Avatar 1.0 Avatar.qml
 singleton Scratch 1.0 Scratch.qml
+singleton Stage 1.0 Stage.qml

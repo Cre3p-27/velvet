@@ -1,4 +1,4 @@
-# tools/fidget_sfx.py — the fidget sounds (tick, lever, nope, pop, boing, snap), synthesised:
+# tools/fidget_sfx.py — the fidget sounds (tick, nope, pop, boing, snap), synthesised:
 #   python3 tools/fidget_sfx.py assets/sfx
 # 48 kHz mono 16 bit, peaks at 0.802 like the rest of assets/sfx. Every sound pack shares them.
 import sys, wave, numpy as np
@@ -47,16 +47,6 @@ place(b, noise(0.006, 0.0012, hp=0.9) * 0.6, 0)
 place(b, tone(3200, 0.03, 0.004) * 0.7, 0)
 place(b, tone(900, 0.03, 0.006) * 0.5, 0.0005)
 save("tick", b)
-
-# lever — clack (the stick leaving its notch) then clunk (landing in the other)
-b = np.zeros(int(SR * 0.24))
-place(b, noise(0.008, 0.0015, hp=0.9) * 0.5 + 0, 0)
-place(b, tone(2400, 0.03, 0.005) * 0.4, 0)
-place(b, noise(0.02, 0.004, hp=0.5) * 0.7, 0.045)
-place(b, tone(140, 0.2, 0.05, attack=0.0015) * 1.0, 0.045)
-place(b, tone(620, 0.18, 0.035) * 0.35, 0.046)
-place(b, tone(1310, 0.12, 0.02) * 0.2, 0.046)
-save("lever", b)
 
 # nope — a soft "uh-uh", two little falling boops
 b = np.zeros(int(SR * 0.3))

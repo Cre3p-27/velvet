@@ -376,6 +376,14 @@ JsonAdapter {
         // frame's outline and shadow carried round it — and at rest the
         // frame swells softly where it lives, so you see where it is.
         property bool islandFrame: true
+        // DEPTH: the island is deep where it meets the frame and turns to
+        // glass towards its free edge — the wallpaper's colour in it and a
+        // rim of light along that edge
+        property bool islandDepth: true
+        // INTO FOCUS: what opens comes up out of a blur
+        property bool islandBlurIn: true
+        // SPARKS: a few sparks fly off its corners when it lands open
+        property bool islandSparkles: true
         property real islandEdgeY: 0.5          // on a side edge: how far down, 0 top … 1 bottom
         // The TASKS module in the island's swipe cycle, between the
         // map and the weather — configure it in WORKFLOW.
@@ -538,6 +546,9 @@ JsonAdapter {
         // With a SCREEN FRAME on: the popups come out of the frame itself, in
         // a tab of its colour that grows from the corner (or the edge's middle)
         property bool inFrame: false
+        // …and the centre (SUPER+N, a click on the clock) slides out of the
+        // frame's side as a drawer of the frame's own colour
+        property bool centreInFrame: true
     }
 
     // ============================================================ OSD
@@ -858,6 +869,36 @@ JsonAdapter {
     // ============================================================ SCRATCHPAD
     // The island's SCRATCHPAD module (modules/scratch/ScratchBoard.qml):
     // its size in the island, its paper, and the pen it starts with.
+    // ============================================================ STAGE
+    // STAGE desktops (SUPER+TAB → DESKTOP → STAGE): one window in the middle,
+    // the others as tilted cards in a strip at the edge
+    property JsonObject stage: JsonObject {
+        property int size: 72          // the window on stage: % of the screen
+        property string side: "left"   // the strip: left | right
+        property int card: 168         // a card's width, in pixels
+        property int cards: 6          // how many cards show (more: "+N")
+        property bool tilt: true       // the cards lean back into the screen
+    }
+
+    // ============================================================ DOCK
+    // TASKBAR → DOCK: the second taskbar — your own shortcuts (apps, commands,
+    // folders, web links, the shell's doors) on an edge of their own
+    property JsonObject dock: JsonObject {
+        property bool enabled: false
+        property string position: "bottom"   // bottom | top | left | right
+        property int size: 46                // the icons, in pixels
+        property bool autoHide: false        // away until the pointer touches its edge
+        property bool magnify: true          // the icon under the pointer grows, its neighbours a little
+        property bool running: true          // open apps that are not on it, after a line
+        property bool labels: true           // the name above the icon you point at
+        property string style: "auto"        // auto (follows the look) | solid | glass | bubble
+        // [{ kind: "app", id } | { kind: "cmd", cmd, name } | { kind: "folder", path, name }
+        //  | { kind: "url", url, name } | { kind: "shell", ipc, name, icon }]
+        property var items: []
+        // the first start filled it from the launcher's pins (once)
+        property bool seeded: false
+    }
+
     property JsonObject scratch: JsonObject {
         property int width: 760
         property int height: 560
@@ -978,6 +1019,14 @@ JsonAdapter {
         // Master switch — MODULES → VELLY. Off removes her module from
         // the island and the long press does nothing.
         property bool enabled: true
+        // Her face in the island: "dots" (a round dot-matrix display that
+        // blinks, looks at your pointer, smiles and speaks) or "orb" (the
+        // breathing rings and radial bars)
+        property string face: "dots"
+        // the display's grain: 17 (chunky), 21, 25 (fine) dots across
+        property int faceDots: 21
+        // the halo of dot rays round the display, riding the voice
+        property bool faceHalo: true
         // How long you hold the pill before she wakes, in ms.
         property int longPress: 620
         // Speak her answers out loud (bin/velvet-voice).

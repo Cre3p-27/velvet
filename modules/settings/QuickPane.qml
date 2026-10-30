@@ -174,6 +174,16 @@ FocusScope {
     // the network lever is the first stop of the right column (when there is a cable port)
     readonly property int netKeys: Net.hasLan ? 1 : 0
 
+    // WLAN or LAN: a side that cannot be had (no cable in) says so and stays
+    function pickNet(lan: bool): void {
+        if (lan === Net.onLan)
+            return;
+        if (Net.useLan(lan))
+            Sfx.toggle();
+        else
+            Sfx.nope();
+    }
+
     function colMax(): int {
         if (root.col === 0)
             return root.col0Visible().length;
@@ -237,7 +247,7 @@ FocusScope {
             return;
         }
         if (root.netKeys > 0 && root.sel === 0) {
-            netLever.throwTo(!netLever.wantRight);
+            root.pickNet(!Net.onLan);
             return;
         }
         const k = root.sel - root.netKeys;
@@ -327,7 +337,7 @@ FocusScope {
         }
         const rowH = root.col === 1 ? 54 : 44;
         const fl = root.col === 1 ? devList : netList;
-        const fixed = root.col === 1 ? [btPower, btScan] : (root.netKeys > 0 ? [netLever, wifiRow, wifiRefresh] : [wifiRow, wifiRefresh]);
+        const fixed = root.col === 1 ? [btPower, btScan] : (root.netKeys > 0 ? [netChoice, wifiRow, wifiRefresh] : [wifiRow, wifiRefresh]);
         if (root.sel < fixed.length) {
             const it = fixed[root.sel];
             const p = it.mapToItem(root, 0, 0);
@@ -1831,7 +1841,7 @@ FocusScope {
             }
         }
 
-        // ── WLAN | LAN: the lever, and what the cable is doing
+        // ── WLAN | LAN: which way the PC goes online, and what the cable is doing
         Item {
             id: netTop
 
@@ -1850,7 +1860,7 @@ FocusScope {
 
             P5Text {
                 y: 28
-                width: parent.width - netLever.width - 8
+                width: parent.width - netChoice.width - 8
                 text: `LAN · ${Net.lanLine}`
                 color: Net.ethConnected ? Colours.success : (Net.ethCable ? Colours.inkDim : Colours.alpha(Colours.inkDim, 0.7))
                 font.pixelSize: Appearance.font.size.tiny
@@ -1860,7 +1870,7 @@ FocusScope {
 
             P5Text {
                 y: 46
-                width: parent.width - netLever.width - 8
+                width: parent.width - netChoice.width - 8
                 visible: Net.ethConnected && Net.ethSpeed > 0 && Net.ethSpeed < 1000
                 text: `${Net.speedText}: THE CABLE OR THE PORT HOLDS IT BACK — A CAT5E/CAT6 CABLE GIVES 1 GBIT/S`
                 color: Colours.alpha(Colours.warning, 0.9)
@@ -1869,21 +1879,29 @@ FocusScope {
                 elide: Text.ElideRight
             }
 
-            Lever {
-                id: netLever
+            // the same chips as the rest of the pane: the one the PC is
+            // online through is lit
+            Row {
+                id: netChoice
 
                 anchors.right: parent.right
-                y: 4
-                width: 176
-                height: 60
-                leftLabel: "WLAN"
-                rightLabel: "LAN"
-                atRight: Net.onLan
-                leftLit: Net.type === "wifi" && Net.connected
-                rightLit: Net.ethConnected
-                onFlipped: toRight => {
-                    if (!Net.useLan(toRight))
-                        netLever.refuse();
+                y: 6
+                spacing: Appearance.spacing.small
+
+                Chip {
+                    width: 96
+                    label: "WLAN"
+                    icon: "wifi"
+                    on: !Net.onLan
+                    onToggled: root.pickNet(false)
+                }
+
+                Chip {
+                    width: 96
+                    label: "LAN"
+                    icon: "lan"
+                    on: Net.onLan
+                    onToggled: root.pickNet(true)
                 }
             }
         }
