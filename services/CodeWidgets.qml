@@ -113,6 +113,167 @@ A starter that works, to build on:
 ${root.starter}`;
     }
 
+    // ── the WIDGET STUDIO's ideas: ready to use, or to start from
+    readonly property var gallery: [
+        {
+            id: "ring-clock",
+            name: "Ring clock",
+            about: "The time in a ring that breathes with the music",
+            code: root.starter
+        },
+        {
+            id: "music-bars",
+            name: "Music bars",
+            about: "The music as bars, the song underneath",
+            code: `// name: Music bars
+// size: 300x150
+function render(ctx, f) {
+    const n = 24, gap = 3, bw = (f.w - 20 - gap * (n - 1)) / n;
+    for (let i = 0; i < n; i++) {
+        const v = f.audio.length ? f.audio[Math.floor(i * f.audio.length / n)] : 0.08 + 0.06 * Math.sin(f.t * 3 + i);
+        const h = Math.max(4, v * (f.h - 40));
+        ctx.globalAlpha = 0.45 + 0.55 * v;
+        ctx.fillStyle = f.accent;
+        ctx.fillRect(10 + i * (bw + gap), f.h - 30 - h, bw, h);
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = f.dim;
+    ctx.font = "600 13px sans-serif";
+    ctx.fillText(f.music.title ? f.music.title + " · " + f.music.artist : "nothing playing", 10, f.h - 10);
+}
+`
+        },
+        {
+            id: "focus-timer",
+            name: "Focus timer",
+            about: "Click to start 25 minutes of focus, click again to pause",
+            code: `// name: Focus timer
+// size: 220x220
+// fps: 10
+function render(ctx, f) {
+    const s = f.store;
+    if (s.left === undefined) { s.left = 25 * 60; s.run = false; }
+    if (s.run) s.left = Math.max(0, s.left - f.dt);
+    const r = Math.min(f.w, f.h) / 2 - 14, k = s.left / (25 * 60);
+    ctx.lineCap = "round";
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = f.dim;
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath(); ctx.arc(f.w / 2, f.h / 2, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = f.accent;
+    ctx.beginPath(); ctx.arc(f.w / 2, f.h / 2, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * k); ctx.stroke();
+    const m = Math.floor(s.left / 60), sec = Math.floor(s.left % 60);
+    ctx.fillStyle = f.ink;
+    ctx.font = "600 34px sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText((m < 10 ? "0" : "") + m + ":" + (sec < 10 ? "0" : "") + sec, f.w / 2, f.h / 2 - 6);
+    ctx.font = "600 12px sans-serif";
+    ctx.fillStyle = f.dim;
+    ctx.fillText(s.left === 0 ? "done — click to restart" : (s.run ? "focus" : "click to start"), f.w / 2, f.h / 2 + 24);
+}
+function click(x, y, f) {
+    const s = f.store;
+    if (s.left === 0) s.left = 25 * 60;
+    s.run = !s.run;
+}
+`
+        },
+        {
+            id: "system-rings",
+            name: "System rings",
+            about: "CPU, memory and battery as three rings",
+            code: `// name: System rings
+// size: 300x120
+function ring(ctx, x, y, r, v, label, f) {
+    ctx.lineWidth = 7; ctx.lineCap = "round";
+    ctx.strokeStyle = f.dim; ctx.globalAlpha = 0.25;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.strokeStyle = f.accent;
+    ctx.beginPath(); ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, Math.min(1, v / 100))); ctx.stroke();
+    ctx.fillStyle = f.ink; ctx.font = "600 14px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(v < 0 ? "–" : Math.round(v) + "%", x, y);
+    ctx.fillStyle = f.dim; ctx.font = "600 10px sans-serif";
+    ctx.fillText(label, x, y + r + 14);
+}
+function render(ctx, f) {
+    ring(ctx, 50, 50, 32, f.cpu, "CPU", f);
+    ring(ctx, 150, 50, 32, f.ram, "MEMORY", f);
+    ring(ctx, 250, 50, 32, f.battery.percent, f.battery.charging ? "CHARGING" : "BATTERY", f);
+}
+`
+        },
+        {
+            id: "bubbles",
+            name: "Bubbles",
+            about: "Click and bubbles float up — a toy for your desk",
+            code: `// name: Bubbles
+// size: 220x260
+function render(ctx, f) {
+    const s = f.store;
+    s.b = s.b || [];
+    if (Math.random() < 0.03) s.b.push({ x: 20 + Math.random() * (f.w - 40), y: f.h, r: 4 + Math.random() * 10, v: 20 + Math.random() * 40 });
+    s.b = s.b.filter(b => b.y + b.r > 0);
+    for (const b of s.b) {
+        b.y -= b.v * f.dt;
+        b.x += Math.sin(f.t * 2 + b.r) * 0.3;
+        ctx.strokeStyle = f.accent; ctx.lineWidth = 2; ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+}
+function click(x, y, f) {
+    for (let i = 0; i < 8; i++)
+        f.store.b.push({ x: x + (Math.random() - 0.5) * 30, y: y, r: 4 + Math.random() * 12, v: 40 + Math.random() * 60 });
+}
+`
+        }
+    ]
+
+    // ── the studio's hands
+    function save(name: string, code: string): void {
+        write.run(root.fileOf(name), code, false);
+    }
+
+    // the newest widget made (the studio opens it)
+    property string lastMade: ""
+
+    function made(name: string): void {
+        root.lastMade = "";
+        root.lastMade = name;
+    }
+
+    function fromIdea(idea: var): string {
+        const name = root.freeName(idea.id);
+        root.save(name, idea.code);
+        root.made(name);
+        return name;
+    }
+
+    function blank(): string {
+        const name = root.freeName("my-widget");
+        root.save(name, root.starter);
+        root.made(name);
+        return name;
+    }
+
+    // gone from the folder and from the desktop
+    function remove(name: string): void {
+        const list = Scenes.editing ?? [];
+        for (let i = list.length - 1; i >= 0; i--)
+            if (list[i]?.widget === `code:${name}`)
+                Scenes.removeAt(i);
+        remover.command = ["rm", "-f", "--", root.fileOf(name)];
+        remover.running = false;
+        remover.running = true;
+    }
+
+    Process {
+        id: remover
+
+        onExited: root.refresh()
+    }
+
     // ── NEW: a starter file, opened in your editor
     function newWidget(): string {
         const name = root.freeName("my-widget");
@@ -200,6 +361,7 @@ ${root.starter}`;
                 const named = code.match(/^\/\/\s*name:\s*(.+)$/m);
                 const name = root.freeName(named ? named[1] : "ai-widget");
                 write.run(root.fileOf(name), code, false);
+                root.made(name);
                 Toast.show(`${name.toUpperCase()} IS READY · IT IS IN THE TRAY, AND ON YOUR DESKTOP`, "ok", 4200);
                 placeSoon.name = name;
                 placeSoon.restart();
@@ -243,6 +405,7 @@ ${root.starter}`;
         // widget says so on the desktop if the file is not there)
         function place(name: string): string {
             root.refresh();
+            root.made(name);
             return root.place(name, true) ? `${name} is on the desktop` : `no widget called ${name}`;
         }
         function api(): string {

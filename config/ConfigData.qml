@@ -956,6 +956,12 @@ JsonAdapter {
         // sounds alone follow `enabled` (and FOCUS MODE) like every click.
         property bool fidget: true
         property real fidgetVolume: 0.8
+        // SOUNDS: soft (little wooden taps) or glass (small crystal bells)
+        property string set: "soft"
+        // a tap when the pointer only passes over things (off: only what you press sounds)
+        property bool hover: false
+        // Velly's chirps: waking, listening, done, a giggle when you click her
+        property bool velly: true
     }
 
     // ============================================================ HOME

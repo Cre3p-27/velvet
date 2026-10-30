@@ -287,7 +287,7 @@ Plate {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onEntered: Sfx.cursor()
+            onEntered: Sfx.hover()
             onClicked: line.activated()
         }
     }
@@ -430,7 +430,7 @@ Plate {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onEntered: Sfx.cursor()
+                        onEntered: Sfx.hover()
                         onClicked: root.setOpt("frame", chip.modelData.v)
                     }
                 }

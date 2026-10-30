@@ -30,6 +30,7 @@ layout(std140, binding = 0) uniform buf {
     vec4 haloC;
     vec4 haloD;
     vec4 mode;      // x think, y fuzz (0 … 1), z energy (the voice counts), w wake ring (0 … 1)
+    vec4 extra;     // x tilt (radians), y love (hearts, 0 … 1), z sleep (bubbles, 0 … 1), w glow (her inner light)
 };
 
 const float PI = 3.14159265;
@@ -73,8 +74,23 @@ float eyeShape(vec2 q, vec2 c) {
     return mix(b, cross, clamp(eye.z, 0.0, 1.0));
 }
 
+// a little heart at c, s tall (the classic heart curve: its tip at the bottom)
+float heart(vec2 p, vec2 c, float s) {
+    vec2 h = (p - c) / s;
+    h = vec2(abs(h.x), 0.5 - h.y);
+    float d;
+    if (h.y + h.x > 1.0)
+        d = length(h - vec2(0.25, 0.75)) - 0.35355;
+    else
+        d = sqrt(min(dot(h - vec2(0.0, 1.0), h - vec2(0.0, 1.0)), dot(h - 0.5 * max(h.x + h.y, 0.0), h - 0.5 * max(h.x + h.y, 0.0)))) * sign(h.x - h.y);
+    return d * s;
+}
+
 void main() {
-    vec2 p = (qt_TexCoord0 - 0.5) * 2.0;
+    vec2 p0 = (qt_TexCoord0 - 0.5) * 2.0;
+    // a curious tilt of her whole body
+    float ct = cos(extra.x), st = sin(extra.x);
+    vec2 p = vec2(ct * p0.x + st * (p0.y - 0.3), -st * p0.x + ct * (p0.y - 0.3)) + vec2(0.0, 0.3);
     vec4 col = vec4(0.0);
 
     // ── where she sits: a little bob, the squash
@@ -84,8 +100,8 @@ void main() {
     q = vec2(q.x * (1.0 + 0.14 * s), q.y * (1.0 - 0.14 * s));
 
     // ── the ground under her: a soft shadow that shrinks as she rises
-    float R = 0.56;
-    vec2 sp = (p - vec2(0.0, R + 0.25)) * vec2(1.35, 5.0);
+    float R = 0.6;
+    vec2 sp = (p0 - vec2(0.0, R + 0.24)) * vec2(1.35, 5.0);
     float shade = exp(-dot(sp, sp) * 2.2) * 0.32 * (1.0 - 6.0 * max(bob, 0.0));
     col = vec4(0.0, 0.0, 0.0, 1.0) * shade;
 
@@ -117,6 +133,8 @@ void main() {
     // thinking: a sheen runs round her
     float a = mod(th - time * 2.2, 2.0 * PI);
     velvet += sheen * (exp(-a * 2.5) * fres * 0.8 * clamp(mode.x, 0.0, 1.0));
+    // her inner light: she glows from the middle while she listens and talks
+    velvet += sheen * (clamp(extra.w, 0.0, 1.0) * 0.55 * exp(-pow(rho / r, 2.0) * 2.2));
     col = over(velvet * inside, col);
 
     // ── the fuzz outside the rim: a soft halo of pile, brighter with the voice
@@ -149,6 +167,31 @@ void main() {
     float talk = cover((length(m / ab) - 1.0) * min(ab.x, ab.y));
     float mouth = mix(smileArc * (0.55 + 0.45 * clamp(eye.y, 0.0, 1.0)), talk, clamp(look.w, 0.0, 1.0)) * (1.0 - clamp(eye.z, 0.0, 1.0));
     col = over(ink * (mouth * inside * 0.95), col);
+
+    // ── love: hearts float up off her while you pet her
+    float love = clamp(extra.y, 0.0, 1.0);
+    if (love > 0.01) {
+        for (int i = 0; i < 5; i++) {
+            float fi = float(i);
+            float ph = fract(time * 0.55 + fi * 0.21);
+            vec2 c = vec2(sin(fi * 2.4 + time * 1.3) * 0.38, -R * 0.75 - ph * 0.5);
+            float hs = 0.085 * (1.0 - 0.45 * ph);
+            col = over(blush * (cover(heart(p0, c, hs)) * love * (1.0 - ph) * smoothstep(0.0, 0.12, ph)), col);
+        }
+    }
+
+    // ── asleep: little bubbles rise from her
+    float sleep = clamp(extra.z, 0.0, 1.0);
+    if (sleep > 0.01) {
+        for (int i = 0; i < 3; i++) {
+            float fi = float(i);
+            float ph = fract(time * 0.28 + fi / 3.0);
+            vec2 c = vec2(0.32 + ph * 0.22 + 0.04 * sin(time * 2.0 + fi), -R * 0.55 - ph * 0.42);
+            float rr = 0.02 + ph * 0.05;
+            float ring = abs(length(p0 - c) - rr) - 0.008;
+            col = over(sheen * (cover(ring) * sleep * (1.0 - ph) * 0.85), col);
+        }
+    }
 
     fragColor = col * qt_Opacity;
 }

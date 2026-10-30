@@ -257,8 +257,8 @@ else
     warn "No terminal emulator found  ${D}— the clock, vitals and the rest need one${N}"
 fi
 
-# Sounds: they ship with the shell (assets/sfx — Kenney's Interface Sounds, CC0).
-if [ -f "$SRC/assets/sfx/cursor.wav" ]; then
+# Sounds: they ship with the shell (assets/sfx, made by tools/make_sounds.py).
+if [ -f "$SRC/assets/sfx/soft/cursor.wav" ]; then
     ok "UI sounds present"
 else
     warn "The UI sounds are missing  ${D}— the shell runs silently${N}"

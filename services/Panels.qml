@@ -325,6 +325,17 @@ Singleton {
         root.settings = false;
     }
 
+    // A whole tab, by its name (e.g. "WIDGET STUDIO"): the window opens there.
+    signal settingsTabAsked(int index)
+
+    function openSettingsTab(name: string): void {
+        const i = Schema.tabs.findIndex(t => t.name === name);
+        if (i < 0)
+            return;
+        root.showSettings();
+        root.settingsTabAsked(i);
+    }
+
     // The settings window's own close button (×). While a full-window tab is
     // up (LOOKS, PER WALLPAPER, DESKTOP …) it closes that tab and takes you
     // back to where you were — the window itself stays (Settings answers

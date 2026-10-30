@@ -1,11 +1,17 @@
 //  VELVET  ·  services/Sfx.qml
-//  The menu clicks. A round-robin pool of players so rapid navigation
-//  overlaps instead of cutting itself off.
+//  The shell's sounds. Every one is loaded once and played straight from
+//  memory (QtMultimedia's SoundEffect): a sound starts with the click that
+//  asked for it. (It used to start a player program per click and arrived
+//  late — the clicks felt detached from the hand.)
 //
-//  One quiet set for every look: Kenney's "Interface Sounds" (CC0), the
-//  warmest and shortest of each kind, filtered and brought down to a soft
-//  level by tools/clean_sfx.py. The sounds you hear most (the cursor, the
-//  fidget tick) are the quietest.
+//  Two sets, in one key (tools/make_sounds.py) — SHELL → SOUND → SOUNDS:
+//    soft   little wooden taps, felt more than heard
+//    glass  small crystal bells with a quiet ring
+//  and Velly's own chirps (assets/sfx/velly), the same in both.
+//
+//  Quiet on purpose: no sound when the pointer only passes over things
+//  (HOVER SOUNDS, off by default), the cursor's tap is rate-limited, and the
+//  sounds you hear most are the softest.
 pragma Singleton
 
 import qs.config
@@ -13,76 +19,59 @@ import Quickshell
 import Quickshell.Io
 import QtQml
 import QtQuick
+import QtMultimedia
 
 Singleton {
     id: root
 
-    // Resolved relative to this file so the shell works from any install path.
     readonly property string dir: `${Qt.resolvedUrl("../assets/sfx")}`.replace(/^file:\/\//, "")
-    property string player: ""
-    property int channel: 0
-    // Which channel the current charge riser is on, so a hold that turns into
-    // a drag can cut it off instead of letting it ring on over the swipe.
-    property int chargeChannel: -1
+    readonly property string set: ["soft", "glass"].indexOf(Config.sfx.set) >= 0 ? Config.sfx.set : "soft"
+    // (kept for old callers that waited for a player to be found)
+    readonly property string player: "soundeffect"
 
-    readonly property var files: ({
-            cursor: "cursor.wav",
-            select: "select.wav",
-            back: "back.wav",
-            open: "open.wav",
-            close: "close.wav",
-            toggle: "toggle.wav",
-            launch: "launch.wav",
-            whoosh: "whoosh.wav",
-            quest: "quest.wav",
-            charge: "charge.wav",
-            // the fidget sounds (FIDGET FEEL)
-            tick: "tick.wav",
-            nope: "nope.wav",
-            pop: "pop.wav",
-            boing: "boing.wav",
-            snap: "snap.wav"
-        })
+    readonly property var names: ["cursor", "select", "back", "open", "close", "toggle", "launch", "whoosh", "quest", "charge", "tick", "nope", "pop", "boing", "snap"]
+    readonly property var velly: ["wake", "listen", "heard", "done", "error", "giggle", "purr"]
+    // the fidget sounds (FIDGET FEEL)
     readonly property var shared: ["tick", "nope", "pop", "boing", "snap"]
 
-    function play(name: string, gain: real): int {
-        if (!Config.sfx.enabled || root.player === "" || Focus.mutesShell)
-            return -1;
+    // name → its loaded SoundEffect
+    property var fx: ({})
 
+    function play(name: string, gain: real): var {
+        if (!Config.sfx.enabled || Focus.mutesShell)
+            return null;
         const fidget = root.shared.indexOf(name) >= 0;
         if (fidget && !Config.sfx.fidget)
-            return -1;
-        const file = `${root.dir}/${root.files[name] ?? root.files.cursor}`;
-        const vol = Config.sfx.volume * (gain > 0 ? gain : 1) * (fidget ? Config.sfx.fidgetVolume : 1);
-
-        let cmd;
-        if (root.player === "pw-play")
-            cmd = ["pw-play", `--volume=${vol.toFixed(2)}`, file];
-        else if (root.player === "paplay")
-            cmd = ["paplay", `--volume=${Math.round(vol * 65536)}`, file];
-        else
-            cmd = ["aplay", "-q", file];
-
-        const index = root.channel;
-        const p = pool.objectAt(index);
-        if (p) {
-            p.command = cmd;
-            p.running = false;
-            p.running = true;
-        }
-        root.channel = (root.channel + 1) % pool.count;
-        return index;
+            return null;
+        const e = root.fx[name];
+        if (!e)
+            return null;
+        e.volume = Math.max(0, Math.min(1, Config.sfx.volume * (gain > 0 ? gain : 1) * (fidget ? Config.sfx.fidgetVolume : 1)));
+        e.stop();
+        e.play();
+        return e;
     }
+
+    // moving through a list with the keys: a tap, never a rattle
+    property double lastCursor: 0
 
     function cursor(): void {
-        play("cursor");
+        const now = Date.now();
+        if (now - root.lastCursor < 70)
+            return;
+        root.lastCursor = now;
+        play("cursor", 0.8);
     }
-    // FIDGET FEEL lays a small mechanical tick under a press and a flip, so a
-    // click sounds like something was pressed, in every sound pack
+    // the pointer passing over something: silent unless HOVER SOUNDS is on
+    function hover(): void {
+        if (Config.sfx.hover)
+            root.cursor();
+    }
+    // FIDGET FEEL lays a small tick under a press and a flip
     function select(): void {
         play("select");
         if (Config.sfx.fidget)
-            root.tick(0.32);
+            root.tick(0.25);
     }
     function back(): void {
         play("back");
@@ -95,8 +84,6 @@ Singleton {
     }
     function toggle(): void {
         play("toggle");
-        if (Config.sfx.fidget)
-            root.tick(0.5);
     }
     function launch(): void {
         play("launch");
@@ -111,7 +98,7 @@ Singleton {
 
     function tick(gain: real): void {
         const now = Date.now();
-        if (now - root.lastTick < 38)
+        if (now - root.lastTick < 45)
             return;
         root.lastTick = now;
         play("tick", gain > 0 ? gain : 0.7);
@@ -129,47 +116,101 @@ Singleton {
         play("snap", 0.85);
     }
 
-    // Finishing a task — the game-menu flourish, SHELL → GAME FEEL.
+    // Finishing a task — SHELL → GAME FEEL.
     function quest(): void {
         play("quest");
     }
 
-    // Charging the long press that wakes Velly. It plays once at the start of
-    // the hold and runs out exactly when the pill's hairline fills — and it
-    // only ever starts once the press has proven it is a hold, never on the
-    // press that was really the beginning of a swipe.
+    // Charging the long press that wakes Velly: it starts once the press has
+    // proven it is a hold, and a hold that turns into a drag cuts it off.
+    property var charging: null
+
     function charge(): void {
-        root.chargeChannel = play("charge", 0.7);
+        root.charging = play("charge", 0.7);
     }
 
     function stopCharge(): void {
-        if (root.chargeChannel < 0)
-            return;
-        const p = pool.objectAt(root.chargeChannel);
-        if (p)
-            p.running = false;
-        root.chargeChannel = -1;
+        if (root.charging)
+            root.charging.stop();
+        root.charging = null;
     }
 
-    Instantiator {
-        id: pool
-        model: 8
-        delegate: Process {
-            command: ["true"]
+    // ── Velly's chirps: wake · listen · heard · done · error · giggle · purr
+    function chirp(name: string): void {
+        if (!Config.sfx.velly)
+            return;
+        play(`velly:${name}`, 1);
+    }
+
+    // SHELL → SOUND → SOUNDS: changing the set plays a little of it, so you
+    // hear what you chose
+    function demo(): void {
+        demoRun.step = 0;
+        demoRun.restart();
+    }
+
+    property bool settled: false
+
+    onSetChanged: {
+        if (root.settled)
+            demoSoon.restart();
+    }
+
+    Timer {
+        running: true
+        interval: 5000
+        onTriggered: root.settled = true
+    }
+
+    // the new set needs a moment to load
+    Timer {
+        id: demoSoon
+
+        interval: 450
+        onTriggered: root.demo()
+    }
+
+    Timer {
+        id: demoRun
+
+        property int step: 0
+        interval: 260
+        repeat: true
+        onTriggered: {
+            const order = ["select", "toggle", "back", "quest"];
+            if (demoRun.step >= order.length) {
+                demoRun.stop();
+                return;
+            }
+            root.play(order[demoRun.step++], 1);
         }
     }
 
-    Process {
-        id: detect
+    Instantiator {
+        model: root.names.map(n => ({
+                    key: n,
+                    file: `${root.dir}/${root.set}/${n}.wav`
+                })).concat(root.velly.map(n => ({
+                    key: `velly:${n}`,
+                    file: `${root.dir}/velly/${n}.wav`
+                })))
 
-        running: true
-        command: ["bash", "-c", "for p in pw-play paplay aplay; do command -v $p >/dev/null 2>&1 && { echo $p; break; }; done"]
+        delegate: SoundEffect {
+            required property var modelData
 
-        stdout: StdioCollector {
-            onStreamFinished: {
-                const found = text.trim();
-                root.player = Config.sfx.player !== "auto" ? Config.sfx.player : found;
-            }
+            source: `file://${modelData.file}`
+        }
+
+        onObjectAdded: (i, o) => {
+            const next = Object.assign({}, root.fx);
+            next[o.modelData.key] = o;
+            root.fx = next;
+        }
+        onObjectRemoved: (i, o) => {
+            const next = Object.assign({}, root.fx);
+            if (next[o.modelData.key] === o)
+                delete next[o.modelData.key];
+            root.fx = next;
         }
     }
 }

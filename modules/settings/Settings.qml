@@ -1126,6 +1126,14 @@ FloatingWindow {
             root.present();
         }
 
+        // a tab asked for by name (the DESKTOP tray's WIDGET STUDIO button)
+        function onSettingsTabAsked(i: int): void {
+            root.setZone(1);
+            root.openTab(i);
+            root.home = false;
+            root.refocus();
+        }
+
         // the window's × while a full-window tab is up: out of that tab
         function onSettingsCloseAsked(): void {
             if (!root.closePane())
@@ -1718,6 +1726,7 @@ FloatingWindow {
                     lock: lockPane,
                     looks: looksPane,
                     wallpaper: wallpaperPane,
+                    studio: studioPane,
                     softlock: softLockPane,
                     credits: creditsPane
                 })[root.pane] ?? null
@@ -1764,6 +1773,14 @@ FloatingWindow {
             id: creditsPane
 
             CreditsPane {
+                Keys.forwardTo: [keys]
+            }
+        }
+
+        Component {
+            id: studioPane
+
+            StudioPane {
                 Keys.forwardTo: [keys]
             }
         }

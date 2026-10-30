@@ -96,6 +96,15 @@ Singleton {
             items: []
         },
         {
+            // Desktop widgets of your own: pick an idea, have Velly or any AI
+            // write one, or write it here with a live preview.
+            name: "WIDGET STUDIO",
+            sub: "YOUR OWN DESKTOP WIDGETS — FROM AN IDEA, AN AI, OR BY HAND",
+            icon: "widgets",
+            pane: "studio",
+            items: []
+        },
+        {
             // Everything that can be different per wallpaper, in one place:
             // what is saved, what it holds, and every wallpaper that has a look.
             name: "PER WALLPAPER",
@@ -5686,6 +5695,34 @@ Singleton {
                     max: 1,
                     step: 0.05,
                     fmt: "percent"
+                },
+                {
+                    kind: "choice",
+                    key: "sfx.set",
+                    name: "SOUNDS",
+                    aka: "KLANG · SOUND SET · TÖNE",
+                    help: "Which sounds the shell makes. SOFT: little wooden taps — felt more than heard. GLASS: small crystal bells with a quiet ring. Both are in one key, so one sound after another always fits. Changing it plays a little of the new set.",
+                    sub: "SOFT · GLASS",
+                    options: [
+                        { value: "soft", label: "SOFT" },
+                        { value: "glass", label: "GLASS" }
+                    ]
+                },
+                {
+                    kind: "toggle",
+                    key: "sfx.hover",
+                    name: "HOVER SOUNDS",
+                    aka: "DRÜBERFAHREN · MAUS",
+                    help: "A soft tap when the pointer only passes over things. Off (the default): only what you press, toggle or open makes a sound.",
+                    sub: "A TAP WHEN THE POINTER PASSES OVER THINGS"
+                },
+                {
+                    kind: "toggle",
+                    key: "sfx.velly",
+                    name: "VELLY'S CHIRPS",
+                    aka: "VELLY SOUNDS · ZWITSCHERN",
+                    help: "Velly's own little sounds: a chirp when she wakes, a blip when she starts and stops listening, a happy two-note when an answer is done, a giggle when you click her, a purr when you pet her.",
+                    sub: "WAKE · LISTEN · DONE · GIGGLE · PURR"
                 },
                 {
                     kind: "toggle",

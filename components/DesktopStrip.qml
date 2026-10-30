@@ -92,7 +92,7 @@ Flow {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onEntered: Sfx.cursor()
+                onEntered: Sfx.hover()
                 onClicked: {
                     Sfx.select();
                     if (root.goes)
@@ -154,7 +154,7 @@ Flow {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onEntered: Sfx.cursor()
+            onEntered: Sfx.hover()
             onClicked: {
                 Sfx.select();
                 root.canvasPicked();

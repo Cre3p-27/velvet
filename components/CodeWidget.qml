@@ -15,6 +15,16 @@ Item {
 
     required property string name
     property bool live: true
+    // the WIDGET STUDIO's preview: draw this text instead of the file (as you type)
+    property string code: ""
+    onCodeChanged: {
+        if (root.code !== "")
+            root.compile(root.code);
+    }
+    Component.onCompleted: {
+        if (root.code !== "")
+            root.compile(root.code);
+    }
 
     // what the header says: // name: … · // size: WxH · // fps: N
     property string title: root.name
@@ -57,11 +67,14 @@ return { render: typeof render === "function" ? render : null, click: typeof cli
     FileView {
         id: file
 
-        path: CodeWidgets.fileOf(root.name)
+        path: root.code === "" && root.name !== "" ? CodeWidgets.fileOf(root.name) : ""
         watchChanges: true
         printErrors: false
         onFileChanged: file.reload()
-        onLoaded: root.compile(file.text())
+        onLoaded: {
+            if (root.code === "")
+                root.compile(file.text());
+        }
         onLoadFailed: root.error = "THE FILE IS GONE"
     }
 

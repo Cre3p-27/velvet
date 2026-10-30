@@ -1514,46 +1514,12 @@ FocusScope {
                     }
                 }
 
-                Flow {
+                MiniButton {
                     width: parent.width
-                    spacing: 6
-
-                    MiniButton {
-                        width: (parent.width - 18) / 4
-                        label: "NEW"
-                        glyph: "add"
-                        onClicked: CodeWidgets.newWidget()
-                    }
-
-                    MiniButton {
-                        width: (parent.width - 18) / 4
-                        label: "FOR MY AI"
-                        glyph: "content_copy"
-                        onClicked: CodeWidgets.copyForAi("")
-                    }
-
-                    MiniButton {
-                        width: (parent.width - 18) / 4
-                        label: "PASTE CODE"
-                        glyph: "content_paste"
-                        onClicked: CodeWidgets.pasteCode()
-                    }
-
-                    MiniButton {
-                        width: (parent.width - 18) / 4
-                        label: "ASK VELLY"
-                        glyph: "auto_awesome"
-                        visible: Config.velly.enabled
-                        onClicked: Velly.ask("Ich möchte ein neues Code-Widget für meinen Desktop. Frag mich kurz, was es zeigen soll, dann bau es mit widget.api und widget.make.", "text")
-                    }
-                }
-
-                P5Text {
-                    width: parent.width
-                    text: "NEW opens a starter in your editor · FOR MY AI copies the instructions for any AI chat, PASTE CODE brings its answer back · ASK VELLY: she writes it · every widget lands on your desktop and updates when its file is saved"
-                    color: Colours.alpha(Colours.inkDim, 0.75)
-                    font.pixelSize: Appearance.font.size.tiny
-                    wrapMode: Text.WordWrap
+                    label: "OPEN THE WIDGET STUDIO — MAKE A NEW ONE"
+                    glyph: "widgets"
+                    accent: true
+                    onClicked: Panels.openSettingsTab("WIDGET STUDIO")
                 }
 
                 P5Text {

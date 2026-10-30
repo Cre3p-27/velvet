@@ -359,7 +359,7 @@ Plate {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onEntered: Sfx.cursor()
+                        onEntered: Sfx.hover()
                         onClicked: root.addWidget(chip.modelData)
                     }
                 }

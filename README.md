@@ -728,6 +728,13 @@ pop-it bubbles on FIDGET, glass on the glass looks, a solid pill elsewhere.
 
 ## Code widgets — write your own, or let an AI write them
 
+**SUPER+TAB → SETTINGS → WIDGET STUDIO** is the friendly way in: your widgets
+and a shelf of IDEAS on the left (click one and it is yours), the widget big and
+live in the middle (PUT IT ON THE DESKTOP), and on the right three ways to make
+one — describe it and **VELLY BUILDS IT**, **COPY FOR CHATGPT · CLAUDE** and
+**PASTE THE AI'S ANSWER**, or write it in the editor with the preview following
+every key (it saves itself; F1 shows the API).
+
 A desktop widget can be a few lines of JavaScript: one file in
 `~/.config/velvet/widgets/<name>.js` with a `render(ctx, f)` that draws a frame
 on a canvas (`f` holds the size, the time, the shell's colours, the music's
@@ -801,7 +808,7 @@ wired profile (Velvet LAN), so it changes without an administrator password.
 
 **FIDGET FEEL** (SHELL → SOUNDS): switches snap over with a stretch, sliders
 tick past their notches, presses have a small mechanical click.
-The sounds are Kenney's Interface Sounds (CC0), made quiet and warm by `tools/clean_sfx.py`. The **FIDGET** look (LOOKS) goes all
+The sounds are made by `tools/make_sounds.py` (SHELL → SOUND → SOUNDS). The **FIDGET** look (LOOKS) goes all
 in on it: clean white and candy colours, squeezable pills, springy motion, a
 dock of pop-it bubbles.
 
@@ -1478,12 +1485,14 @@ colour · info`. A `page` nests another list inside itself, to any depth.
 
 ## Sounds
 
-One quiet set for every look: [Kenney's Interface Sounds](https://kenney.nl)
-(CC0, see `assets/sfx/LICENSE-kenney.txt`). `tools/clean_sfx.py` picks the
-warmest, shortest sound of each kind from the pack, filters it (no rumble, no
-sharp top), brings it down to a soft level and fades it out; the sounds you
-hear most — the cursor and the fidget tick — are the quietest. Volume and the
-fidget sounds: **SHELL → SOUND**.
+Made here, by `tools/make_sounds.py`, in one key (E major) so one sound after
+another always fits. **SHELL → SOUND → SOUNDS**: **SOFT** (little wooden taps,
+felt more than heard) or **GLASS** (small crystal bells) — changing it plays a
+little of the new set. Every sound is loaded once and plays straight from
+memory, so it starts with the click. Quiet on purpose: nothing sounds when the
+pointer only passes over things (HOVER SOUNDS turns that on), the cursor's tap
+is rate-limited, and the sounds you hear most are the softest. Velly has her
+own chirps (VELLY'S CHIRPS).
 
 ---
 

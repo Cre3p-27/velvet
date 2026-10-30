@@ -221,7 +221,7 @@ PanelWindow {
                     cursorShape: Qt.PointingHandCursor
                     onHoveredChanged: {
                         if (pointer.hovered)
-                            Sfx.tick(0.5);
+                            Sfx.hover();
                     }
                 }
 
